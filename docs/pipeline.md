@@ -43,7 +43,9 @@ tools (osmium, tippecanoe, pmtiles, gdal) come from the nix dev shell; a missing
    is joined, rows are sorted by the Hilbert key and written with the schema metadata.
 7. **overlay** and **basemap**: tippecanoe cuts `overlay.pmtiles` with the edge id as the feature id
    and the attributes listed in `schema.OVERLAY`; minor road classes appear at higher zooms only,
-   so low-zoom tiles stay small. `pmtiles extract` cuts the base map from the latest Protomaps
+   so low-zoom tiles stay small: on a 100 km region the largest tile is under 190 KB (gzip) up to
+   z12, 311 KB at z13 and 123 KB at z14, where every class is shown and nothing is dropped.
+   `pmtiles extract` cuts the base map from the latest Protomaps
    build (needs network).
 8. **manifest**: `manifest.json` with the file names, zoom ranges and the overlay attributes
    (key, label, kind `enum`/`share`/`number`, enum values with labels), all derived from `schema.py`.

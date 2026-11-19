@@ -28,28 +28,20 @@ OVERLAY_MINZOOM = 8
 OVERLAY_MAXZOOM = 14
 BASEMAP_MAXZOOM = 15
 
-#: first zoom a highway class appears at; everything not listed is z13
+#: first zoom a highway class appears at; everything not listed is z13, so nothing is hidden at z13 and
+#: z14. Residential streets and tracks (most of the km) join late; tile sizes per zoom are checked after a
+#: build (docs/pipeline.md).
 MINZOOM = {
-    "trunk": 8,
-    "primary": 8,
-    "ferry": 8,
-    "trunk_link": 10,
-    "primary_link": 10,
+    "trunk": 8, "primary": 8, "ferry": 8,
     "secondary": 9,
-    "secondary_link": 11,
-    "tertiary": 10,
-    "tertiary_link": 11,
-    "cycleway": 10,
-    "unclassified": 11,
-    "residential": 11,
-    "track": 11,
-    "path": 12,
-    "footway": 12,
-    "bridleway": 12,
-    "living_street": 12,
-}
+    "trunk_link": 10, "primary_link": 10,
+    "tertiary": 11, "secondary_link": 11, "cycleway": 11,
+    "unclassified": 12, "residential": 12, "tertiary_link": 12, "living_street": 12,
+    "track": 13, "path": 13, "footway": 13, "bridleway": 13,
+}  # fmt: skip
 DEFAULT_MINZOOM = 13
-ROUTE_MINZOOM = 10  # edges on a bicycle route show early
+#: bicycle routes (by `route_level`: lcn, rcn, ncn, icn) show earlier than their road class
+ROUTE_MINZOOM = {1: 12, 2: 11, 3: 10, 4: 10}
 
 PROTOMAPS_BUILDS = "https://build-metadata.protomaps.dev/builds.json"
 PROTOMAPS_URL = "https://build.protomaps.com/{key}.pmtiles"
@@ -60,7 +52,8 @@ def minzooms(highway: np.ndarray, route_level: np.ndarray) -> np.ndarray:
     """Per-edge first zoom for highway class codes and route levels."""
     table = np.array([MINZOOM.get(label, DEFAULT_MINZOOM) for _, label in schema.BY_NAME["highway"].enum])
     mz = table[highway]
-    return np.where(route_level > 0, np.minimum(mz, ROUTE_MINZOOM), mz)
+    route = np.array([DEFAULT_MINZOOM, *(ROUTE_MINZOOM[k] for k in sorted(ROUTE_MINZOOM))])[route_level]
+    return np.minimum(mz, route)
 
 
 def overlay_columns() -> list[str]:

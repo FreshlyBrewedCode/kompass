@@ -15,8 +15,8 @@ from kompass_pipeline import schema, tiles, tools
 def test_minzoom_by_class_and_route():
     codes = schema.codes("highway")
     hw = np.array([codes[k] for k in ("primary", "secondary", "track", "path", "steps", "residential")])
-    assert tiles.minzooms(hw, np.zeros(6, int)).tolist() == [8, 9, 11, 12, 13, 11]
-    assert tiles.minzooms(hw, np.array([0, 0, 2, 2, 0, 0])).tolist() == [8, 9, 10, 10, 13, 11]
+    assert tiles.minzooms(hw, np.zeros(6, int)).tolist() == [8, 9, 13, 13, 13, 12]
+    assert tiles.minzooms(hw, np.array([0, 0, 2, 3, 0, 1])).tolist() == [8, 9, 11, 10, 13, 12]
 
 
 def test_feature_lines_carry_integer_id_and_overlay_attributes(village, tmp_path):
@@ -30,7 +30,7 @@ def test_feature_lines_carry_integer_id_and_overlay_attributes(village, tmp_path
     assert set(props) <= {a.key for a in schema.OVERLAY}
     assert {"highway", "surface_class", "forest_share", "grade_max"} <= set(props)
     assert all(isinstance(v, int | float) for v in props.values())
-    assert track["tippecanoe"]["minzoom"] == 11
+    assert track["tippecanoe"]["minzoom"] == 13
     assert track["geometry"]["type"] == "LineString"
 
 

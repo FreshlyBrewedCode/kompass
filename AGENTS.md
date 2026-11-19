@@ -30,6 +30,11 @@ bun run e2e              # build, then Playwright (phone 390×844 + desktop 1440
                          # 7959 under /kompass/ with the synthetic fixture region (KOMPASS_E2E_PORT=…)
 nix develop -c bun e2e/fixtures/build-region.ts   # rebuild the fixture region (tippecanoe) after changing it
 bun run format           # biome --write, cargo fmt, ruff format + fix
+uv run --project pipeline kompass-pipeline build --region data/region.local.json --out data/build/<name>
+                         # the region build: edges.parquet, overlay + base map PMTiles, manifest.json (docs/pipeline.md).
+                         # Resumable, stages runnable alone (`kompass-pipeline <stage>`), `--force` redoes.
+                         # A heavy job: about 9 min and 5.5 GB peak for a 100 km radius, plus the
+                         # downloads on a first run (extracts ~1.5 GB, DEM 0.4 GB, base map 0.5 GB). Run one at a time.
 cd engine && cargo run -p kompass-cli -- --version     # the native engine: `kompass`
 uv run --project tools/komoot kompass-komoot --help    # Komoot download (run by the user, see tools/komoot/README.md)
 ```
@@ -37,7 +42,7 @@ uv run --project tools/komoot kompass-komoot --help    # Komoot download (run by
 - Ports: dev 7950, Vite HMR 7951, e2e 7959. Other projects on this host own other ports (3456,
   3773, 4327, 4517, 4518, 7446, 7890, 7930, …) and their own `tailscale serve` entries: never touch
   those. Agents don't set up `tailscale serve`; the driver does.
-- NixOS: `uv` uses the nix Python (`UV_PYTHON`, no Python downloads) and finds libstdc++/zlib for the
+- NixOS: `uv` uses the nix Python (`UV_PYTHON`, no Python downloads) and finds libstdc++/zlib/expat for the
   PyPI wheels through `LD_LIBRARY_PATH` from the shell hook. Playwright uses the nix Chromium
   (`KOMPASS_E2E_CHROMIUM`, set by the shell); in CI, `bunx playwright install` provides one.
 - The e2e screenshots land in `test-results/screenshots` (`KOMPASS_E2E_SCREENSHOT_DIR=…` moves them).
@@ -66,7 +71,8 @@ uv run --project tools/komoot kompass-komoot --help    # Komoot download (run by
   real names, tokens or hostnames (no `*.ts.net` names) into code, tests, fixtures, docs, issues,
   PR text or screenshots. Fixtures use a synthetic area or a clearly unrelated small one (the demo
   map shows central Zurich). The region config (`data/region.local.json`), builds and tracks live
-  only under the gitignored `data/`; agents don't read the region config.
+  only under the gitignored `data/`; the region config is read only by the pipeline at run time, its
+  contents never go into the repo.
 - TypeScript strict with `noUncheckedIndexedAccess`; Biome (2 spaces, double quotes, 110 cols).
   Rust: rustfmt (110 cols), clippy pedantic as warnings, `-D warnings` in the gate, no `unsafe`.
   Python: ruff (110 cols), pytest.

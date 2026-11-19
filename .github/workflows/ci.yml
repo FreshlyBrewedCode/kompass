@@ -49,6 +49,10 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      # the pipeline tests that need an external binary (tippecanoe) skip when it is absent; osmium,
+      # pmtiles and gdal are only used by the real region build, not by the tests
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq tippecanoe
+
       - run: bun run check
 
       - run: bun run build
