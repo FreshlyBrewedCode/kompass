@@ -1,0 +1,6 @@
+[install]
+exact = true
+
+[test]
+# Unit tests live in web/test; e2e/ is Playwright's (bun run e2e).
+root = "web"

@@ -1,0 +1,10 @@
+[package]
+name = "kompass-core"
+description = "The Kompass routing engine: graph, cost, queries"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true

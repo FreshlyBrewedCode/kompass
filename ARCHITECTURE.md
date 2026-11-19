@@ -119,17 +119,6 @@ Later: GitHub Pages for the app, and Cloudflare (R2) for the large data files if
 - Garmin: a Connect IQ data field fed from a phone or server is possible later. Pushing the
   planned route as a course (GPX/FIT) is the easy first step.
 
-## Repo layout
-
-```
-kompass/
-  pipeline/   Python (uv): OSM → edges.parquet
-  engine/     Rust workspace: core, wasm, cli
-  web/        TypeScript (bun, Vite, React, shadcn, Tailwind, MapLibre)
-  data/       region builds, local config, tracks (gitignored)
-  docs/       high-level concepts, ADRs
-```
-
 ## Things to keep in mind
 
 - OSM gaps: many tracks lack `surface`. Keep *unknown* explicit and let personal corrections
