@@ -1,0 +1,81 @@
+/* One scope per direction. Each one re-points the shadcn tokens, so shadcn components pick up the identity. */
+
+/* A · Field sheet: a printed topo map. Paper, ink green, route in survey magenta. */
+.dir-a {
+  --background: #f3eee1; --foreground: #1e2a22; --card: #faf7ee; --card-foreground: #1e2a22;
+  --muted: #e6dfcd; --muted-foreground: #5d675c; --border: #d6cdb8; --input: #d6cdb8;
+  --primary: #24523a; --primary-foreground: #f6f2e6; --secondary: #e9e2d0; --secondary-foreground: #1e2a22;
+  --accent: #e9e2d0; --accent-foreground: #1e2a22; --ring: #24523a; --radius: 0.5rem;
+  --route: #c2255c; --route-2: #1c6fb8;
+  --marker-bg: #1e2a22; --marker-ring: #faf7ee; --marker-accent: #c2255c; --marker-font: "IBM Plex Sans";
+  font-family: "IBM Plex Sans", sans-serif;
+}
+.dark .dir-a {
+  --background: #121812; --foreground: #ebe6d6; --card: #192119; --card-foreground: #ebe6d6;
+  --muted: #263026; --muted-foreground: #a2aa9b; --border: #2f3b2f; --input: #2f3b2f;
+  --primary: #9fd3b0; --primary-foreground: #0f1710; --secondary: #232d23; --secondary-foreground: #ebe6d6;
+  --accent: #232d23; --accent-foreground: #ebe6d6; --ring: #9fd3b0;
+  --route: #ff5f96; --route-2: #6db8ff;
+  --marker-bg: #ebe6d6; --marker-fg: #121812; --marker-ring: #121812; --marker-accent: #ff5f96; --marker-accent-fg: #121812;
+}
+.dir-a .display { font-family: "Fraunces Variable", serif; font-optical-sizing: auto; }
+
+/* B · Mixer: an instrument panel. Graphite, engraved labels, amber and cyan lamps. */
+.dir-b {
+  --background: #dedbd3; --foreground: #17181a; --card: #ecebe6; --card-foreground: #17181a;
+  --muted: #cfccc3; --muted-foreground: #5b5c5e; --border: #b9b6ac; --input: #b9b6ac;
+  --primary: #17181a; --primary-foreground: #f2f0ea; --secondary: #d3d0c7; --secondary-foreground: #17181a;
+  --accent: #d3d0c7; --accent-foreground: #17181a; --ring: #d9480f; --radius: 0.25rem;
+  --lamp-a: #d9480f; --lamp-b: #0b7285; --lcd: #1b2420; --lcd-fg: #c7f2c0; --well: #c9c6bc;
+  --marker-bg: #17181a; --marker-ring: #ecebe6; --marker-accent: #d9480f; --marker-radius: 4px; --marker-font: "IBM Plex Mono";
+  font-family: "IBM Plex Mono", monospace;
+}
+.dark .dir-b {
+  --background: #0e0f11; --foreground: #e8e6df; --card: #17191c; --card-foreground: #e8e6df;
+  --muted: #24272b; --muted-foreground: #8d9096; --border: #2c3035; --input: #2c3035;
+  --primary: #e8e6df; --primary-foreground: #0e0f11; --secondary: #1e2125; --secondary-foreground: #e8e6df;
+  --accent: #1e2125; --accent-foreground: #e8e6df; --ring: #ffb020;
+  --lamp-a: #ffb020; --lamp-b: #3bc9db; --lcd: #0a0f0c; --lcd-fg: #9ef0a2; --well: #08090a;
+  --marker-bg: #17191c; --marker-fg: #e8e6df; --marker-ring: #e8e6df; --marker-accent: #ffb020; --marker-accent-fg: #0e0f11;
+}
+.dir-b .cond { font-family: "Barlow Condensed", sans-serif; letter-spacing: 0.08em; text-transform: uppercase; }
+
+/* C · Sentence: the map and a few words. Monochrome glass, one vermilion accent. */
+.dir-c {
+  --background: #f4f4f2; --foreground: #111312; --card: rgb(255 255 255 / 0.86); --card-foreground: #111312;
+  --muted: #e9e9e6; --muted-foreground: #646864; --border: rgb(17 19 18 / 0.1); --input: rgb(17 19 18 / 0.12);
+  --primary: #111312; --primary-foreground: #fff; --secondary: #ececea; --secondary-foreground: #111312;
+  --accent: #ececea; --accent-foreground: #111312; --ring: #f0451f; --radius: 1rem;
+  --hot: #f0451f; --cool: #2563eb; --more: #0f8a5f; --less: #c2410c;
+  --marker-bg: #111312; --marker-ring: #fff; --marker-accent: #111312;
+  --callout-bg: rgb(255 255 255 / 0.94); --callout-fg: #111312;
+  font-family: "Manrope Variable", sans-serif;
+}
+.dark .dir-c {
+  --background: #0c0d0d; --foreground: #f1f1ee; --card: rgb(24 26 26 / 0.84); --card-foreground: #f1f1ee;
+  --muted: #232626; --muted-foreground: #9a9f9b; --border: rgb(255 255 255 / 0.1); --input: rgb(255 255 255 / 0.14);
+  --primary: #f1f1ee; --primary-foreground: #0c0d0d; --secondary: #1f2222; --secondary-foreground: #f1f1ee;
+  --accent: #1f2222; --accent-foreground: #f1f1ee; --ring: #ff6a45;
+  --hot: #ff6a45; --cool: #6ea8ff; --more: #4fd1a1; --less: #ff9b6b;
+  --marker-bg: #f1f1ee; --marker-fg: #0c0d0d; --marker-ring: #0c0d0d; --marker-accent: #f1f1ee; --marker-accent-fg: #0c0d0d;
+  --callout-bg: rgb(28 30 30 / 0.94); --callout-fg: #f1f1ee;
+}
+
+/* D · Rose: a chart table. Navy and brass, the profile is a compass rose. */
+.dir-d {
+  --background: #eef1f0; --foreground: #10233a; --card: #ffffff; --card-foreground: #10233a;
+  --muted: #dfe5e6; --muted-foreground: #56677a; --border: #cfd8dc; --input: #cfd8dc;
+  --primary: #10233a; --primary-foreground: #f4f1e6; --secondary: #e3e9ea; --secondary-foreground: #10233a;
+  --accent: #e3e9ea; --accent-foreground: #10233a; --ring: #b8860b; --radius: 0.75rem;
+  --brass: #a8780a;
+  --marker-bg: #10233a; --marker-ring: #fff; --marker-accent: #10233a; --marker-font: "Bricolage Grotesque Variable";
+  font-family: "Bricolage Grotesque Variable", sans-serif;
+}
+.dark .dir-d {
+  --background: #0a1422; --foreground: #ece6d3; --card: #111f33; --card-foreground: #ece6d3;
+  --muted: #1b2c44; --muted-foreground: #93a2b6; --border: #23364f; --input: #23364f;
+  --primary: #e6c069; --primary-foreground: #0a1422; --secondary: #17273d; --secondary-foreground: #ece6d3;
+  --accent: #17273d; --accent-foreground: #ece6d3; --ring: #e6c069;
+  --brass: #e6c069;
+  --marker-bg: #ece6d3; --marker-fg: #0a1422; --marker-ring: #0a1422; --marker-accent: #e6c069; --marker-accent-fg: #0a1422;
+}
