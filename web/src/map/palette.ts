@@ -49,6 +49,9 @@ export const EXPLORED: Record<Theme, { never: string; ridden: string }> = {
   dark: { never: "#6c7686", ridden: "#ffa94d" },
 };
 
+/** "My rides": the raw recorded tracks. Magenta: distinct from the Okabe–Ito hues, the explored orange and the base map. */
+export const RIDES: Record<Theme, string> = { light: "#c2185b", dark: "#ff6fa5" };
+
 /** The selected edge (the inspect panel). */
 export const SELECTED: Record<Theme, string> = { light: "#111111", dark: "#ffffff" };
 

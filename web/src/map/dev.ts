@@ -1,5 +1,5 @@
 // Dev hooks (`bun run dev`, or any build with `?dev` / `?fakeRidden=<n>`): fake some ridden edges so the
-// explored map can be tried before the history import exists.
+// explored map can be tried without matched rides.
 import type { Map as MapLibreMap } from "maplibre-gl";
 import type { RideInfo } from "@/history/explored-store";
 import { OVERLAY_SOURCE } from "./style";

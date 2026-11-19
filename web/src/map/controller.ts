@@ -1,16 +1,30 @@
 // The region map: owns the MapLibre instance and wires data, style, modes, feature state and inspect.
 // No React in here; `components/` renders chrome around it and calls these methods.
 import "maplibre-gl/dist/maplibre-gl.css";
-import { Map as MapLibreMap, setWorkerUrl } from "maplibre-gl";
+import { type GeoJSONSource, Map as MapLibreMap, setWorkerUrl } from "maplibre-gl";
 import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import type { ExploredStore } from "@/history/explored-store";
+import type { RidesLayerData } from "@/rides/protocol";
+import type { Bounds } from "@/rides/types";
 import { ExploredLayer } from "./explored-layer";
 import { type OverlayState, overlayPaint } from "./expressions";
 import { type PickedEdge, pickEdge } from "./inspect";
 import type { Manifest } from "./manifest";
 import type { Theme } from "./palette";
 import { registerPmtiles } from "./protocol";
-import { buildStyle, labelLanguage, OVERLAY_CASING, OVERLAY_LINE, OVERLAY_SOURCE } from "./style";
+import {
+  buildStyle,
+  labelLanguage,
+  NO_RIDES,
+  OVERLAY_CASING,
+  OVERLAY_LINE,
+  OVERLAY_SOURCE,
+  RIDES_CASING,
+  RIDES_LINE,
+  RIDES_SELECTED,
+  RIDES_SOURCE,
+  type RidesLayerState,
+} from "./style";
 
 // MapLibre finds its worker next to its own module, which a bundle moves: point it at the copy Vite emits.
 setWorkerUrl(workerUrl);
@@ -44,6 +58,7 @@ export class RegionMap {
   #overlay: OverlayState;
   #selected: number | null = null;
   #ready = false;
+  #rides: RidesLayerState = NO_RIDES;
 
   constructor(options: RegionMapOptions) {
     registerPmtiles();
@@ -69,6 +84,10 @@ export class RegionMap {
     this.map.once("load", () => {
       this.#ready = true;
       container.dataset.loaded = "true";
+      // what arrived while the style was loading
+      (this.map.getSource(RIDES_SOURCE) as GeoJSONSource | undefined)?.setData(this.#rides.data as never);
+      this.setRidesVisible(this.#rides.visible);
+      this.highlightRide(this.#rides.selected);
       void this.explored.reapply();
     });
     this.map.on("idle", () => {
@@ -99,9 +118,44 @@ export class RegionMap {
       dataUrl,
       theme: this.#theme,
       overlay: this.#overlay,
+      rides: this.#rides,
       assetsUrl: new URL("map/", document.baseURI).href,
       lang: labelLanguage(navigator.languages ?? [navigator.language]),
     });
+  }
+
+  /** Replaces the recorded lines ("My rides"). */
+  setRides(data: RidesLayerData) {
+    this.#rides = { ...this.#rides, data };
+    if (!this.#ready) return;
+    (this.map.getSource(RIDES_SOURCE) as GeoJSONSource | undefined)?.setData(data as never);
+  }
+
+  setRidesVisible(visible: boolean) {
+    this.#rides = { ...this.#rides, visible };
+    if (!this.#ready) return;
+    for (const id of [RIDES_CASING, RIDES_SELECTED, RIDES_LINE]) {
+      this.map.setLayoutProperty(id, "visibility", visible ? "visible" : "none");
+    }
+  }
+
+  /** Highlights one ride's line (`null` clears). */
+  highlightRide(id: string | null) {
+    this.#rides = { ...this.#rides, selected: id };
+    if (!this.#ready) return;
+    this.map.setFilter(RIDES_SELECTED, ["==", ["get", "id"], id ?? ""]);
+  }
+
+  /** Zooms to a ride's bounds, leaving room for the panel (`padding` in px). */
+  fitBounds(bounds: Bounds, padding: { top: number; right: number; bottom: number; left: number }) {
+    const [w, s, e, n] = bounds;
+    this.map.fitBounds(
+      [
+        [w, s],
+        [e, n],
+      ],
+      { padding, maxZoom: 16, duration: 600 },
+    );
   }
 
   /** Switch the mode / attribute: only the overlay's paint changes, no tiles reload. */

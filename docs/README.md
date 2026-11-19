@@ -9,6 +9,7 @@ lasting shape here and deletes the section there.
 - [map.md](map.md): region data, base map, overlay modes, explored map
 - [pipeline.md](pipeline.md): the region build, from config to `edges.parquet` and map tiles
 - [edges-parquet.md](edges-parquet.md): the contract between pipeline and engine (columns, enums)
+- [rides.md](rides.md): the ride library: GPX/FIT import, on-device storage, dedup, backup, the map-matching seam
 - [adr/](adr/): architecture decision records
   - [0001](adr/0001-toolchain.md): toolchain, nix locally and setup actions in CI
 - [design/](design/): design rounds (directions, mock-ups, the chosen one)
@@ -27,7 +28,7 @@ web/ (static PWA)   React UI ──postMessage──▶ Web Worker (web/src/engi
 ```
 
 - **No backend.** The app is static files and works from any sub-path (relative Vite `base`).
-  Personal data will stay in the browser.
+  Personal data (the ride library, [rides.md](rides.md)) stays in the browser.
 - **The engine runs off the main thread.** The UI talks to it only through the typed client in
   `web/src/engine/` (`EngineMethods` lists every query with its params and result); the worker
   loads the wasm once and answers each request with a result or an error.

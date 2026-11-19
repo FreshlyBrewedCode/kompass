@@ -1,6 +1,6 @@
 # The map
 
-Code: `web/src/map/` (logic, no React), `web/src/history/` (the explored store),
+Code: `web/src/map/` (logic, no React), `web/src/history/` (the explored store), `web/src/rides/` ([rides.md](rides.md)),
 `web/src/components/` (chrome, replaceable). Tests: `web/test`, `e2e/map.spec.ts`.
 
 ## Region data
@@ -66,8 +66,8 @@ reload).
 ## Explored map
 
 `ExploredStore` (`history/explored-store.ts`): `setRidden(ids | Map<id, {count, lastRidden}>)`
-replaces the set, `clear()`, `subscribe()`. The history import fills it later and adds persistence
-(IndexedDB); the map reads it. `ExploredLayer` mirrors it into `feature-state` (`ridden`, `count`)
+replaces the set, `clear()`, `subscribe()`. The ride library ([rides.md](rides.md)) fills it from its saved matches
+(`RidesState.attachExplored`); the map reads it. `ExploredLayer` mirrors it into `feature-state` (`ridden`, `count`)
 in chunks of 5000 ids, yielding to the main thread between chunks, and applies only the difference.
 MapLibre keeps feature state per source and applies it to tiles as they load, so ids that are not on
 screen yet are fine; a new style (theme change) drops it, hence `reapply()` after every `style.load`.
