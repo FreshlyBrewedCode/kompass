@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { Card } from "@/components/ui/card";
 import { startEngine } from "@/engine/client";
 import type { LngLat } from "@/engine/protocol";
 
@@ -12,7 +11,7 @@ type State =
   | { status: "ready"; version: string; km: number }
   | { status: "error"; error: string };
 
-/** Asks the engine worker for its version and one distance, and shows both. */
+/** A small pill: the engine worker answered (it proves the wasm chain), with its version. */
 export function EngineStatus() {
   const [state, setState] = useState<State>({ status: "loading" });
 
@@ -24,21 +23,37 @@ export function EngineStatus() {
     return () => engine.terminate();
   }, []);
 
+  const dot =
+    state.status === "ready"
+      ? "bg-emerald-500"
+      : state.status === "error"
+        ? "bg-destructive"
+        : "bg-muted-foreground";
   return (
-    <Card
+    <div
       data-testid="engine-status"
       data-status={state.status}
-      className="pointer-events-auto gap-0 bg-card/90 px-3 py-2 text-sm backdrop-blur"
+      title={
+        state.status === "ready"
+          ? `Engine ${state.version} answered: Zurich → Bern ${state.km.toFixed(1)} km`
+          : state.status === "error"
+            ? `Engine failed: ${state.error}`
+            : "Starting the engine…"
+      }
+      className="pointer-events-auto flex h-6 items-center gap-1.5 rounded-full border bg-card/90 px-2 text-xs text-muted-foreground backdrop-blur"
     >
-      <div className="font-semibold">Kompass</div>
-      {state.status === "loading" && <div className="text-muted-foreground">Starting the engine…</div>}
-      {state.status === "error" && <div className="text-destructive">Engine failed: {state.error}</div>}
+      <span className={`size-1.5 rounded-full ${dot}`} aria-hidden />
       {state.status === "ready" && (
-        <div className="text-muted-foreground">
-          Engine <span data-testid="engine-version">{state.version}</span> · Zurich → Bern{" "}
-          <span data-testid="engine-distance">{state.km.toFixed(1)}</span> km
-        </div>
+        <>
+          <span className="sr-only">Engine </span>
+          <span data-testid="engine-version">{state.version}</span>
+          <span className="sr-only">
+            , Zurich → Bern <span data-testid="engine-distance">{state.km.toFixed(1)}</span> km
+          </span>
+        </>
       )}
-    </Card>
+      {state.status === "loading" && "engine…"}
+      {state.status === "error" && <span className="text-destructive">engine failed</span>}
+    </div>
   );
 }
