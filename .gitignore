@@ -2,8 +2,29 @@
 /data/
 *.local.json
 .env*
+
+# dependencies and build output
 node_modules/
 target/
 dist/
+*.tsbuildinfo
+
+# generated: the engine's wasm-bindgen output (bun run build:wasm)
+web/src/engine/pkg/
+
+# Python
 .venv/
 __pycache__/
+.ruff_cache/
+.pytest_cache/
+
+# test output
+test-results/
+playwright-report/
+blob-report/
+
+# editor and agent noise
+.DS_Store
+.idea/
+.vscode/
+.claude/worktrees/
