@@ -1,6 +1,12 @@
 //! The Kompass routing engine: graph, cost and queries. Platform-free: the `wasm` and `cli`
 //! crates are thin shells around it.
 
+pub mod bench;
+pub mod graph;
+pub mod profile;
+pub mod search;
+pub mod spatial;
+
 /// The engine version (the crate version), shown by the CLI and the web app.
 #[must_use]
 pub fn version() -> &'static str {

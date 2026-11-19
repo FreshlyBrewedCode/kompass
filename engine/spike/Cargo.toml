@@ -1,0 +1,22 @@
+[package]
+name = "kompass-spike"
+description = "Spike #4: graph compiler (edges.parquet → binary graph and tiles) and native benchmarks"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "kompass-spike"
+path = "src/main.rs"
+
+[dependencies]
+kompass-core.workspace = true
+parquet = { version = "=60.1.0", default-features = false, features = ["arrow", "zstd", "snap"] }
+arrow-array = "=60.1.0"
+arrow-schema = "=60.1.0"
+flate2 = "=1.1.11"
+brotli = "=9.1.3"
+
+[lints]
+workspace = true
