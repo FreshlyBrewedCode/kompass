@@ -42,7 +42,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `bun e2e/serve.ts --port ${port} --base ${BASE_PATH}`,
+    command: `bun scripts/serve.ts --port ${port} --base ${BASE_PATH} --data e2e/fixtures/region`,
     url: `http://127.0.0.1:${port}${BASE_PATH}`,
     reuseExistingServer: false,
     stdout: "pipe",
