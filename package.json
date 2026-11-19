@@ -1,0 +1,27 @@
+{
+  "name": "kompass",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "web"
+  ],
+  "scripts": {
+    "dev": "bun run build:wasm && bun run --filter @kompass/web dev",
+    "build": "bun run build:wasm && bun run --filter @kompass/web build",
+    "build:wasm": "bun scripts/build-wasm.ts",
+    "check": "bun run check:engine && bun run check:web && bun run check:pipeline",
+    "check:web": "bun run build:wasm && biome check . && bun run typecheck && bun test",
+    "check:engine": "cd engine && cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked",
+    "check:pipeline": "cd pipeline && uv run --locked ruff check . && uv run --locked ruff format --check . && uv run --locked pytest",
+    "typecheck": "tsc --noEmit -p web && tsc --noEmit -p e2e",
+    "format": "biome check --write . && cd engine && cargo fmt && cd ../pipeline && uv run ruff format . && uv run ruff check --fix .",
+    "e2e": "bun run build && playwright test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.8",
+    "@playwright/test": "1.65.1",
+    "@types/bun": "1.4.4",
+    "@types/node": "24.19.2",
+    "typescript": "7.0.2"
+  }
+}
