@@ -36,13 +36,17 @@ type Kompass = {
     queryRenderedFeatures(options: { layers: string[] }): { id?: number; state?: Record<string, unknown> }[];
     querySourceFeatures(
       source: string,
-      options: { sourceLayer: string },
+      options?: { sourceLayer: string },
     ): {
       id?: number;
       geometry: { coordinates: [number, number][] };
     }[];
     project(lngLat: [number, number]): { x: number; y: number };
+    getBounds(): { contains(lngLat: [number, number]): boolean };
+    getZoom(): number;
   };
+  /** the ride worker, called directly (dev hook) */
+  ridesCall(method: string, params: unknown): Promise<unknown>;
 };
 declare global {
   interface Window {

@@ -1,5 +1,5 @@
 // The explored map's data: which edges have been ridden. A plain in-memory store with a subscribe
-// API; the history import (a later task) fills it and adds persistence (IndexedDB), the map reads it
+// API; the ride library (src/rides/, docs/rides.md) fills it from its saved matches, the map reads it
 // and mirrors it into `feature-state` (src/map/explored-layer.ts). Edge ids are the overlay's
 // feature ids (= the engine's edge ids).
 

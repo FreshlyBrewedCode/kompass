@@ -68,13 +68,6 @@ Later: GitHub Pages for the app, and Cloudflare (R2) for the large data files if
 - It contains hard constraints, soft weights (surface, road class, traffic, context bonuses,
   climb, novelty mode) and personal overrides. A preset is a saved profile.
 
-## History import
-
-- A Komoot download script runs locally as a CLI. Komoot's API isn't public and can't be
-  called from the browser. I run the script myself with my own login.
-- GPX (Komoot) and FIT (Garmin) files are dropped into the app. They're map-matched in the
-  browser and deduplicated by overlapping time.
-
 ## Ride mode (later)
 
 - Foreground GPS with the screen kept on (Wake Lock). A PWA gets no reliable GPS in the

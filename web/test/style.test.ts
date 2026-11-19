@@ -44,14 +44,35 @@ describe("buildStyle", () => {
     expect(ids.indexOf("roads_minor")).toBeLessThan(line);
   });
 
+  test("the recorded rides sit with the overlay, above the roads and below the labels", () => {
+    const ids = buildStyle({ manifest, ...base }).layers.map((l) => l.id);
+    const rides = ids.indexOf("rides-line");
+    expect(rides).toBeGreaterThan(ids.indexOf(OVERLAY_LINE));
+    expect(rides).toBeLessThan(ids.indexOf("roads_labels_major"));
+    const hidden = buildStyle({
+      manifest,
+      ...base,
+      rides: { data: { type: "FeatureCollection", features: [] }, visible: false, selected: "abc" },
+    });
+    expect(hidden.layers.find((l) => l.id === "rides-line")?.layout).toMatchObject({ visibility: "none" });
+    expect(
+      JSON.stringify(
+        (hidden.layers.find((l) => l.id === "rides-selected") as { filter?: unknown } | undefined)?.filter,
+      ),
+    ).toContain("abc");
+  });
+
   test("without a base map the style is a plain background plus the overlay", () => {
     const style = buildStyle({ manifest: { ...manifest, basemap: null }, ...base });
-    expect(Object.keys(style.sources)).toEqual(["overlay"]);
+    expect(Object.keys(style.sources)).toEqual(["overlay", "rides"]);
     expect(style.layers.map((l) => l.id)).toEqual([
       "background",
       "overlay-casing",
       "overlay-selected",
       "overlay-edges",
+      "rides-casing",
+      "rides-selected",
+      "rides-line",
     ]);
   });
 
