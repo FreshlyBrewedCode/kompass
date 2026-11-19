@@ -6,6 +6,7 @@ still described in the bootstrap [ARCHITECTURE.md](../ARCHITECTURE.md); whoever 
 lasting shape here and deletes the section there.
 
 - [Shape](#shape): how the pieces fit together
+- [map.md](map.md): region data, base map, overlay modes, explored map
 - [adr/](adr/): architecture decision records
   - [0001](adr/0001-toolchain.md): toolchain, nix locally and setup actions in CI
 - [design/](design/): design rounds (directions, mock-ups, the chosen one)
@@ -32,4 +33,4 @@ web/ (static PWA)   React UI ──postMessage──▶ Web Worker (web/src/engi
   thin shells, so a query works the same in the browser and on the command line.
 - **Generated, not committed:** the wasm-bindgen output (`web/src/engine/pkg`) and everything under
   `data/`.
-- **Base map:** a public demo style (OpenFreeMap) until the region's own PMTiles exist.
+- **Region data is loaded at run time** from a data URL, described by a manifest: see [map.md](map.md).
