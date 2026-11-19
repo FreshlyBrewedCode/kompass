@@ -9,12 +9,13 @@
     "dev": "bun run build:wasm && bun run --filter @kompass/web dev",
     "build": "bun run build:wasm && bun run --filter @kompass/web build",
     "build:wasm": "bun scripts/build-wasm.ts",
-    "check": "bun run check:engine && bun run check:web && bun run check:pipeline",
+    "check": "bun run check:engine && bun run check:web && bun run check:pipeline && bun run check:tools",
     "check:web": "bun run build:wasm && biome check . && bun run typecheck && bun test",
     "check:engine": "cd engine && cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked",
     "check:pipeline": "cd pipeline && uv run --locked ruff check . && uv run --locked ruff format --check . && uv run --locked pytest",
+    "check:tools": "cd tools/komoot && uv run --locked ruff check . && uv run --locked ruff format --check . && uv run --locked pytest",
     "typecheck": "tsc --noEmit -p web && tsc --noEmit -p e2e",
-    "format": "biome check --write . && cd engine && cargo fmt && cd ../pipeline && uv run ruff format . && uv run ruff check --fix .",
+    "format": "biome check --write . && cd engine && cargo fmt && cd ../pipeline && uv run ruff format . && uv run ruff check --fix . && cd ../tools/komoot && uv run ruff format . && uv run ruff check --fix .",
     "e2e": "bun run build && playwright test"
   },
   "devDependencies": {

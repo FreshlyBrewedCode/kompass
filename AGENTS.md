@@ -18,6 +18,7 @@ bun run check            # the gate, must pass before every commit (also CI):
   bun run check:engine   #   cargo fmt --check, clippy --all-targets -D warnings, cargo test
   bun run check:web      #   build:wasm, biome, strict tsc (web + e2e), bun test
   bun run check:pipeline #   ruff check, ruff format --check, pytest (uv)
+  bun run check:tools    #   the same for tools/komoot
 bun run build:wasm       # kompass-wasm → web/src/engine/pkg (generated, gitignored; `--dev` for a debug build)
 bun run dev              # build:wasm, then Vite with HMR: http://127.0.0.1:7950 (HMR websocket 7951)
 bun run build            # build:wasm + the web app, into web/dist (relative base: works from any sub-path)
@@ -25,6 +26,7 @@ bun run e2e              # build, then Playwright (phone 390×844 + desktop 1440
                          # static server on 7959 serving web/dist under /kompass/ (KOMPASS_E2E_PORT=…)
 bun run format           # biome --write, cargo fmt, ruff format + fix
 cd engine && cargo run -p kompass-cli -- --version     # the native engine: `kompass`
+uv run --project tools/komoot kompass-komoot --help    # Komoot download (run by the user, see tools/komoot/README.md)
 ```
 
 - Ports: dev 7950, Vite HMR 7951, e2e 7959. Other projects on this host own other ports (3456,

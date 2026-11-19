@@ -1,0 +1,32 @@
+[project]
+name = "kompass-komoot"
+version = "0.1.0"
+description = "Kompass tools: download recorded Komoot tours as GPX (local, run by the user)"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "httpx==0.28.1",
+]
+
+[project.scripts]
+kompass-komoot = "kompass_komoot.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest==9.2.0",
+    "ruff==0.17.6",
+]
+
+[build-system]
+requires = ["uv_build>=0.9,<0.13"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 110
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -p no:cacheprovider"
