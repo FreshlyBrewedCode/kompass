@@ -32,9 +32,16 @@ interface Props {
   waypoints: Waypoint[];
   layer: LayerMode;
   attr: AttrKey;
-  profile: Profile;
+  profile?: Profile;
   padding: Pad;
-  callouts?: { lngLat: LngLat; html: string }[];
+  callouts?: { lngLat: LngLat; html: string; flip?: boolean }[];
+  /** Round 2: a ready colour expression for the attribute map, instead of `attr` + `profile`. */
+  colorExpr?: unknown;
+  colorKey?: string;
+  /** Round 2: refit only when this changes (not on every reroute while a slider is dragged). */
+  fitKey?: string;
+  /** Round 2: a dot on the route, driven by scrubbing the timeline. */
+  cursor?: LngLat | null;
   /** Tint for woodland, drawn under the roads. Gives the grey base styles some outdoors. */
   forest?: { light?: string; dark?: string };
   /** Lift the attribution above a bottom panel (px). */
@@ -67,13 +74,13 @@ function routeGeoJSON(r: MapRoute) {
   };
 }
 
-export function MapView({ theme, styles = { light: STYLES.liberty, dark: STYLES.dark }, routes, waypoints, layer, attr, profile, padding, callouts, forest, attribBottom = 0, className }: Props) {
+export function MapView({ theme, styles = { light: STYLES.liberty, dark: STYLES.dark }, routes, waypoints, layer, attr, profile, padding, callouts, forest, attribBottom = 0, className, colorExpr, colorKey, fitKey, cursor }: Props) {
   const el = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const ready = useRef(false);
   const markers = useRef<maplibregl.Marker[]>([]);
-  const props = useRef({ routes, layer, attr, profile, theme, padding, forest });
-  props.current = { routes, layer, attr, profile, theme, padding, forest };
+  const props = useRef({ routes, layer, attr, profile, theme, padding, forest, colorExpr });
+  props.current = { routes, layer, attr, profile, theme, padding, forest, colorExpr };
 
   const fit = (animate: boolean) => {
     const map = mapRef.current;
@@ -115,7 +122,7 @@ export function MapView({ theme, styles = { light: STYLES.liberty, dark: STYLES.
       const width = ["interpolate", ["linear"], ["zoom"], 10, 0.8, 13, 1.8, 16, 4] as maplibregl.ExpressionSpecification;
       const filter = ["match", ["get", "class"], SKIP, false, true] as maplibregl.FilterSpecification;
       if (layer === "debug") {
-        map.addLayer({ id: "k-edges-line", type: "line", source: "openmaptiles", "source-layer": "transportation", filter, layout: { "line-cap": "round" }, paint: { "line-color": attrColor(attr, profile) as maplibregl.ExpressionSpecification, "line-width": width } }, firstSymbol);
+        map.addLayer({ id: "k-edges-line", type: "line", source: "openmaptiles", "source-layer": "transportation", filter, layout: { "line-cap": "round" }, paint: { "line-color": (props.current.colorExpr ?? attrColor(attr, profile as Profile)) as maplibregl.ExpressionSpecification, "line-width": width } }, firstSymbol);
       } else {
         map.addLayer({ id: "k-edges-line", type: "line", source: "openmaptiles", "source-layer": "transportation", filter, paint: { "line-color": dark ? "#d9a441" : "#c98a1b", "line-opacity": 0.8, "line-width": ["interpolate", ["linear"], ["zoom"], 10, 0.5, 13, 1.1, 16, 2.2] } }, firstSymbol);
         map.addSource("k-hist", { type: "geojson", data: { type: "FeatureCollection", features: HISTORY.map((h) => ({ type: "Feature", properties: { count: h.count }, geometry: { type: "LineString", coordinates: h.coords } })) } as unknown as GJ });
@@ -181,9 +188,9 @@ export function MapView({ theme, styles = { light: STYLES.liberty, dark: STYLES.
 
   const routeKey = routes.map((r) => `${r.id}:${r.color}:${r.width}:${r.opacity}:${r.dashed}:${r.colorBy}`).join("|");
   // biome-ignore lint/correctness/useExhaustiveDependencies: keyed
-  useEffect(() => apply(), [routeKey, layer, attr, profile, forest?.light, forest?.dark]);
+  useEffect(() => apply(), [routeKey, layer, attr, profile, colorKey, forest?.light, forest?.dark]);
 
-  const padKey = `${padding.top},${padding.bottom},${padding.left},${padding.right}|${routes.map((r) => r.id).join()}`;
+  const padKey = `${padding.top},${padding.bottom},${padding.left},${padding.right}|${fitKey ?? routes.map((r) => r.id).join()}`;
   // biome-ignore lint/correctness/useExhaustiveDependencies: keyed
   useEffect(() => {
     if (layer === "normal") fit(true);
@@ -208,7 +215,7 @@ export function MapView({ theme, styles = { light: STYLES.liberty, dark: STYLES.
     map.easeTo({ center: c, zoom: 13.4, padding: { top: Math.min(p.top, 120), bottom: Math.min(p.bottom, map.getContainer().clientHeight * 0.55), left: Math.min(p.left, 400), right: Math.min(p.right, 400) }, duration: initial ? 0 : 600 });
   }, [layer]);
 
-  const calloutKey = (callouts ?? []).map((c) => c.html).join("|");
+  const calloutKey = (callouts ?? []).map((c) => `${c.html}${c.lngLat}${c.flip}`).join("|");
   // biome-ignore lint/correctness/useExhaustiveDependencies: keyed
   useEffect(() => {
     const map = mapRef.current;
@@ -217,9 +224,9 @@ export function MapView({ theme, styles = { light: STYLES.liberty, dark: STYLES.
     markers.current = [];
     for (const c of callouts ?? []) {
       const d = document.createElement("div");
-      d.className = "kcallout";
+      d.className = c.flip ? "kcallout kcallout-flip" : "kcallout";
       d.innerHTML = c.html;
-      markers.current.push(new maplibregl.Marker({ element: d, anchor: "bottom-left", offset: [6, -6] }).setLngLat(c.lngLat).addTo(map));
+      markers.current.push(new maplibregl.Marker({ element: d, anchor: c.flip ? "bottom-right" : "bottom-left", offset: c.flip ? [-6, -6] : [6, -6] }).setLngLat(c.lngLat).addTo(map));
     }
     waypoints.forEach((w, i) => {
       const d = document.createElement("div");
@@ -230,6 +237,22 @@ export function MapView({ theme, styles = { light: STYLES.liberty, dark: STYLES.
       markers.current.push(new maplibregl.Marker({ element: d }).setLngLat(w.lngLat).addTo(map));
     });
   }, [waypoints, calloutKey]);
+
+  const cursorMarker = useRef<maplibregl.Marker | null>(null);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (!cursor) {
+      cursorMarker.current?.remove();
+      cursorMarker.current = null;
+      return;
+    }
+    if (!cursorMarker.current) {
+      const d = document.createElement("div");
+      d.className = "kcursor";
+      cursorMarker.current = new maplibregl.Marker({ element: d }).setLngLat(cursor).addTo(map);
+    } else cursorMarker.current.setLngLat(cursor);
+  }, [cursor]);
 
   // MapLibre makes its container position:relative, so the positioned box is a wrapper
   return (

@@ -1,5 +1,5 @@
 // Screenshots of every direction. Usage: bun scripts/shots.mjs [letters] [outDir]
-// Needs the dev server on :7951 and a Chromium (`nix build nixpkgs#chromium -o .chromium`).
+// Needs the dev server on :7952 and a Chromium (`nix build nixpkgs#chromium -o .chromium`).
 import { mkdirSync, readFileSync } from "node:fs";
 import { chromium } from "playwright-core";
 
@@ -26,7 +26,7 @@ for (const l of letters) {
     const ctx = await browser.newContext({ viewport: { width: s.w, height: s.h }, deviceScaleFactor: 2, hasTouch: s.w < 500, isMobile: s.w < 500 });
     const page = await ctx.newPage();
     page.on("pageerror", (e) => console.log(`[${l}-${s.name}] page error: ${e.message}`));
-    await page.goto(`http://127.0.0.1:7951/${l}?${s.q}`);
+    await page.goto(`http://127.0.0.1:7952/${l}?${s.q}`);
     await page.waitForFunction(() => window.__kompassMap?.loaded() && window.__kompassMap.areTilesLoaded(), null, { timeout: 60000 }).catch(() => console.log(`[${l}-${s.name}] map did not settle`));
     await page.waitForTimeout(1200);
     await page.screenshot({ path: `${out}/${l}-${s.name}.png` });

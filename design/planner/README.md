@@ -1,24 +1,30 @@
-# Planner design round 1
+# Planner design sandbox
 
-Four directions for the responsive Kompass planner (issue #7). Real stack (Vite, React, TypeScript,
+Design rounds for the responsive Kompass planner (issue #7). Real stack (Vite, React, TypeScript,
 Tailwind v4, shadcn/ui, MapLibre GL JS), mock data. This is a design sandbox: it does not depend on
 the monorepo and nothing here is the product yet.
+
+- **Round 2** (`/c1`, `/c2`, `/c3`): three takes on the direction picked in round 1, C "Sentence",
+  rebuilt around sliders and a preference picker. [Jump to round 2](#round-2-c-with-sliders).
+- **Round 1** (`/a` … `/d`): four directions. `/c` stays as the reference for round 2.
 
 ## Run
 
 ```sh
 cd design/planner
 bun install
-bun run dev        # http://127.0.0.1:7951
+bun run dev        # http://127.0.0.1:7952
 ```
 
-- `/` is the index, `/a` … `/d` are the directions. Resize the window or open it on a phone: below
-  900 px you get the phone layout.
+- `/` is the index with links to every state. Resize the window or open it on a phone: below 900 px
+  you get the phone layout.
 - URL switches: `?theme=light|dark`, `?view=plan|profile|layers`, `?layer=debug|explored`, `?compare=1`.
+  Round 2 adds `?demo=1` (two preferences already added), `?picker=1` (picker open) and, for `/c1`,
+  `?hold=climb` (the sheet as it looks while a slider is held) and `?sheet=peek`.
 - Screenshots: `nix build nixpkgs#chromium -o .chromium`, start the dev server, then
-  `bun scripts/shots.mjs` (writes `/tmp/kompass-design-1/<letter>-{phone,phone-profile,desktop,board}.png`;
-  `EXTRA=1` adds dark phone, light desktop and the layer views). If Chromium fails with a GLIBC
-  error, run it with `LD_LIBRARY_PATH` unset.
+  `bun scripts/shots2.mjs` (round 2, writes `/tmp/kompass-design-2/<id>-{phone,phone-profile,phone-picker,desktop,board}.png`;
+  `EXTRA=1` adds compare, layers, dark phone and more) or `bun scripts/shots.mjs` (round 1). If
+  Chromium fails with a GLIBC error, run it with `LD_LIBRARY_PATH` unset.
 
 ## What is real and what is mock
 
@@ -37,7 +43,7 @@ bun run dev        # http://127.0.0.1:7951
 - The edge views open zoomed in, because the public tiles only carry tracks and paths from zoom 13.
   The real overlay tiles will not have that limit.
 
-## The directions
+## Round 1: the directions
 
 ### A · Field sheet (`/a`): bottom sheet, sliders
 
@@ -89,3 +95,118 @@ bun run dev        # http://127.0.0.1:7951
   nothing about hard limits; three always-on routes get busy on a small map.
 - **Grows into:** ride mode is already a tab; the rose can become the junction display (one petal
   per branch). The agent proposes candidates as further cards in the same carousel.
+
+## Round 2: C with sliders
+
+The pick from round 1 was C, with this feedback: plain sliders are the best way to see and set the
+weights; profiles start from pre-defined bases and are tweaked per plan, with the route following
+in real time; only a few attributes are always on screen, the rest come from a picker you search,
+"like a filter you put in"; the result can be saved as a preset.
+
+### What all three share
+
+- **A profile is a base plus this plan's changes.** Pick a base (Gravel explorer, Paved & quiet,
+  River valley, Blank slate, your own presets), then tweak. The header says "Gravel explorer · 2
+  changes", every changed row carries a dot (tap it to put the row back) and a ring on the slider
+  at the base's value. Reset drops the changes, "Save as preset" turns them into a new base.
+- **Four sliders are always there** (gravel & unpaved, low traffic, climbing, never ridden). The
+  base brings its own extras; everything else comes from the picker and can be removed again.
+- **Soft and hard look different.** A preference is a slider that is neutral in the middle (avoid ↔
+  seek) with its value in a word ("prefer", "seek out"). A limit is a lock with a switch, and a
+  stepper where it carries a number (max grade 15 %, max trail difficulty S1). Limits sit in their
+  own block, "never broken".
+- **The picker is the catalogue**: 36 preferences and 7 limits in eight groups (surface, way type,
+  traffic, landscape, terrain, routes & access, trail difficulty, my rides), one line of
+  explanation each, a note where the tag is thinly mapped. Search matches name, explanation and group.
+- **Dragging reroutes.** The toy engine (`src/round2/model.ts`) cuts the three mock routes at the
+  nodes they share and picks the cheapest candidate per section under the current profile, so a
+  slider flips single stretches of the route at different positions, with real geometry.
+- **The timeline from round 1's B is back**, compact: elevation over lanes for surface, way type
+  and never ridden, a fourth lane marking the stretches your changes moved, and a scrub that puts a
+  dot on the map.
+- Kept from C: the full map, the route coloured by surface, "why this way" notes on the map (they
+  follow the route as it changes), the trade-off in words when a second profile is compared, the
+  agent bar.
+- Map views: normal, attribute map (surface, way type, traffic, trail difficulty, cost in this
+  profile; the last one reacts to the sliders), explored map. Rides import and the ride list live
+  with the map views, because the explored map is what they feed.
+- Dashed chips mark room for later: profile per leg, via and avoid areas, sketch, loops, ride mode,
+  learn from my rides; the agent bar is in place and not wired.
+
+### What happened to the sentence
+
+It is gone as an editor and stays as a read-out. Three reasons: you asked for sliders; a sentence
+that lists every preference grows with the catalogue; and tapping words to change numbers was the
+coarse part of round 1.
+
+What survives is one generated line that describes **the changes, not the profile**: "Gravel
+explorer, but more water and never anything steeper than 15 %." Its length follows the number of
+changes, so it stays short however large the catalogue gets. It is shown under the profile name, in
+the collapsed sheet, and it is the default description of a saved preset. It is also exactly what
+the agent needs later: when it edits the profile from "quiet, no forests", this line is how it says
+what it did, next to the sliders that moved. The same voice answers "what did my changes do" (C3's
+verdict) and "how does the other profile differ" (the compare card).
+
+### C1 · Sheet (`/c1`): bottom sheet, the whole list, search-first picker
+
+- **Idea:** one sheet with three detents (peek, half, full) and three tabs: Route, Profile, Map.
+  The profile tab is the whole editor as a list. While a slider is held, the sheet clears away and
+  leaves only that row and the totals, so the map is free at the moment you need it
+  (`?hold=climb`). The base profile's route stays on the map as a dashed ghost while yours differs.
+  On desktop: route card left, profile card right, as in round 1.
+- **Answers:** editor in a sheet with detents; picker as a searchable list with room for every
+  explanation; live comparison as a ghost route plus deltas next to the totals.
+- **Weak spot:** at rest the half sheet covers 58 % of a phone screen, and the sixth slider is
+  below the fold. Hold-to-clear needs to be found once (it happens by itself when you drag).
+
+### C2 · Strip (`/c2`): chips, one slider at a time, chip picker
+
+- **Idea:** the map keeps the screen. Above the agent bar runs a strip of chips: the base profile
+  first, then one chip per active preference with a tiny meter, the limits with a lock, and "Add".
+  Tap a chip and one slider opens in the card above, with its explanation; tap the base chip for
+  chooser, diff, preset and compare. The totals card grows into the route details. On desktop the
+  strip is a dock at the bottom centre.
+- **Answers:** editor as a strip of chips that expand; picker as grouped chips (tap to read the
+  explanation, tap again or "Add" to add); live comparison as numbers ("vs base +1.9 km, −147 m,
+  −21 min, −9.6 km gravel").
+- **Weak spot:** no overview. You see one value at a time, the strip scrolls sideways once there
+  are more than three or four preferences, and reading a whole profile means swiping through it.
+  The chip picker is fast for someone who knows the catalogue and thin for someone who does not.
+
+### C3 · Bench (`/c3`): fixed split, dense rows, category grid
+
+- **Idea:** nothing floats. The map has its own pane on top, the timeline is the seam, and below
+  it a panel with four tabs (Profile, Stops, Compare, Map). Every slider is one line: name, slider,
+  number. On desktop the profile is a docked column and the timeline a dock under the map, with the
+  stops next to it, where per-leg profiles would go.
+- **Answers:** editor as a full-height panel that never hides the map or the timeline; picker as a
+  grid of categories you drill into ("2 in use · 5"); live comparison as a sentence ("Your version
+  is 1.9 km longer but 21 min faster, with 147 m less climbing").
+- **Weak spot:** the map is a third of the phone screen, always, and the app stops feeling like a
+  map. The densest of the three, with small touch targets on the one-line sliders.
+
+### Recommendation
+
+**Build on C1, and borrow two things.** The list is the only form that shows a whole profile at a
+glance (sliders, what differs from the base, the limits), and "build up your own set on the go"
+needs that overview once there are eight rows. The sheet is what an iPhone user expects, it gives
+the picker room for explanations, and hold-to-clear removes round 1's objection at exactly the
+moment it mattered: while tuning. The desktop layout falls out of it without a second design.
+
+Borrow from C2 the delta numbers next to the totals (already in C1's header) and, later, the chip
+strip as the *peek* state of the sheet: profile at a glance with the map open, pull up for the
+list. Borrow from C3 the verdict sentence under the profile name. C3's one-line rows are worth
+having as a density setting on desktop.
+
+### What is real and what is mock in round 2
+
+- Real: base choice, sliders, limits with numbers, the picker with search, add and remove, the
+  diff against the base, reset, save as preset (it appears in the chooser), compare, waypoints,
+  the sheet detents and hold-to-clear, the timeline scrub, the three map views, light and dark.
+- Mock: the engine. It knows three routes and splices them, so the numbers are honest for the line
+  on the map but the landscape shares (forest, water, edge) are made up, and "rerouted in n ms" is
+  decoration. Waypoint edits do not reroute. Presets are gone on reload. The attribute map paints
+  five attributes from the public base tiles; the rest of the catalogue needs the real overlay.
+- What the profile data must support, as this design uses it, is in `src/round2/model.ts`: a base
+  id, soft weights by attribute id (−100 … +100, absent means no opinion), hard limits by id with
+  an optional number, the diff of both against the base, and presets as full copies.
