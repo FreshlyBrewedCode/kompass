@@ -1,0 +1,88 @@
+import { describe, expect, test } from "bun:test";
+import { ManifestError, parseManifest } from "../src/map/manifest";
+
+const valid = () => ({
+  schemaVersion: 1,
+  builtAt: "2000-01-01T00:00:00Z",
+  bounds: [-1, -1, 1, 1],
+  center: [0, 0],
+  basemap: { file: "basemap.pmtiles", maxzoom: 15 },
+  overlay: {
+    file: "overlay.pmtiles",
+    layer: "edges",
+    minzoom: 8,
+    maxzoom: 14,
+    attributes: [
+      { key: "surface_class", label: "Surface", kind: "enum", values: [{ value: 0, label: "unknown" }] },
+      { key: "forest", label: "In forest", kind: "share", max: 1 },
+      { key: "grade_max", label: "Max grade", kind: "number", unit: "%", min: 0, max: 25 },
+    ],
+  },
+});
+
+/** The manifest with one path replaced (`undefined` removes it). */
+function mutate(path: string[], value: unknown) {
+  const m = valid() as Record<string, unknown>;
+  let node = m;
+  for (const key of path.slice(0, -1)) node = node[key] as Record<string, unknown>;
+  const last = path[path.length - 1] as string;
+  if (value === undefined) delete node[last];
+  else node[last] = value;
+  return m;
+}
+
+describe("parseManifest", () => {
+  test("accepts the pipeline's manifest", () => {
+    const m = parseManifest(valid());
+    expect(m.overlay.attributes.map((a) => a.kind)).toEqual(["enum", "share", "number"]);
+    expect(m.basemap?.file).toBe("basemap.pmtiles");
+  });
+
+  test("a region without a base map is fine (basemap: null or absent)", () => {
+    expect(parseManifest(mutate(["basemap"], null)).basemap).toBeNull();
+    expect(parseManifest(mutate(["basemap"], undefined)).basemap).toBeNull();
+  });
+
+  test("rejects what is not an object, and other schema versions", () => {
+    expect(() => parseManifest(null)).toThrow(ManifestError);
+    expect(() => parseManifest([])).toThrow(ManifestError);
+    expect(() => parseManifest(mutate(["schemaVersion"], 2))).toThrow(/schemaVersion 2/);
+  });
+
+  test.each([
+    [["bounds"], [1, 2, 3], "bounds"],
+    [["bounds"], [1, -1, -1, 1], "west < east"],
+    [["bounds"], [-1, -1, 1, 95], "out of range"],
+    [["center"], [0], "center"],
+    [["basemap", "file"], "https://elsewhere.example/b.pmtiles", "relative file name"],
+    [["overlay", "file"], "../overlay.pmtiles", "relative file name"],
+    [["overlay", "layer"], "", "overlay.layer"],
+    [["overlay", "maxzoom"], 6, "zoom range"],
+    [["overlay", "attributes"], "none", "overlay.attributes"],
+    [["overlay", "attributes"], [{ key: "a", label: "A", kind: "colour" }], "kind"],
+    [["overlay", "attributes"], [{ key: "a", label: "A", kind: "enum", values: [] }], "values"],
+    [["overlay", "attributes"], [{ key: "a", label: "A", kind: "share", max: 0 }], "positive"],
+    [
+      ["overlay", "attributes"],
+      [{ key: "a", label: "A", kind: "number", min: 5, max: 5 }],
+      "greater than min",
+    ],
+  ])("rejects %j = %j", (path, value, message) => {
+    expect(() => parseManifest(mutate(path as string[], value))).toThrow(message as string);
+  });
+
+  test("rejects duplicate attribute keys and enum codes", () => {
+    const dup = valid();
+    dup.overlay.attributes.push(dup.overlay.attributes[1] as never);
+    expect(() => parseManifest(dup)).toThrow(/key twice/);
+    const codes = valid();
+    (codes.overlay.attributes[0] as { values: unknown[] }).values.push({ value: 0, label: "again" });
+    expect(() => parseManifest(codes)).toThrow(/code twice/);
+  });
+
+  test("names the failing path", () => {
+    expect(() =>
+      parseManifest(mutate(["overlay", "attributes"], [{ key: "a", label: "A", kind: "share" }])),
+    ).toThrow("overlay.attributes[0].max");
+  });
+});

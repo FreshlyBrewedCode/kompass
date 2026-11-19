@@ -89,19 +89,6 @@ Later: GitHub Pages for the app, and Cloudflare (R2) for the large data files if
 - It contains hard constraints, soft weights (surface, road class, traffic, context bonuses,
   climb, novelty mode) and personal overrides. A preset is a saved profile.
 
-## Map rendering
-
-- **MapLibre GL JS** draws vector tiles in the browser (WebGL).
-- **Base map:** a Protomaps PMTiles extract for the region. A PMTiles file is a single file
-  holding all tiles; the browser fetches the parts it needs with HTTP range requests, so no
-  tile server is needed, and it can be cached for offline use.
-- **Overlay:** the routing edges with their attributes and edge IDs, turned into PMTiles by
-  tippecanoe. MapLibre style expressions colour the overlay by any attribute (the debug map),
-  and switching views needs no regeneration.
-- **Personal data on the map:** MapLibre `feature-state` colours overlay edges by edge ID from
-  history held in IndexedDB (the explored map), so personal data never has to become tiles.
-  Routes and the live trail are drawn as GeoJSON.
-
 ## History import
 
 - A Komoot download script runs locally as a CLI. Komoot's API isn't public and can't be

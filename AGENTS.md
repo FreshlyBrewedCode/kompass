@@ -20,10 +20,15 @@ bun run check            # the gate, must pass before every commit (also CI):
   bun run check:pipeline #   ruff check, ruff format --check, pytest (uv)
   bun run check:tools    #   the same for tools/komoot
 bun run build:wasm       # kompass-wasm → web/src/engine/pkg (generated, gitignored; `--dev` for a debug build)
-bun run dev              # build:wasm, then Vite with HMR: http://127.0.0.1:7950 (HMR websocket 7951)
+bun run dev              # build:wasm, then Vite with HMR: http://127.0.0.1:7950 (HMR websocket 7951);
+                         # serves a region build at /data/: KOMPASS_DATA_DIR=<dir> (default data/build/region;
+                         # without it the app shows its empty state), e.g. KOMPASS_DATA_DIR=e2e/fixtures/region
 bun run build            # build:wasm + the web app, into web/dist (relative base: works from any sub-path)
-bun run e2e              # build, then Playwright (phone 390×844 + desktop 1440×900) against a throwaway
-                         # static server on 7959 serving web/dist under /kompass/ (KOMPASS_E2E_PORT=…)
+bun run serve -- --port 7950 --data <dir>   # static server for the built app + a region data dir (HTTP
+                         # Range, long cache for PMTiles): the way to playtest a build on a phone
+bun run e2e              # build, then Playwright (phone 390×844 + desktop 1440×900) against that server on
+                         # 7959 under /kompass/ with the synthetic fixture region (KOMPASS_E2E_PORT=…)
+nix develop -c bun e2e/fixtures/build-region.ts   # rebuild the fixture region (tippecanoe) after changing it
 bun run format           # biome --write, cargo fmt, ruff format + fix
 cd engine && cargo run -p kompass-cli -- --version     # the native engine: `kompass`
 uv run --project tools/komoot kompass-komoot --help    # Komoot download (run by the user, see tools/komoot/README.md)
@@ -36,7 +41,8 @@ uv run --project tools/komoot kompass-komoot --help    # Komoot download (run by
   PyPI wheels through `LD_LIBRARY_PATH` from the shell hook. Playwright uses the nix Chromium
   (`KOMPASS_E2E_CHROMIUM`, set by the shell); in CI, `bunx playwright install` provides one.
 - The e2e screenshots land in `test-results/screenshots` (`KOMPASS_E2E_SCREENSHOT_DIR=…` moves them).
-  The map's base style comes from a public demo server (OpenFreeMap), so the e2e needs network.
+  The e2e needs no network: the map runs on the committed synthetic fixture (`e2e/fixtures/region`) and
+  the vendored glyphs and sprites (`web/public/map`).
 - Leave nothing running: stop dev servers with Ctrl+C or SIGTERM by PID, not `pkill -f`.
 
 ## Layout
@@ -49,7 +55,8 @@ uv run --project tools/komoot kompass-komoot --help    # Komoot download (run by
   `worker.ts` the Web Worker that loads the wasm). Unit tests in `web/test`.
 - `pipeline/`: Python (uv): OSM extract → `edges.parquet`, the contract with the engine.
 - `tools/`: local scripts the user runs themselves (e.g. the Komoot download).
-- `e2e/`: Playwright specs and the throwaway static server. `scripts/`: repo build scripts.
+- `e2e/`: Playwright specs and the synthetic fixture region. `scripts/`: repo build scripts and the static
+  server (`serve.ts`, with Range support).
 - `docs/`: high-level concepts ([index](docs/README.md)), `adr/`, `design/`, `reports/`.
 - `data/`: region config, builds, tracks. Gitignored, never committed.
 

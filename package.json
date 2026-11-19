@@ -16,6 +16,7 @@
     "check:tools": "cd tools/komoot && uv run --locked ruff check . && uv run --locked ruff format --check . && uv run --locked pytest",
     "typecheck": "tsc --noEmit -p web && tsc --noEmit -p e2e",
     "format": "biome check --write . && cd engine && cargo fmt && cd ../pipeline && uv run ruff format . && uv run ruff check --fix . && cd ../tools/komoot && uv run ruff format . && uv run ruff check --fix .",
+    "serve": "bun scripts/serve.ts",
     "e2e": "bun run build && playwright test"
   },
   "devDependencies": {

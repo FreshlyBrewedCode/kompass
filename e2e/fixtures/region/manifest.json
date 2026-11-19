@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 1,
+  "builtAt": "2000-01-01T00:00:00Z",
+  "bounds": [-0.020249999999999997, -0.020249999999999997, 0.020249999999999997, 0.020249999999999997],
+  "center": [0, 0],
+  "basemap": {
+    "file": "basemap.pmtiles",
+    "maxzoom": 14
+  },
+  "overlay": {
+    "file": "overlay.pmtiles",
+    "layer": "edges",
+    "minzoom": 8,
+    "maxzoom": 14,
+    "attributes": [
+      {
+        "key": "surface_class",
+        "label": "Surface",
+        "kind": "enum",
+        "values": [
+          {
+            "value": 0,
+            "label": "unknown"
+          },
+          {
+            "value": 1,
+            "label": "paved smooth"
+          },
+          {
+            "value": 2,
+            "label": "paved rough"
+          },
+          {
+            "value": 3,
+            "label": "compacted"
+          },
+          {
+            "value": 4,
+            "label": "gravel"
+          },
+          {
+            "value": 5,
+            "label": "soft"
+          },
+          {
+            "value": 6,
+            "label": "other"
+          }
+        ]
+      },
+      {
+        "key": "highway",
+        "label": "Road class",
+        "kind": "enum",
+        "values": [
+          {
+            "value": 0,
+            "label": "other"
+          },
+          {
+            "value": 1,
+            "label": "trunk"
+          },
+          {
+            "value": 2,
+            "label": "primary"
+          },
+          {
+            "value": 3,
+            "label": "secondary"
+          },
+          {
+            "value": 4,
+            "label": "tertiary"
+          },
+          {
+            "value": 5,
+            "label": "residential"
+          },
+          {
+            "value": 6,
+            "label": "service"
+          },
+          {
+            "value": 7,
+            "label": "track"
+          },
+          {
+            "value": 8,
+            "label": "path"
+          },
+          {
+            "value": 9,
+            "label": "cycleway"
+          }
+        ]
+      },
+      {
+        "key": "forest",
+        "label": "In forest",
+        "kind": "share",
+        "max": 1
+      },
+      {
+        "key": "grade_max",
+        "label": "Max grade",
+        "kind": "number",
+        "unit": "%",
+        "min": 0,
+        "max": 25
+      }
+    ]
+  }
+}
