@@ -4,9 +4,19 @@ version = "0.1.0"
 description = "Kompass data pipeline: OSM extract → edges.parquet (offline, local)"
 requires-python = ">=3.13,<3.14"
 dependencies = [
+    "numpy==2.5.5",
+    "osmium==4.3.2",
+    "pandas==3.1.1",
     "pyarrow==26.0.1",
+    "pyogrio==0.13.0",
+    "pyproj==3.8.0",
+    "rasterio==1.5.2",
+    "scipy==1.18.1",
     "shapely==2.2.0",
 ]
+
+[project.scripts]
+kompass-pipeline = "kompass_pipeline.cli:main"
 
 [dependency-groups]
 dev = [

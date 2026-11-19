@@ -22,7 +22,7 @@
           rust = pkgs.rust-bin.fromRustupToolchainFile ./engine/rust-toolchain.toml;
           # Libraries the PyPI wheels (pyarrow, shapely, pyosmium, rasterio, ...) expect from an FHS
           # distro. Exported on LD_LIBRARY_PATH so `uv run` works on NixOS without nix-ld.
-          pythonLibs = with pkgs; [ stdenv.cc.cc.lib zlib ];
+          pythonLibs = with pkgs; [ stdenv.cc.cc.lib zlib expat ];
         in
         {
           default = pkgs.mkShell {
