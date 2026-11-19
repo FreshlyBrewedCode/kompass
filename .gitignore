@@ -1,0 +1,9 @@
+# Region builds, local config, personal tracks: never committed (public repo)
+/data/
+*.local.json
+.env*
+node_modules/
+target/
+dist/
+.venv/
+__pycache__/
