@@ -14,7 +14,7 @@ env:
 
 jobs:
   # The gate (`bun run check`): engine (fmt, clippy, test), wasm build, web (biome, tsc, bun test),
-  # pipeline (ruff, pytest); then the web build. CI uses the usual setup actions, no nix; the versions
+  # pipeline and tools (ruff, pytest); then the web build. CI uses the usual setup actions, no nix; the versions
   # match flake.nix and engine/rust-toolchain.toml.
   check:
     runs-on: ubuntu-latest
@@ -39,7 +39,9 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-          cache-dependency-glob: pipeline/uv.lock
+          cache-dependency-glob: |
+            pipeline/uv.lock
+            tools/komoot/uv.lock
 
       - uses: oven-sh/setup-bun@v2
         with:
