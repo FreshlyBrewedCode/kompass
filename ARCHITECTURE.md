@@ -32,29 +32,6 @@
 **Static PWA, no backend.** During development it's served from the dev VM over Tailscale.
 Later: GitHub Pages for the app, and Cloudflare (R2) for the large data files if needed.
 
-## Pipeline (Python, uv)
-
-- Input: an OSM extract clipped to the region (a 100 km radius to start; the centre lives in a
-  gitignored local config, never in the repo). The radius crosses state borders, so it's
-  clipped from a larger Geofabrik extract.
-- Steps: keep bike-routable ways, split them at junctions, and derive attributes per edge:
-  - **Surface:** `surface`, `tracktype`, `smoothness`, with *unknown* kept explicit.
-  - **Road type:** `highway` class and cycleways (including paved paths away from the road).
-  - **Traffic proxy:** road class, `maxspeed`, `lanes`.
-  - **Legal access:** `access`, `bicycle`, and state rules such as forest-path rules.
-  - **Context, from spatial joins:** share of the edge inside forest, along a forest edge,
-    near a river or lake, built-up vs. open land.
-  - **Terrain:** elevation sampled along the geometry, ascent per direction, max gradient.
-  - **Sketchiness:** `tracktype` grade4/5, path width, `trail_visibility`, `mtb:scale`, plus
-    missing data.
-- Graph-level: bridges and two-edge-connected components (cheap dead-end detection), and
-  pruning of tiny disconnected components.
-- Output: `edges.parquet`, one row per edge with geometry and attributes. It can be inspected
-  with DuckDB or a notebook. Python is used for its geo libraries (pyosmium, geopandas, shapely,
-  rasterio); hot spots can move to Rust later.
-- Elevation: Copernicus 30 m to start, or the open DGM1 (1 m terrain models) of the German
-  states.
-
 ## Engine (Rust)
 
 - Crates: `core` (graph, cost, queries), `wasm` (wasm-bindgen, runs in a Web Worker),
@@ -68,6 +45,8 @@ Later: GitHub Pages for the app, and Cloudflare (R2) for the large data files if
   remove edges. A* uses the smallest factor the profile allows as its lower bound. Regional
   scale needs none of the heavy speedups big routing engines use (contraction hierarchies).
   Waypoints split the route into legs, and each leg searches a corridor.
+- **Dead ends** (bridges, pockets beyond them) are found here, not in the pipeline: they depend
+  on the profile's hard constraints. The pipeline only prunes tiny disconnected components.
 - **Queries:**
   - `route`: A→B through waypoints and zones, profile per leg.
   - `loop`: start, distance, bearing or sketched shape; a novelty prize.
