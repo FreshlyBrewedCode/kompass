@@ -13,6 +13,7 @@
     "layer": "edges",
     "minzoom": 8,
     "maxzoom": 14,
+    "drawing": ["bridge", "tunnel", "layer", "service_kind"],
     "attributes": [
       {
         "key": "highway",

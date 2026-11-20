@@ -88,6 +88,13 @@ describe("parseManifest", () => {
     expect(parseManifest(mutate(["basemap"], undefined)).basemap).toBeNull();
   });
 
+  test("the overlay's drawing properties are optional (older builds have none)", () => {
+    expect(parseManifest(valid()).overlay.drawing).toEqual([]);
+    const m = parseManifest(mutate(["overlay", "drawing"], ["bridge", "tunnel"]));
+    expect(m.overlay.drawing).toEqual(["bridge", "tunnel"]);
+    expect(() => parseManifest(mutate(["overlay", "drawing"], "bridge"))).toThrow(ManifestError);
+  });
+
   test("the terrain is optional; with it, the contours are too", () => {
     expect(parseManifest(valid()).terrain).toBeNull();
     expect(parseManifest(mutate(["terrain"], null)).terrain).toBeNull();

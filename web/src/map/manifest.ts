@@ -73,6 +73,12 @@ export type Manifest = {
     minzoom: number;
     maxzoom: number;
     attributes: OverlayAttribute[];
+    /**
+     * Properties the overlay carries for drawing only (not information layers): `bridge`, `tunnel`,
+     * `layer`, `service_kind`. Written only when not 0, so a missing property means 0. Empty for
+     * overlays built before they existed (docs/map.md).
+     */
+    drawing: string[];
   };
   /** `null`: the build has no terrain, the map is drawn flat. */
   terrain: Terrain | null;
@@ -212,6 +218,12 @@ function attribute(value: unknown, path: string): OverlayAttribute {
   }
 }
 
+function drawing(value: unknown): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new ManifestError("overlay.drawing must be a list");
+  return value.map((k: unknown, i) => str(k, `overlay.drawing[${i}]`));
+}
+
 function zoomRange(o: Obj, path: string): { minzoom: number; maxzoom: number } {
   const minzoom = int(o.minzoom, `${path}.minzoom`);
   const maxzoom = int(o.maxzoom, `${path}.maxzoom`);
@@ -304,6 +316,7 @@ export function parseManifest(json: unknown): Manifest {
       minzoom,
       maxzoom,
       attributes,
+      drawing: drawing(o.drawing),
     },
     terrain: terrain(m.terrain),
     ...(graph === undefined ? {} : { graph }),

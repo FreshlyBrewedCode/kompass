@@ -220,6 +220,7 @@ def derive(df: pd.DataFrame) -> pd.DataFrame:
     out["informal"] = df["tag_informal"] == "yes"
     out["on_bridge"] = df["tag_bridge"].notna() & (df["tag_bridge"] != "no")
     out["in_tunnel"] = df["tag_tunnel"].notna() & (df["tag_tunnel"] != "no")
+    out["layer"] = _num(df["tag_layer"].fillna(""), r"^\s*(-?[0-9]+)").fillna(0).clip(-5, 5).astype(np.int8)
     lit = {"yes": "yes", "24/7": "yes", "automatic": "yes", "no": "no"}
     out["lit"] = code(df["tag_lit"], lit, "lit").astype(np.uint8)
     out["name"] = df["tag_name"]

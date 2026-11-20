@@ -38,6 +38,22 @@ manifest; the app validates it (`manifest.ts`):
 - Overlay features carry an **integer feature id equal to the edge id** (`feature-state` and the
   inspect panel rely on it) and one integer or float property per attribute. The layer is
   overzoomed past `maxzoom`.
+- **Drawing properties** (`overlay.drawing`, a list of keys; absent or empty in overlays built before
+  they existed, so the style must work without them): integer properties for drawing only, not
+  information layers (so not in `attributes`, no labels). Written only when not 0, so a missing
+  property means 0:
+
+  | key | values | meaning |
+  |---|---|---|
+  | `bridge` | 1 | the edge is on a bridge |
+  | `tunnel` | 1 | the edge is in a tunnel |
+  | `layer` | -5..5 | OSM `layer`, to order crossings (bridges above, tunnels below) |
+  | `service_kind` | 1 parking_aisle, 2 driveway | kind of a `highway=service` edge; other service roads have none |
+
+  Ferries are `highway` = `ferry` (label looked up in the manifest, like every road class), from z8.
+  Tracks are in the overlay from **z12** (grade 1 to 3 from **z11**), paths and the rest from z13
+  (`MINZOOM` in `pipeline/tiles.py`); `highway`, `tracktype` and `surface_class` are on every
+  feature.
 - `kind`: `enum` (integer codes with labels), `share` (0..`max`, shown as a percentage) and `number`
   (`min`..`max`, optional `unit`).
 - `terrain` may be `null` or absent (the map is drawn flat), and so may its `contours`. The contour

@@ -7,7 +7,7 @@ is a directory per build:
 | file | what |
 |---|---|
 | `edges.parquet` | the routing graph, [the contract with the engine](edges-parquet.md) |
-| `overlay.pmtiles` | the edges as vector tiles (layer `edges`, z8..14): the map's roads, tracks and paths from z13 on, its information layers and the explored map |
+| `overlay.pmtiles` | the edges as vector tiles (layer `edges`, z8..14): the map's roads (tracks from z11 or z12, paths from z13), its information layers and the explored map |
 | `basemap.pmtiles` | the Protomaps base map cut to the region (z0..15) |
 | `terrain.pmtiles` | the DEM as raster tiles (Terrarium PNG, 256 px, z6..12) for the hillshade |
 | `contours.pmtiles` | contour lines as vector tiles (layer `contours`, `ele` in metres, z10..14) |
@@ -45,9 +45,28 @@ tools (osmium, tippecanoe, pmtiles, gdal) come from the nix dev shell; a missing
 6. **finalize**: tags become typed attributes (`tags.py`, enum labels from `schema.py`), everything
    is joined, rows are sorted by the Hilbert key and written with the schema metadata.
 7. **overlay** and **basemap**: tippecanoe cuts `overlay.pmtiles` with the edge id as the feature id
-   and the attributes listed in `schema.OVERLAY`; minor road classes appear at higher zooms only,
-   so low-zoom tiles stay small: on a 100 km region the largest tile is under 190 KB (gzip) up to
-   z12, 311 KB at z13 and 123 KB at z14, where every class is shown and nothing is dropped.
+   and the attributes listed in `schema.OVERLAY` (the information layers, in the manifest) plus the
+   drawing-only properties `schema.OVERLAY_DRAWING` (`bridge`, `tunnel`, `layer`, `service_kind`, written
+   only when not 0, listed in the manifest's `overlay.drawing`; see [map.md](map.md)). Ferries are
+   `highway` = `ferry`. Minor road classes appear at higher zooms only, so low-zoom tiles stay small:
+   tracks of grade 1 to 3 from z11, other tracks from z12, paths and the rest at z13 (`MINZOOM`,
+   `GOOD_TRACK_MINZOOM` in `tiles.py`). Nothing is dropped at any zoom.
+   Check the sizes of a build with `python -m kompass_pipeline.tilestats <overlay.pmtiles>` (largest
+   tile per zoom; keep it well under 500 KB). Demo region (15 km), largest tile / total per zoom, KB
+   (gzip), before this change and with tracks from z12 / z11 for all / z11 for grades 1 to 3 (chosen):
+
+   | zoom | before | all tracks z12 | all tracks z11 | chosen |
+   |---|---|---|---|---|
+   | 11 | 30 / 116 | 30 / 117 | 140 / 587 | 93 / 398 |
+   | 12 | 45 / 296 | 84 / 854 | 84 / 854 | 84 / 854 |
+   | 13 | 72 / 1538 | 73 / 1553 | 73 / 1553 | 73 / 1553 |
+   | 14 | 33 / 1861 | 33 / 1880 | 33 / 1880 | 33 / 1880 |
+   | file | 3.84 MB | 4.42 MB | 4.88 MB | 4.70 MB |
+
+   The new properties cost about 1 % (+0.04 MB). On a 100 km region tiles are about 4 times the demo's
+   at the same zoom (it was 190 KB against 45 KB at z12), so the chosen setting is expected near
+   350 KB at z11 and z12: check it after a build and raise `GOOD_TRACK_MINZOOM` / `TRACK_MINZOOM` by one
+   if a tile goes over 500 KB.
    `pmtiles extract` cuts the base map from the latest Protomaps
    build (needs network).
 8. **terrain**: the DEM (the same `ElevationFn` as the elevation stage, so another model replaces
