@@ -195,9 +195,11 @@ impl Engine {
     pub fn route(&mut self, request: &str) -> String {
         let req: RouteRequest = match serde_json::from_str(request) {
             Ok(r) => r,
-            Err(e) => return to_json(&RouteOutcome::Err {
-                error: &invalid(format!("route request: {e}")),
-            }),
+            Err(e) => {
+                return to_json(&RouteOutcome::Err {
+                    error: &invalid(format!("route request: {e}")),
+                });
+            }
         };
         let planner = match self.planner() {
             Ok(p) => p,
@@ -237,7 +239,8 @@ impl Engine {
 
     /// `explain`: `{ profile, arcs }` as JSON → one `ArcExplanation` per arc, as JSON.
     pub fn explain(&mut self, request: &str) -> Result<String, String> {
-        let req: ExplainRequest = serde_json::from_str(request).map_err(|e| format!("explain request: {e}"))?;
+        let req: ExplainRequest =
+            serde_json::from_str(request).map_err(|e| format!("explain request: {e}"))?;
         let out = self
             .planner()?
             .explain(&req.profile, &req.arcs)
@@ -358,9 +361,7 @@ impl Engine {
             missing_tiles: usize,
             heap: HeapStats,
         }
-        let (nodes, edges) = self
-            .graph()
-            .map_or((0, 0), |g| (g.node_count(), g.edge_count()));
+        let (nodes, edges) = self.graph().map_or((0, 0), |g| (g.node_count(), g.edge_count()));
         to_json(&Info {
             build_id: &self.build_id,
             nodes,
@@ -477,7 +478,10 @@ mod tests {
         assert!(e.tiles().len() > 1, "the test graph spans tiles");
         assert!(e.missing_tiles().is_empty());
         let out: Value = serde_json::from_str(&e.route(&request(&e, &preset("gravel_explorer")))).unwrap();
-        assert!(out["result"]["summary"]["distance_m"].as_f64().unwrap() > 1000.0, "{out}");
+        assert!(
+            out["result"]["summary"]["distance_m"].as_f64().unwrap() > 1000.0,
+            "{out}"
+        );
         assert_eq!(out["missingGeometry"], serde_json::json!([]));
         let info: Value = serde_json::from_str(&e.info()).unwrap();
         assert_eq!(info["geometryTiles"].as_u64().unwrap() as usize, e.tiles().len());
@@ -498,7 +502,10 @@ mod tests {
         }
         let again: Value = serde_json::from_str(&e.route(&req)).unwrap();
         assert_eq!(again["missingGeometry"], serde_json::json!([]));
-        assert_eq!(again["result"]["arcs"], out["result"]["arcs"], "geometry never changes the route");
+        assert_eq!(
+            again["result"]["arcs"], out["result"]["arcs"],
+            "geometry never changes the route"
+        );
     }
 
     #[test]
@@ -515,7 +522,10 @@ mod tests {
         assert!(e.prepare("{\"weights\":{\"nope\":1}}").is_err());
         assert!(e.finish().is_err());
         let f = files();
-        assert!(e.add_tile(&f.tiles[0].graph).is_err(), "tiles go in before finish");
+        assert!(
+            e.add_tile(&f.tiles[0].graph).is_err(),
+            "tiles go in before finish"
+        );
         assert!(Engine::new(b"not a graph").is_err());
     }
 
@@ -534,9 +544,11 @@ mod tests {
         let mut e = loaded(true);
         let out: Value = serde_json::from_str(&e.route(&request(&e, &preset("gravel_explorer")))).unwrap();
         let arcs = out["result"]["arcs"].clone();
-        let diff: Value =
-            serde_json::from_str(&e.diff(&serde_json::json!({ "a": arcs, "b": arcs }).to_string()).unwrap())
-                .unwrap();
+        let diff: Value = serde_json::from_str(
+            &e.diff(&serde_json::json!({ "a": arcs, "b": arcs }).to_string())
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(diff["stretches"], serde_json::json!([]));
         let explain = serde_json::json!({
             "profile": serde_json::from_str::<Value>(&preset("gravel_explorer")).unwrap(),
@@ -597,10 +609,8 @@ mod tests {
         assert_eq!(a, e.bench_pairs(7, 1.0, 3.0, 5).unwrap());
         assert_eq!(a.len(), 20);
         for p in a.chunks(4) {
-            let d = kompass_core::haversine_m(
-                LngLat { lng: p[0], lat: p[1] },
-                LngLat { lng: p[2], lat: p[3] },
-            );
+            let d =
+                kompass_core::haversine_m(LngLat { lng: p[0], lat: p[1] }, LngLat { lng: p[2], lat: p[3] });
             assert!((1000.0..=3000.0).contains(&d));
         }
         assert!(e.bench_pairs(7, 500.0, 600.0, 5).unwrap().is_empty());

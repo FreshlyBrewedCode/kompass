@@ -210,7 +210,12 @@ impl Engine {
 
     /// The personal layer: rides and last-ridden day per edge, today (days since 1970).
     #[wasm_bindgen(js_name = setPersonal)]
-    pub fn set_personal(&mut self, rides: Vec<u16>, last_ridden: Vec<u32>, today: u32) -> Result<(), JsError> {
+    pub fn set_personal(
+        &mut self,
+        rides: Vec<u16>,
+        last_ridden: Vec<u32>,
+        today: u32,
+    ) -> Result<(), JsError> {
         self.0
             .set_personal(Some(PersonalLayer {
                 rides,
