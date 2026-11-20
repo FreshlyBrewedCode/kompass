@@ -1,0 +1,5 @@
+{
+  "name": "demo: Black Forest east of Freiburg (public-safe, for screenshots)",
+  "center": { "lat": 47.93, "lon": 8.04 },
+  "radiusKm": 15
+}

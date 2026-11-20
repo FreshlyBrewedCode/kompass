@@ -58,6 +58,7 @@ def test_stages_are_ordered_and_chained():
         "finalize",
         "overlay",
         "basemap",
+        "terrain",
         "manifest",
     ]
     produced = set()

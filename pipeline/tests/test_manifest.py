@@ -18,7 +18,31 @@ def test_manifest_matches_the_contract():
     o = m["overlay"]
     assert (o["file"], o["layer"], o["minzoom"], o["maxzoom"]) == ("overlay.pmtiles", "edges", 8, 14)
     assert tiles.OVERLAY_MINZOOM == 8 and tiles.OVERLAY_MAXZOOM == 14
+    assert m["terrain"] is None
     json.dumps(m)  # serialisable
+
+
+def test_terrain_is_listed_when_built():
+    m = manifest.build(REGION, "abc123", has_terrain=True, has_contours=True)
+    t = m["terrain"]
+    assert (t["file"], t["encoding"], t["tileSize"], t["minzoom"], t["maxzoom"]) == (
+        "terrain.pmtiles",
+        "terrarium",
+        256,
+        6,
+        12,
+    )
+    assert t["contours"] == {"file": "contours.pmtiles", "layer": "contours", "minzoom": 10, "maxzoom": 14}
+    assert "contours" not in manifest.build(REGION, None, has_terrain=True)["terrain"]
+
+
+def test_rewriting_the_manifest_keeps_built_at_for_the_same_edges(tmp_path):
+    out = tmp_path / "manifest.json"
+    out.write_text(json.dumps({"buildId": "abc", "builtAt": "2030-01-02T03:04:05Z"}))
+    assert manifest.previous_built_at(out, "abc") == "2030-01-02T03:04:05Z"
+    assert manifest.previous_built_at(out, "other") is None
+    assert manifest.previous_built_at(out, None) is None
+    assert manifest.previous_built_at(tmp_path / "missing.json", "abc") is None
 
 
 def test_overlay_attributes_come_from_the_schema():
