@@ -107,7 +107,9 @@ trailer:        u32 0 · u32 0 · u32 ride count · u32 CRC-32 of every byte bef
 
 ## The map-matching seam
 
-Matching is not built yet (it needs the engine). The library gives it everything to plug in
+The matcher is built in the engine ([matching.md](matching.md)); wiring it to the library comes next, and the
+stored match then becomes `arcs` + `coverage` (+ `firstPoint`, `unmatched`) instead of `edgeIds` + `directions`.
+The library as it stands gives it everything to plug in
 (`RideLibrary`, reachable through the worker as the `RideMethods` in `protocol.ts`):
 
 - `listRides()` summaries, `getPoints(rideId)` → `{ count, lat, lon, time, ele }` typed arrays (degrees, ms, m).

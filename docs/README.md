@@ -11,6 +11,7 @@ lasting shape here and deletes the section there.
 - [edges-parquet.md](edges-parquet.md): the contract between pipeline and engine (columns, enums)
 - [rides.md](rides.md): the ride library: GPX/FIT import, on-device storage, dedup, backup, the map-matching seam
 - [graph-format.md](graph-format.md): the engine's tiled binary graph, its files and how it loads
+- [matching.md](matching.md): map-matching recorded tracks onto the graph, lazy geometry, the explored fold
 - [adr/](adr/): architecture decision records
   - [0001](adr/0001-toolchain.md): toolchain, nix locally and setup actions in CI
 - [design/](design/): design rounds (directions, mock-ups, the chosen one)
