@@ -5,12 +5,20 @@ const visibility = (page: Page, layer: string) =>
   page.evaluate((id) => window.__kompass.map.getLayoutProperty(id, "visibility") ?? "visible", layer);
 const filter = (page: Page, layer: string) =>
   page.evaluate((id) => JSON.stringify(window.__kompass.map.getFilter(id)), layer);
+/** Opens "Map & rides" (if closed) and switches the map to `name`: none, explored or an attribute key. */
 const pick = async (page: Page, name: string) => {
-  await page.getByTestId("info-picker").click();
-  await page.getByTestId(`info-${name}`).click();
+  if (!(await page.getByTestId("layers-panel").isVisible())) await page.getByTestId("map-rides").click();
+  if (name === "none" || name === "explored") await page.getByTestId(`mode-${name}`).click();
+  else {
+    await page.getByTestId("mode-attribute").click();
+    if (!(await page.getByTestId(`info-${name}`).isVisible())) await page.getByTestId("info-more").click();
+    await page.getByTestId(`info-${name}`).click();
+  }
   await expect(page.getByTestId("map")).toHaveAttribute("data-layer", name);
-  // the select's dismiss layer blocks pointer events on the page until it has closed
-  await expect(page.locator("body")).not.toHaveCSS("pointer-events", "none");
+};
+const closeLayers = async (page: Page) => {
+  await page.getByTestId("sheet-close").click();
+  await expect(page.getByTestId("layers-panel")).toHaveCount(0);
 };
 const WAYS = ["way-road", "way-solid", "way-firm", "way-loose", "way-soft"];
 
@@ -19,7 +27,6 @@ test("the map opens as the readable map: the overlay draws roads, tracks and pat
 }, testInfo) => {
   await openMap(page);
   await expect(page.getByTestId("map")).toHaveAttribute("data-layer", "none");
-  await expect(page.getByTestId("info-picker")).toContainText("Map only");
   await expect(page.getByTestId("legend")).toHaveCount(0);
   expect(await visibility(page, "info-line")).toBe("none");
   expect(await visibility(page, "explored-line")).toBe("none");
@@ -45,7 +52,7 @@ test("the layers control: one information layer at a time, with its legend; the 
   const shown = await drawn(page, ["info-line"]);
   expect(shown).toBeGreaterThan(0);
   expect(shown).toBeLessThan(await drawn(page, ["way-casing", "way-halo"]));
-  await expect(page.getByTestId("legend")).toContainText("Surface");
+  await expect(page.getByTestId("info-surface_class")).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("legend-entry")).toHaveCount(6);
   await expect(page.getByTestId("legend-entry").last()).toHaveText("Unknown");
   await expect(page.getByTestId("legend-note")).toContainText("Not highlighted: paved smooth");
@@ -64,6 +71,9 @@ test("the layers control: one information layer at a time, with its legend; the 
   await pick(page, "grade_max");
   await expect(page.getByTestId("legend")).toContainText("25%");
 
+  // the legend stays on the map while the panel is closed
+  await closeLayers(page);
+  await expect(page.getByTestId("legend-pill")).toContainText("Max grade");
   // back to the map alone
   await pick(page, "none");
   await expect(page.getByTestId("legend")).toHaveCount(0);
@@ -79,17 +89,34 @@ test("the layers control: one information layer at a time, with its legend; the 
   expect(await visibility(page, "hillshade")).toBe("visible");
 });
 
-test("tapping an edge lists all its attributes, labelled from the manifest", async ({ page }, testInfo) => {
-  // no layer needed: the map's own ways are what is tapped
+test("inspecting a way lists all its attributes, labelled from the manifest", async ({ page }, testInfo) => {
+  // inspecting is asked for (a tap otherwise adds a stop): an information layer, then "Inspect a way"
   await openMap(page);
+  await pick(page, "surface_class");
+  await page.getByTestId("inspect-toggle").click();
+  await closeLayers(page);
+  await waitIdle(page);
   await expect(page.getByTestId("inspect-panel")).toHaveCount(0);
-  const point = await edgePoint(page, 1);
-  await page.mouse.click(point.x, point.y);
-
+  // tap a way where no chrome covers the map
+  const { width, height } = page.viewportSize() as { width: number; height: number };
+  const tapEdge = async (id: number) => {
+    const at = await edgePoint(page, id);
+    await page.evaluate(
+      (by) =>
+        (window.__kompass.map as unknown as { panBy(o: [number, number], a: object): void }).panBy(by, {
+          animate: false,
+        }),
+      [at.x - (width < 720 ? width / 2 : 720), at.y - height * 0.3] as [number, number],
+    );
+    await waitIdle(page);
+    const p = await edgePoint(page, id);
+    await page.mouse.click(p.x, p.y);
+  };
+  // edge 1 of the fixture: a secondary road, compacted, 70% in forest, 5% steep
+  await tapEdge(1);
   const panel = page.getByTestId("inspect-panel");
   await expect(panel).toBeVisible();
   await expect(panel).toHaveAttribute("data-edge-id", "1");
-  // edge 1 of the fixture: a secondary road, compacted, 70% in forest, 5% steep
   await expect(page.getByTestId("inspect-surface_class")).toContainText("Surface");
   await expect(page.getByTestId("inspect-surface_class")).toContainText("compacted");
   await expect(page.getByTestId("inspect-highway")).toContainText("secondary");
@@ -98,37 +125,21 @@ test("tapping an edge lists all its attributes, labelled from the manifest", asy
   await screenshot(page, testInfo, "inspect");
 
   // a missing value is said so (edge 7 has no grade)
-  await page.getByRole("button", { name: "Close" }).click();
+  await page.getByRole("button", { name: "Close", exact: true }).click();
   await expect(panel).toHaveCount(0);
-  const seven = await edgePoint(page, 7);
-  await page.mouse.click(seven.x, seven.y);
+  await tapEdge(7);
   await expect(panel).toHaveAttribute("data-edge-id", "7");
   await expect(page.getByTestId("inspect-grade_max")).toContainText("no value");
-
-  // a tap away from every edge closes it
-  await page.mouse.click(5, 5 + (page.viewportSize()?.height ?? 800) / 2);
-  await expect(panel).toHaveCount(0);
-
-  // with a layer on, the tap still works (on an edge clear of the legend card and the controls)
-  await pick(page, "surface_class");
-  await waitIdle(page);
-  const height = page.viewportSize()?.height ?? 800;
-  let clear: number | null = null;
-  for (const id of [20, 25, 30, 35, 40, 45, 50, 55]) {
-    const p = await edgePoint(page, id);
-    if (p.y > 200 && p.y < height * 0.5) clear = id;
-  }
-  if (clear === null) throw new Error("no fixture edge in the clear part of the map");
-  const again = await edgePoint(page, clear);
-  await page.mouse.click(again.x, again.y);
-  await expect(panel).toHaveAttribute("data-edge-id", String(clear));
+  // no stop was added by any of these taps
+  await expect(page.getByTestId("waypoint-marker")).toHaveCount(0);
 });
 
 test("the explored layer highlights ridden edges by feature state; the store drives it", async ({
   page,
 }, testInfo) => {
   await openMap(page, "layer=explored&fakeRidden=20");
-  await expect(page.getByTestId("info-picker")).toContainText("Explored");
+  await page.getByTestId("map-rides").click();
+  await expect(page.getByTestId("mode-explored")).toHaveAttribute("aria-pressed", "true");
   expect(await visibility(page, "explored-line")).toBe("visible");
   await expect(page.getByTestId("ridden-count")).toHaveText("20 edges");
   // the map carries the store's state: rendered edges report `ridden` in their feature state
@@ -182,6 +193,7 @@ test.describe("a region without terrain", () => {
     });
     await openMap(page);
     expect(await page.evaluate(() => window.__kompass.map.getLayer("hillshade") ?? null)).toBeNull();
+    await page.getByTestId("map-rides").click();
     await expect(page.getByTestId("toggle-terrain")).toHaveCount(0);
     await expect(page.getByTestId("toggle-routes")).toBeVisible();
   });
@@ -226,11 +238,6 @@ test.describe("in a dark system theme", () => {
     await screenshot(page, testInfo, "map");
     await pick(page, "surface_class");
     await screenshot(page, testInfo, "layer-surface");
-    const point = await edgePoint(page, 1);
-    await page.mouse.click(point.x, point.y);
-    await expect(page.getByTestId("inspect-panel")).toBeVisible();
-    await screenshot(page, testInfo, "inspect");
-    await page.getByRole("button", { name: "Close" }).click();
     await pick(page, "explored");
     await page.evaluate(() =>
       window.__kompass.store.setRidden(Array.from({ length: 30 }, (_, i) => i * 2 + 1)),

@@ -80,8 +80,11 @@ export async function edgePoint(page: Page, id: number): Promise<{ x: number; y:
     const { map } = window.__kompass;
     const feature = map.querySourceFeatures("overlay", { sourceLayer: "edges" }).find((f) => f.id === edgeId);
     if (!feature) throw new Error(`edge ${edgeId} is not loaded`);
+    // halfway along the middle segment (a two-point edge's middle vertex would be its end node)
     const coords = feature.geometry.coordinates;
-    const middle = coords[Math.floor(coords.length / 2)] as [number, number];
+    const i = Math.max(1, Math.floor(coords.length / 2));
+    const [a, b] = [coords[i - 1], coords[i]] as [[number, number], [number, number]];
+    const middle: [number, number] = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
     const point = map.project(middle);
     return { x: point.x, y: point.y };
   }, id);

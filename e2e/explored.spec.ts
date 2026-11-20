@@ -36,7 +36,8 @@ const rows = (page: Page) => page.getByTestId("ride-row");
 const summary = (page: Page) => page.getByTestId("rides-summary");
 
 async function openPanel(page: Page) {
-  await page.getByTestId("rides-button").click();
+  // the ride library lives in the planner's "Map & rides"
+  await page.getByTestId("map-rides").click();
   await expect(page.getByTestId("rides-panel")).toBeVisible();
 }
 

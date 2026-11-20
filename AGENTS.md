@@ -25,7 +25,7 @@ bun run dev              # build:wasm, then Vite with HMR: http://127.0.0.1:7950
                          # without it the app shows its empty state), e.g. KOMPASS_DATA_DIR=e2e/fixtures/region.
                          # KOMPASS_DEV_PORT=<port> moves it (HMR takes the next port).
                          # ?bench: the engine bench page (routes, compiles, matching, heap; docs/engine-web.md);
-                         # ?lab: the temporary route lab; ?geometry=lazy: geometry tiles per route
+                         # ?geometry=lazy: geometry tiles per route
 bun run build            # build:wasm + the web app, into web/dist (relative base: works from any sub-path)
 bun run serve -- --port 7950 --data <dir>   # static server for the built app + a region data dir (HTTP
                          # Range, long cache for PMTiles): the way to playtest a build on a phone
@@ -92,7 +92,8 @@ uv run --project tools/komoot kompass-komoot --help    # Komoot download (run by
   `engine/presets/*.json` (embedded in the engine, validated by its tests).
 - `web/`: `@kompass/web`, bun + Vite + React + Tailwind v4 + shadcn/ui + MapLibre GL. The engine
   client lives in `web/src/engine/` (`protocol.ts` the messages, `client.ts` the typed wrapper,
-  `worker.ts` the Web Worker that loads the wasm). Unit tests in `web/test`.
+  `worker.ts` the Web Worker that loads the wasm), the planner shell in `web/src/planner/`
+  (docs/planner.md). Unit tests in `web/test`.
 - `pipeline/`: Python (uv): OSM extract → `edges.parquet`, the contract with the engine.
 - `tools/`: local scripts the user runs themselves (e.g. the Komoot download).
 - `e2e/`: Playwright specs and the synthetic fixture region. `scripts/`: repo build scripts and the static
@@ -121,8 +122,9 @@ uv run --project tools/komoot kompass-komoot --help    # Komoot download (run by
   `kompass-wasm` export, a method in `EngineMethods`, a handler in `worker.ts`. API types are Rust
   (serde + schemars + ts-rs behind core's `schema` feature, never in the wasm build); the web app
   imports the generated ones from `web/src/engine/generated/types.ts`.
-- Web: colours only via the theme tokens in `web/src/index.css`; the theme follows the system
-  setting. Add shadcn components with `bunx shadcn@4.23.0 add <name>` in `web/`. Mobile first:
+- Web: colours only via the theme tokens in `web/src/index.css` (the design's monotone chrome, one
+  accent `signal`); data colours (route, surface, layers) in `web/src/planner/palette.ts` and
+  `web/src/map/palette.ts`; the theme follows the system setting. Add shadcn components with `bunx shadcn@4.23.0 add <name>` in `web/`. Mobile first:
   check every screen at 390×844. The app must keep working from a sub-path (relative URLs only).
 - Tests: light and purposeful. Logic gets unit tests next to its code (`cargo test`, `bun test`,
   pytest); each main flow one Playwright spec at both viewports.

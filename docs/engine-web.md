@@ -155,9 +155,8 @@ Profile compile 70 ms (Gravel explorer) and 38 ms (Paved & quiet); first route a
 (compile included); matching 30 ms per 65 km ride (p50). Download of the gzip siblings (66.3 MB,
 489 files) from a local server: 2.4 s.
 
-## The route lab (temporary)
+## The planner
 
-`?lab` replaces the bottom panel with a proof of the chain (`web/src/planner-lab/`, nothing else
-depends on it): tap the map for A, B and waypoints (drag to move, tap to remove), a preset, the
-route in vermilion with its totals, a second preset in blue to compare. The planner shell replaces
-it.
+The planner shell ([planner.md](planner.md)) is the engine's main client: one lane per line on the
+map (`route`, `ghost`, `compare`, `probe` for explaining a blocked route) and `diff` for the
+stretches two routes do not share.

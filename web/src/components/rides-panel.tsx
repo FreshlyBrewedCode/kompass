@@ -102,9 +102,11 @@ export type RidesPanelProps = {
   selectedId: string | null;
   onSelect: (ride: RideSummary) => void;
   onClose: () => void;
+  /** where the panel sits (default: floating over the map); the planner mounts it in "Map & rides" */
+  className?: string;
 };
 
-export function RidesPanel({ snapshot, state, selectedId, onSelect, onClose }: RidesPanelProps) {
+export function RidesPanel({ snapshot, state, selectedId, onSelect, onClose, className }: RidesPanelProps) {
   const fileInput = useRef<HTMLInputElement>(null);
   const backupInput = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -138,7 +140,10 @@ export function RidesPanel({ snapshot, state, selectedId, onSelect, onClose }: R
       }}
       onDragLeave={() => setDragging(false)}
       onDrop={onDrop}
-      className="pointer-events-auto absolute inset-x-2 bottom-9 z-10 h-[54%] gap-0 overflow-hidden bg-card/97 p-0 backdrop-blur md:top-3 md:right-3 md:left-auto md:h-auto md:w-96"
+      className={
+        className ??
+        "pointer-events-auto absolute inset-x-2 bottom-9 z-10 h-[54%] gap-0 overflow-hidden bg-card/97 p-0 backdrop-blur md:top-3 md:right-3 md:left-auto md:h-auto md:w-96"
+      }
     >
       <header className="flex items-center justify-between gap-2 border-b px-3 py-2">
         <h2 className="font-semibold">

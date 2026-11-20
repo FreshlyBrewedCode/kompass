@@ -68,7 +68,7 @@ test("bench: import, store, layer and backup of many rides", async ({ page }) =>
         return w.__longTasks.splice(0);
       });
     await openMap(page);
-    await page.getByTestId("rides-button").click();
+    await page.getByTestId("map-rides").click();
     await longTasks();
     const t0 = Date.now();
     await page.getByTestId("rides-file-input").setInputFiles(files);
@@ -121,7 +121,7 @@ test("bench: import, store, layer and backup of many rides", async ({ page }) =>
     );
 
     const exported = Date.now();
-    await page.getByTestId("rides-button").click();
+    await page.getByTestId("map-rides").click();
     const download = page.waitForEvent("download");
     await page.getByTestId("rides-export").click();
     const backup = await (await download).path();

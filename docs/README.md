@@ -14,6 +14,7 @@ lasting shape here and deletes the section there.
 - [matching.md](matching.md): map-matching recorded tracks onto the graph, lazy geometry, the explored fold
 - [profile.md](profile.md): the routing profile, the catalogue, how a profile becomes a cost, presets
 - [routing.md](routing.md): the `route` query (request, snapping, search, result), the route diff
+- [planner.md](planner.md): the planner shell: its state model, routing lanes, map layer, persistence
 - [engine-web.md](engine-web.md): the engine in the browser: wasm face, worker protocol, latest wins,
   the graph download and device cache, states, the bench page
 - [adr/](adr/): architecture decision records
