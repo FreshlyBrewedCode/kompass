@@ -1,5 +1,6 @@
 // Made-up rides for tests and the e2e: an invented place (the e2e fixture's grid around 0°N 0°E), a
 // Komoot-style GPX writer (the format tools/komoot writes) and a tiny FIT encoder. No real tracks.
+import { strToU8, zipSync } from "fflate";
 import type { RawTrack } from "../src/rides/types";
 
 /** The fixture region's grid nodes (docs/map.md): 6 × 6 around 0°N 0°E, ~500 m apart. */
@@ -217,4 +218,12 @@ export function toFit(track: RawTrack, options: FitOptions = {}): Uint8Array {
   out[14 + body.length] = crc & 0xff;
   out[15 + body.length] = crc >> 8;
   return out;
+}
+
+/** A zip of files (deflated; a name ending in `/` is a folder), for the zip import tests. */
+export function toZip(files: Record<string, string | Uint8Array>): Uint8Array {
+  const entries: Record<string, Uint8Array> = {};
+  for (const [name, data] of Object.entries(files))
+    entries[name] = typeof data === "string" ? strToU8(data) : data;
+  return zipSync(entries);
 }

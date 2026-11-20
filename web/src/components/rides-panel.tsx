@@ -2,6 +2,7 @@
 // Everything here is presentation; the logic lives in src/rides/ (state.ts is what it reads and calls).
 import { Bike, ChevronDown, Download, Eye, EyeOff, FolderUp, HardDrive, Trash2, Upload } from "lucide-react";
 import { type ChangeEvent, type DragEvent, useEffect, useRef, useState } from "react";
+import { ExploredSummary, MatchingStatus } from "@/components/rides-matching";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -18,12 +19,17 @@ import { Progress } from "@/components/ui/progress";
 import { Toggle } from "@/components/ui/toggle";
 import { backupFilename, downloadBlob } from "@/rides/download";
 import { describeOutcome, formatBytes, formatDate, formatDistance, formatDuration } from "@/rides/format";
+import type { RideMatchInfo } from "@/rides/matcher";
 import type { RidesSnapshot, RidesState } from "@/rides/state";
+import { formatShare } from "@/rides/summary";
 import type { RideSummary } from "@/rides/types";
 
-/** `.gpx`/`.fit` plus the MIME types iOS and Android attach (or none: unknown types must stay selectable). */
+/**
+ * `.gpx`/`.fit`, a `.zip` of them and the `.kompassrides` backup, plus the MIME types iOS and Android
+ * attach (or none: unknown types must stay selectable, hence the octet-stream).
+ */
 const ACCEPT =
-  ".gpx,.fit,.GPX,.FIT,application/gpx+xml,application/vnd.ant.fit,application/octet-stream,application/xml,text/xml";
+  ".gpx,.fit,.zip,.kompassrides,.GPX,.FIT,.ZIP,application/gpx+xml,application/vnd.ant.fit,application/zip,application/x-zip-compressed,application/octet-stream,application/xml,text/xml";
 
 const PAGE = 60;
 
@@ -172,7 +178,7 @@ export function RidesPanel({ snapshot, state, selectedId, onSelect, onClose }: R
           className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed px-3 py-2.5 text-sm md:flex-col md:gap-1 md:py-3 outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring data-[dragging=true]:border-primary data-[dragging=true]:bg-accent disabled:opacity-60"
         >
           <Upload className="size-5 text-muted-foreground" />
-          <span className="font-medium">Add GPX or FIT files</span>
+          <span className="font-medium">Add GPX or FIT files, or a zip</span>
           <span className="hidden text-muted-foreground text-xs md:inline">
             choose them or drop them here
           </span>
@@ -187,6 +193,9 @@ export function RidesPanel({ snapshot, state, selectedId, onSelect, onClose }: R
             <Progress value={busy.total > 0 ? (busy.done / busy.total) * 100 : undefined} />
           </div>
         )}
+
+        <MatchingStatus snapshot={snapshot} state={state} />
+        <ExploredSummary snapshot={snapshot} />
 
         {report && <ReportView report={report} onDismiss={() => state.dismissReport()} />}
 
@@ -207,6 +216,7 @@ export function RidesPanel({ snapshot, state, selectedId, onSelect, onClose }: R
             <RideRow
               key={ride.id}
               ride={ride}
+              match={snapshot.matches.get(ride.id)}
               selected={ride.id === selectedId}
               onSelect={() => onSelect(ride)}
               onDelete={() => void state.deleteRide(ride.id)}
@@ -375,11 +385,13 @@ function ReportView({
 
 function RideRow({
   ride,
+  match,
   selected,
   onSelect,
   onDelete,
 }: {
   ride: RideSummary;
+  match: RideMatchInfo | undefined;
   selected: boolean;
   onSelect: () => void;
   onDelete: () => void;
@@ -410,6 +422,16 @@ function RideRow({
           {!ride.hasTime && (
             <span data-testid="ride-no-time" className="rounded bg-muted px-1">
               no timestamps
+            </span>
+          )}
+          {match && !match.outside && match.share !== null && (
+            <span data-testid="ride-match" className="tabular-nums">
+              {formatShare(match.share)} matched
+            </span>
+          )}
+          {match?.outside && (
+            <span data-testid="ride-outside" className="rounded bg-muted px-1">
+              outside the region
             </span>
           )}
           {ride.alsoSeenAs.length > 0 && (

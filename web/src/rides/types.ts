@@ -95,3 +95,14 @@ export type MatchInput = {
   trackM?: number;
   matchedM?: number;
 };
+
+/** What the UI needs of a saved match, without its arcs: the share of the track the graph explained. */
+export type MatchStatus = {
+  rideId: string;
+  trackM: number | null;
+  matchedM: number | null;
+  arcs: number;
+};
+
+/** The first 8 bytes of a `.kompassrides` backup (backup.ts); the picker uses it to route such a file to the restore. */
+export const BACKUP_MAGIC = "KMPSRIDE";

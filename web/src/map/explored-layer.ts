@@ -85,7 +85,8 @@ export class ExploredLayer {
 
     const applied = new Map(this.#applied);
     const removals = [...applied.keys()].filter((edge) => !target.has(edge));
-    const additions = [...target].filter(([edge, info]) => applied.get(edge) !== info);
+    // only the count is in the feature state: a refold with the same counts changes nothing on the map
+    const additions = [...target].filter(([edge, info]) => applied.get(edge)?.count !== info.count);
     const work: (() => void)[] = [];
     for (const edge of removals) {
       work.push(() => {
