@@ -66,6 +66,8 @@ export class RegionMap {
   #selected: number | null = null;
   #ready = false;
   #rides: RidesLayerState = NO_RIDES;
+  /** whether a tap inspects the way under it (the planner turns it on only on request) */
+  #picking = true;
 
   constructor(options: RegionMapOptions) {
     registerPmtiles();
@@ -218,7 +220,14 @@ export class RegionMap {
     else this.map.removeFeatureState(target, "selected");
   }
 
+  /** Taps inspect ways (`true`) or are left to others, e.g. the planner's waypoints (`false`). */
+  setPicking(on: boolean) {
+    this.#picking = on;
+    if (!on && this.#selected !== null) this.select(null);
+  }
+
   #click(point: { x: number; y: number }) {
+    if (!this.#picking) return;
     this.select(pickEdge(this.map, point, [...WAY_PICK_LAYERS, INFO_LINE]));
   }
 

@@ -30,6 +30,8 @@ export type MapViewProps = {
   /** the recorded rides ("My rides"): lines and whether they show */
   rides: RidesLayerData | null;
   ridesVisible: boolean;
+  /** whether a tap inspects the way under it (default on) */
+  picking?: boolean;
   onPick: (edge: PickedEdge | null) => void;
   onError: (message: string) => void;
   /** the MapLibre map once it exists (and `null` when it goes): for overlays kept outside src/map */
@@ -45,6 +47,7 @@ export default function MapView({
   store,
   rides,
   ridesVisible,
+  picking = true,
   onPick,
   onError,
   onMap,
@@ -53,8 +56,8 @@ export default function MapView({
   const regionMap = useRef<RegionMap | null>(null);
   const theme = useTheme();
   // the newest values, for the map created once per region
-  const latest = useRef({ layers, theme, rides, ridesVisible, onPick, onError, onMap });
-  latest.current = { layers, theme, rides, ridesVisible, onPick, onError, onMap };
+  const latest = useRef({ layers, theme, rides, ridesVisible, picking, onPick, onError, onMap });
+  latest.current = { layers, theme, rides, ridesVisible, picking, onPick, onError, onMap };
 
   useEffect(() => {
     if (!container.current) return;
@@ -69,6 +72,7 @@ export default function MapView({
       onError: (message) => latest.current.onError(message),
     });
     regionMap.current = instance;
+    instance.setPicking(latest.current.picking);
     latest.current.onMap?.(instance.map);
     if (latest.current.rides) instance.setRides(latest.current.rides);
     instance.setRidesVisible(latest.current.ridesVisible);
@@ -121,6 +125,7 @@ export default function MapView({
     if (rides) regionMap.current?.setRides(rides);
   }, [rides]);
   useEffect(() => regionMap.current?.setRidesVisible(ridesVisible), [ridesVisible]);
+  useEffect(() => regionMap.current?.setPicking(picking), [picking]);
 
   // MapLibre's (unlayered) CSS makes its container `position: relative`, beating Tailwind's layered
   // utilities: the wrapper does the positioning.

@@ -1,53 +1,85 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "@fontsource-variable/manrope";
 
 @custom-variant dark (&:is(.dark *));
 
-/* shadcn/ui tokens (neutral). The `dark` class on <html> follows the system setting (lib/theme.ts). */
+/*
+ * The chrome tokens of the consolidated planner design (docs/design/planner.md, "Tokens"): monotone,
+ * ink and greys plus ONE accent (`--signal`, the route's vermilion) for the primary action and
+ * "changed from the base". shadcn/ui's names keep their meaning; `signal`, `glass`, `track` and the
+ * two shadows are new. Colours of DATA (route, surface, way type, ridden, information layers) are
+ * not tokens: src/planner/palette.ts and src/map/palette.ts. The `dark` class on <html> follows the
+ * system setting (lib/theme.ts).
+ */
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --background: #f4f4f1;
+  --foreground: #161816;
+  --card: #ffffff;
+  --card-foreground: #161816;
+  --popover: #ffffff;
+  --popover-foreground: #161816;
+  --primary: #161816;
+  --primary-foreground: #ffffff;
+  --secondary: #ecece8;
+  --secondary-foreground: #161816;
+  --muted: #ecece8;
+  --muted-foreground: #5f635f;
+  --accent: #ecece8;
+  --accent-foreground: #161816;
+  --destructive: #b3261e;
+  --border: rgb(22 24 22 / 0.1);
+  --input: rgb(22 24 22 / 0.18);
+  --ring: rgb(22 24 22 / 0.45);
+  /* the one accent: the primary action and "changed from the base"; the route's hue */
+  --signal: #d23f18;
+  --signal-foreground: #ffffff;
+  /* floating cards over the map; the slider track and the empty part of a lane */
+  --glass: rgb(255 255 255 / 0.9);
+  --track: rgb(22 24 22 / 0.12);
+  --elev-float: 0 8px 28px rgb(0 0 0 / 0.14), 0 1px 2px rgb(0 0 0 / 0.06);
+  --elev-sheet: 0 -10px 36px rgb(0 0 0 / 0.16);
+  --radius: 0.75rem;
+  /* between a floating card and the screen edge */
+  --gutter: 10px;
+  font-family: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --background: #0f1110;
+  --foreground: #f0f1ed;
+  --card: #1a1c1b;
+  --card-foreground: #f0f1ed;
+  --popover: #1a1c1b;
+  --popover-foreground: #f0f1ed;
+  --primary: #f0f1ed;
+  --primary-foreground: #0f1110;
+  --secondary: #262928;
+  --secondary-foreground: #f0f1ed;
+  --muted: #262928;
+  --muted-foreground: #a2a7a2;
+  --accent: #262928;
+  --accent-foreground: #f0f1ed;
+  --destructive: #ff8a7a;
+  --border: rgb(255 255 255 / 0.1);
+  --input: rgb(255 255 255 / 0.2);
+  --ring: rgb(255 255 255 / 0.5);
+  --signal: #ff7a57;
+  --signal-foreground: #1c0b05;
+  --glass: rgb(26 28 27 / 0.9);
+  --track: rgb(255 255 255 / 0.16);
+  --elev-float: 0 8px 28px rgb(0 0 0 / 0.5), 0 0 0 1px rgb(255 255 255 / 0.04);
+  --elev-sheet: 0 -10px 36px rgb(0 0 0 / 0.55);
+}
+
+@media (min-width: 720px) {
+  :root {
+    --gutter: 16px;
+  }
 }
 
 @theme inline {
+  --font-sans: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -70,6 +102,20 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-signal: var(--signal);
+  --color-signal-foreground: var(--signal-foreground);
+  --color-glass: var(--glass);
+  --color-track: var(--track);
+  --shadow-float: var(--elev-float);
+  --shadow-sheet: var(--elev-sheet);
+  /* a control (row, input, inner box), a floating card, the top of a sheet; pills are rounded-full */
+  --radius-control: 12px;
+  --radius-card: 20px;
+  --radius-sheet: 26px;
+  /* the type scale uses Tailwind's own names (xs 12, sm 14, base 16, lg 18, 2xl 24) so class mergers
+     know them; only 2xs (11, section labels and tags) is new. Figures are always tabular-nums. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 0.875rem;
 }
 
 @layer base {
@@ -82,8 +128,166 @@
     height: 100%;
   }
   body {
-    @apply bg-background text-foreground antialiased;
+    @apply bg-background font-sans text-foreground antialiased;
     margin: 0;
     overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  input::placeholder {
+    color: var(--muted-foreground);
+  }
+}
+
+/* ------------------------------------------------------------------ planner behaviour */
+
+/* Hold-to-clear: while a slider is held in the phone's profile sheet, the sheet gets out of the way and
+   leaves only that row and the totals. */
+.kp-sheet {
+  transition:
+    height 0.28s cubic-bezier(0.2, 0.8, 0.2, 1),
+    background-color 0.18s,
+    box-shadow 0.18s,
+    border-color 0.18s;
+}
+.kp-sheet [data-fade],
+.kp-sheet [data-row] {
+  transition: opacity 0.16s;
+}
+.kp-sheet[data-clear] {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+.kp-sheet[data-clear] [data-fade],
+.kp-sheet[data-clear] [data-row]:not([data-held]) {
+  opacity: 0;
+  pointer-events: none;
+}
+.kp-sheet[data-clear] [data-keep],
+.kp-sheet[data-clear] [data-row][data-held] {
+  background: var(--glass);
+  border-radius: 16px;
+  box-shadow: var(--elev-float);
+  backdrop-filter: blur(16px);
+}
+/* a row that was just added */
+.kp-flash {
+  animation: kp-flash 1.4s ease-out;
+}
+@keyframes kp-flash {
+  0% {
+    background: var(--track);
+  }
+  100% {
+    background: transparent;
+  }
+}
+/* the engine is working */
+.kp-busy {
+  position: relative;
+  overflow: hidden;
+}
+.kp-busy::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 35%;
+  border-radius: 999px;
+  background: var(--foreground);
+  animation: kp-busy 1.1s ease-in-out infinite;
+}
+@keyframes kp-busy {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(290%);
+  }
+}
+
+/* waypoints on the map: ink discs (A, 1, 2 … B) in a 44 px touch target */
+.kp-marker {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: grab;
+  touch-action: none;
+}
+.kp-marker > span {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--foreground);
+  color: var(--background);
+  border: 2px solid var(--card);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.35);
+  font:
+    700 12px / 1 "Manrope Variable",
+    system-ui,
+    sans-serif;
+}
+.kp-marker[data-end="false"] > span {
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+}
+.kp-marker[data-problem="true"] > span {
+  outline: 2px dashed var(--foreground);
+  outline-offset: 3px;
+}
+.kp-marker:focus-visible > span {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+/* "why this way" notes: neutral callouts */
+.kp-note {
+  pointer-events: none;
+  max-width: 220px;
+  padding: 5px 10px;
+  border-radius: 10px;
+  background: var(--glass);
+  color: var(--foreground);
+  box-shadow: var(--elev-float);
+  backdrop-filter: blur(12px);
+  font:
+    500 12px / 16px "Manrope Variable",
+    system-ui,
+    sans-serif;
+}
+.kp-note b {
+  display: block;
+  font-weight: 700;
+  font-size: 13px;
+}
+/* MapLibre's attribution sits above the bottom stack (the shell sets the offset) */
+.maplibregl-ctrl-bottom-right {
+  bottom: var(--attrib-bottom, 0px);
+}
+.maplibregl-ctrl-attrib.maplibregl-compact {
+  background: var(--glass);
+  color: var(--foreground);
+}
+
+.thin-scroll {
+  scrollbar-width: thin;
+  overscroll-behavior: contain;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kp-sheet,
+  .kp-sheet [data-fade],
+  .kp-sheet [data-row] {
+    transition: none;
+  }
+  .kp-flash,
+  .kp-busy::after {
+    animation: none;
   }
 }
