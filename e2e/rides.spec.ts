@@ -158,6 +158,10 @@ test("delete one ride, then delete all after a confirmation", async ({ page }) =
   await page.getByTestId("rides-delete-all").click();
   await expect(page.getByTestId("rides-confirm")).toBeVisible();
   await page.getByRole("button", { name: "Cancel" }).click();
+  // wait for the close animation to end: reopening the dialog while it still runs can leave the
+  // overlay on top of the content (a Radix layer race), and the next click then waits until the
+  // test timeout. A person cannot click that fast; the test can, and a loaded machine makes it likely.
+  await expect(page.getByTestId("rides-confirm")).toBeHidden();
   await expect(rows(page)).toHaveCount(2);
   await page.getByTestId("rides-delete-all").click();
   await page.getByTestId("rides-confirm-delete").click();
