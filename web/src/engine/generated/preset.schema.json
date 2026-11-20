@@ -1,0 +1,245 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Preset",
+  "description": "A preset.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "description": "Stable id (`profile.base` of profiles made from it).",
+      "type": "string"
+    },
+    "blurb": {
+      "description": "One line for the picker.",
+      "type": "string"
+    },
+    "profile": {
+      "description": "The profile; its `name` is the preset's name.",
+      "$ref": "#/$defs/Profile"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "blurb",
+    "profile"
+  ],
+  "$defs": {
+    "Profile": {
+      "description": "A routing profile.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Display name (presets have one).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "base": {
+          "description": "The preset this profile was made from (the UI's diff against it; routing ignores it).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "weights": {
+          "description": "Soft preferences. An absent id has no opinion (factor 1); an explicit 0 is the same for\nrouting, but stays on screen.",
+          "type": "object",
+          "properties": {
+            "access": {
+              "$ref": "#/$defs/Weight"
+            },
+            "bike_routes": {
+              "$ref": "#/$defs/Weight"
+            },
+            "built": {
+              "$ref": "#/$defs/Weight"
+            },
+            "climb": {
+              "$ref": "#/$defs/Weight"
+            },
+            "cycleway_road": {
+              "$ref": "#/$defs/Weight"
+            },
+            "cycleway_sep": {
+              "$ref": "#/$defs/Weight"
+            },
+            "familiar": {
+              "$ref": "#/$defs/Weight"
+            },
+            "fine_gravel": {
+              "$ref": "#/$defs/Weight"
+            },
+            "forest": {
+              "$ref": "#/$defs/Weight"
+            },
+            "forest_edge": {
+              "$ref": "#/$defs/Weight"
+            },
+            "lanes": {
+              "$ref": "#/$defs/Weight"
+            },
+            "main": {
+              "$ref": "#/$defs/Weight"
+            },
+            "minor": {
+              "$ref": "#/$defs/Weight"
+            },
+            "mtb": {
+              "$ref": "#/$defs/Weight"
+            },
+            "mtb_routes": {
+              "$ref": "#/$defs/Weight"
+            },
+            "near_road": {
+              "$ref": "#/$defs/Weight"
+            },
+            "novel": {
+              "$ref": "#/$defs/Weight"
+            },
+            "open": {
+              "$ref": "#/$defs/Weight"
+            },
+            "path": {
+              "$ref": "#/$defs/Weight"
+            },
+            "paved_rough": {
+              "$ref": "#/$defs/Weight"
+            },
+            "paved_smooth": {
+              "$ref": "#/$defs/Weight"
+            },
+            "quiet": {
+              "$ref": "#/$defs/Weight"
+            },
+            "residential": {
+              "$ref": "#/$defs/Weight"
+            },
+            "service": {
+              "$ref": "#/$defs/Weight"
+            },
+            "sketchy": {
+              "$ref": "#/$defs/Weight"
+            },
+            "smoothness": {
+              "$ref": "#/$defs/Weight"
+            },
+            "soft_ground": {
+              "$ref": "#/$defs/Weight"
+            },
+            "speed": {
+              "$ref": "#/$defs/Weight"
+            },
+            "stale": {
+              "$ref": "#/$defs/Weight"
+            },
+            "steep": {
+              "$ref": "#/$defs/Weight"
+            },
+            "track": {
+              "$ref": "#/$defs/Weight"
+            },
+            "tracktype": {
+              "$ref": "#/$defs/Weight"
+            },
+            "unknown_surface": {
+              "$ref": "#/$defs/Weight"
+            },
+            "unpaved": {
+              "$ref": "#/$defs/Weight"
+            },
+            "visibility": {
+              "$ref": "#/$defs/Weight"
+            },
+            "water": {
+              "$ref": "#/$defs/Weight"
+            }
+          },
+          "additionalProperties": false,
+          "default": {}
+        },
+        "limits": {
+          "description": "Hard limits.",
+          "type": "object",
+          "properties": {
+            "legal_only": {
+              "$ref": "#/$defs/LimitValue"
+            },
+            "max_grade": {
+              "$ref": "#/$defs/LimitValue"
+            },
+            "max_mtb_scale": {
+              "$ref": "#/$defs/LimitValue"
+            },
+            "no_ferries": {
+              "$ref": "#/$defs/LimitValue"
+            },
+            "no_main_roads": {
+              "$ref": "#/$defs/LimitValue"
+            },
+            "no_stairs": {
+              "$ref": "#/$defs/LimitValue"
+            },
+            "no_unknown_surface": {
+              "$ref": "#/$defs/LimitValue"
+            },
+            "paved_only": {
+              "$ref": "#/$defs/LimitValue"
+            }
+          },
+          "additionalProperties": false,
+          "default": {}
+        },
+        "bounds": {
+          "description": "The factor clamp; defaults apply when absent.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Bounds"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "Weight": {
+      "description": "A soft preference's strength: -100 avoid, 0 neutral, +100 seek.",
+      "type": "integer",
+      "minimum": -100,
+      "maximum": 100
+    },
+    "LimitValue": {
+      "description": "A limit's setting: a switch (`true` on, `false` off, as if absent), or a number for limits that\ntake one (`true` there means the catalogue's default number).",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        }
+      ]
+    },
+    "Bounds": {
+      "description": "The clamp of the factor product (`docs/profile.md`): every arc costs between `min_factor` and\n`max_factor` times its length (plus additive terms). `min_factor` is the A* bound.",
+      "type": "object",
+      "properties": {
+        "min_factor": {
+          "description": "0.3..=1.0, default 0.5. Lower lets bonuses stack further (and searches slow down a little).",
+          "type": "number",
+          "format": "float",
+          "default": 0.5
+        },
+        "max_factor": {
+          "description": "2..=100, default 20. The most an allowed way can cost per metre.",
+          "type": "number",
+          "format": "float",
+          "default": 20.0
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

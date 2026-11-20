@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DiffRequest",
+  "description": "The `diff` request: two routes' arcs (`RouteResult::arcs`).",
+  "type": "object",
+  "properties": {
+    "a": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "format": "uint32",
+        "minimum": 0
+      }
+    },
+    "b": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "format": "uint32",
+        "minimum": 0
+      }
+    }
+  },
+  "required": [
+    "a",
+    "b"
+  ]
+}

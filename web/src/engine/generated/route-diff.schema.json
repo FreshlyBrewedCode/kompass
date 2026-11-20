@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RouteDiff",
+  "description": "The `diff` result.",
+  "type": "object",
+  "properties": {
+    "stretches": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Stretch"
+      }
+    },
+    "shared_m": {
+      "description": "Length both share (by `a`), and only one has.",
+      "type": "number",
+      "format": "float"
+    },
+    "a_only_m": {
+      "type": "number",
+      "format": "float"
+    },
+    "b_only_m": {
+      "type": "number",
+      "format": "float"
+    }
+  },
+  "required": [
+    "stretches",
+    "shared_m",
+    "a_only_m",
+    "b_only_m"
+  ],
+  "$defs": {
+    "Stretch": {
+      "description": "Where two routes part and meet again.",
+      "type": "object",
+      "properties": {
+        "a": {
+          "$ref": "#/$defs/Span"
+        },
+        "b": {
+          "$ref": "#/$defs/Span"
+        }
+      },
+      "required": [
+        "a",
+        "b"
+      ]
+    },
+    "Span": {
+      "description": "A stretch of one route.",
+      "type": "object",
+      "properties": {
+        "arcs": {
+          "description": "`[first, end)` into that route's arcs (empty: the other route detours here).",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "start_m": {
+          "description": "Metres from that route's start (edges counted in full).",
+          "type": "number",
+          "format": "float"
+        },
+        "length_m": {
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "required": [
+        "arcs",
+        "start_m",
+        "length_m"
+      ]
+    }
+  }
+}

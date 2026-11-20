@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RouteError",
+  "description": "A failed query.",
+  "type": "object",
+  "properties": {
+    "code": {
+      "$ref": "#/$defs/ErrorCode"
+    },
+    "message": {
+      "type": "string"
+    },
+    "waypoint": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint32",
+      "minimum": 0
+    },
+    "leg": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "code",
+    "message"
+  ],
+  "$defs": {
+    "ErrorCode": {
+      "description": "What went wrong.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "invalid_request",
+            "invalid_profile"
+          ]
+        },
+        {
+          "description": "No way within the snap radius of a waypoint.",
+          "type": "string",
+          "const": "no_way_near"
+        },
+        {
+          "description": "No allowed way could be reached from a waypoint (the message names the limit).",
+          "type": "string",
+          "const": "excluded"
+        },
+        {
+          "description": "The waypoints are not connected under the profile.",
+          "type": "string",
+          "const": "no_route"
+        }
+      ]
+    }
+  }
+}
