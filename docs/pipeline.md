@@ -10,6 +10,7 @@ is a directory per build:
 | `overlay.pmtiles` | the edges as vector tiles (layer `edges`, z8..14) for the debug and explored map |
 | `basemap.pmtiles` | the Protomaps base map cut to the region (z0..15) |
 | `manifest.json` | bounds, centre, file names and the overlay's attributes with their enum labels |
+| `graph/` | not the pipeline's: the engine's graph, compiled from `edges.parquet` by `kompass compile` ([graph-format.md](graph-format.md)) |
 | `work/` | intermediates (region extract, raw edges, context, elevation), kept so stages can resume |
 
 ```sh

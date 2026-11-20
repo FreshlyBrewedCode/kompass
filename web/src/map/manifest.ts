@@ -17,8 +17,30 @@ export type NumberAttribute = {
 };
 export type OverlayAttribute = EnumAttribute | ShareAttribute | NumberAttribute;
 
+/** A file next to the manifest (path relative to it) and its size in bytes. */
+export type DataFile = { file: string; bytes: number };
+
+/** One graph tile: its web-mercator tile at `tileZoom`, its edge count, and its two files. */
+export type GraphTile = { x: number; y: number; edges: number; graph: DataFile; geometry: DataFile };
+
+/** The engine's routing graph (`kompass compile`, docs/graph-format.md). */
+export type GraphFiles = {
+  /** The binary format version; the engine refuses other versions. */
+  formatVersion: number;
+  buildId: string;
+  tileZoom: number;
+  nodes: number;
+  edges: number;
+  /** All files together. */
+  bytes: number;
+  index: DataFile;
+  tiles: GraphTile[];
+};
+
 export type Manifest = {
   schemaVersion: number;
+  /** The build that wrote the files (overlay, graph and edge ids belong together); absent in old builds. */
+  buildId?: string;
   builtAt: string;
   /** west, south, east, north */
   bounds: [number, number, number, number];
@@ -34,6 +56,8 @@ export type Manifest = {
     maxzoom: number;
     attributes: OverlayAttribute[];
   };
+  /** Absent until the graph is compiled into the build. */
+  graph?: GraphFiles;
 };
 
 export class ManifestError extends Error {
@@ -81,6 +105,49 @@ function fileName(value: unknown, path: string): string {
     throw new ManifestError(`${path} must be a relative file name`);
   }
   return name;
+}
+
+function count(value: unknown, path: string): number {
+  const n = int(value, path);
+  if (n < 0) throw new ManifestError(`${path} must not be negative`);
+  return n;
+}
+
+function dataFile(value: unknown, path: string): DataFile {
+  const f = obj(value, path);
+  return { file: fileName(f.file, `${path}.file`), bytes: count(f.bytes, `${path}.bytes`) };
+}
+
+function graphFiles(value: unknown, buildId: string | undefined): GraphFiles {
+  const g = obj(value, "graph");
+  const graphBuild = str(g.buildId, "graph.buildId");
+  if (buildId !== undefined && graphBuild !== buildId) {
+    throw new ManifestError(`graph.buildId ${graphBuild} is not the manifest's build ${buildId}`);
+  }
+  const tileZoom = int(g.tileZoom, "graph.tileZoom");
+  if (tileZoom < 0 || tileZoom > 16) throw new ManifestError("graph.tileZoom must be 0..16");
+  if (!Array.isArray(g.tiles)) throw new ManifestError("graph.tiles must be a list");
+  const tiles = g.tiles.map((t: unknown, i): GraphTile => {
+    const path = `graph.tiles[${i}]`;
+    const o = obj(t, path);
+    return {
+      x: count(o.x, `${path}.x`),
+      y: count(o.y, `${path}.y`),
+      edges: count(o.edges, `${path}.edges`),
+      graph: dataFile(o.graph, `${path}.graph`),
+      geometry: dataFile(o.geometry, `${path}.geometry`),
+    };
+  });
+  return {
+    formatVersion: int(g.formatVersion, "graph.formatVersion"),
+    buildId: graphBuild,
+    tileZoom,
+    nodes: count(g.nodes, "graph.nodes"),
+    edges: count(g.edges, "graph.edges"),
+    bytes: count(g.bytes, "graph.bytes"),
+    index: dataFile(g.index, "graph.index"),
+    tiles,
+  };
 }
 
 function attribute(value: unknown, path: string): OverlayAttribute {
@@ -133,6 +200,8 @@ export function parseManifest(json: unknown): Manifest {
     );
   }
   const builtAt = str(m.builtAt, "builtAt");
+  // the pipeline writes `null` when it has no build id
+  const buildId = m.buildId === undefined || m.buildId === null ? undefined : str(m.buildId, "buildId");
 
   if (!Array.isArray(m.bounds) || m.bounds.length !== 4)
     throw new ManifestError("bounds must be [west, south, east, north]");
@@ -167,8 +236,11 @@ export function parseManifest(json: unknown): Manifest {
     throw new ManifestError("overlay.attributes has a key twice");
   }
 
+  const graph = m.graph === undefined || m.graph === null ? undefined : graphFiles(m.graph, buildId);
+
   return {
     schemaVersion,
+    ...(buildId === undefined ? {} : { buildId }),
     builtAt,
     bounds: [w, s, e, n],
     center: [lon, lat],
@@ -180,5 +252,6 @@ export function parseManifest(json: unknown): Manifest {
       maxzoom,
       attributes,
     },
+    ...(graph === undefined ? {} : { graph }),
   };
 }

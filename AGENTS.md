@@ -28,7 +28,8 @@ bun run serve -- --port 7950 --data <dir>   # static server for the built app + 
                          # Range, long cache for PMTiles): the way to playtest a build on a phone
 bun run e2e              # build, then Playwright (phone 390×844 + desktop 1440×900) against that server on
                          # 7959 under /kompass/ with the synthetic fixture region (KOMPASS_E2E_PORT=…)
-nix develop -c bun e2e/fixtures/build-region.ts   # rebuild the fixture region (tippecanoe) after changing it
+nix develop -c bun e2e/fixtures/build-region.ts   # rebuild the fixture region (tippecanoe, edges.parquet
+                         # via the pipeline, graph via `kompass compile`) after changing it
 bun run format           # biome --write, cargo fmt, ruff format + fix
 uv run --project pipeline kompass-pipeline build --region data/region.local.json --out data/build/<name>
                          # the region build: edges.parquet, overlay + base map PMTiles, manifest.json (docs/pipeline.md).
@@ -36,6 +37,11 @@ uv run --project pipeline kompass-pipeline build --region data/region.local.json
                          # A heavy job: about 9 min and 5.5 GB peak for a 100 km radius, plus the
                          # downloads on a first run (extracts ~1.5 GB, DEM 0.4 GB, base map 0.5 GB). Run one at a time.
 cd engine && cargo run -p kompass-cli -- --version     # the native engine: `kompass`
+cd engine && cargo run --release -p kompass-cli -- compile --build ../data/build/<name>
+                         # edges.parquet → <dir>/graph/ (tiled binary graph, docs/graph-format.md) + the
+                         # manifest's `graph` key; ~2 s and 0.3 GB for a 100 km region
+cd engine && cargo run --release -p kompass-cli -- info --build ../data/build/<name>
+                         # load the graph: counts, load times, memory, snap timings (no coordinates)
 uv run --project tools/komoot kompass-komoot --help    # Komoot download (run by the user, see tools/komoot/README.md)
 ```
 
@@ -52,8 +58,10 @@ uv run --project tools/komoot kompass-komoot --help    # Komoot download (run by
 
 ## Layout
 
-- `engine/`: Rust workspace. `core` (`kompass-core`: graph, cost, queries; platform-free), `wasm`
-  (`kompass-wasm`: wasm-bindgen face for the browser), `cli` (`kompass-cli`, binary `kompass`).
+- `engine/`: Rust workspace. `core` (`kompass-core`: graph, cost, queries; platform-free; tiny test
+  graphs in `kompass_core::testing`), `wasm` (`kompass-wasm`: wasm-bindgen face for the browser),
+  `compile` (`kompass-compile`: edges.parquet → graph files; native only, keeps parquet out of the
+  wasm), `cli` (`kompass-cli`, binary `kompass`).
   Toolchain pinned in `engine/rust-toolchain.toml`.
 - `web/`: `@kompass/web`, bun + Vite + React + Tailwind v4 + shadcn/ui + MapLibre GL. The engine
   client lives in `web/src/engine/` (`protocol.ts` the messages, `client.ts` the typed wrapper,

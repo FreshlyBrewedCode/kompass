@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["core", "wasm", "cli"]
+members = ["core", "wasm", "cli", "compile"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +10,7 @@ rust-version = "1.100"
 
 [workspace.dependencies]
 kompass-core = { path = "core" }
+kompass-compile = { path = "compile" }
 # The CLI that generates the JS glue must be the same version (flake.nix, ci.yml).
 wasm-bindgen = "=0.2.127"
 

@@ -37,9 +37,6 @@ Later: GitHub Pages for the app, and Cloudflare (R2) for the large data files if
 - Crates: `core` (graph, cost, queries), `wasm` (wasm-bindgen, runs in a Web Worker),
   `cli` (native: `kompass route --profile gravel.json --from … --to …` → GeoJSON, for tests,
   golden routes, the BRouter comparison and agent tool development).
-- **Graph tiles:** a compact adjacency layout (CSR), quantised attributes, geometry stored
-  separately. Tiled from the start, so the phone loads only what it needs and bikepacking
-  later just means more tiles.
 - **Cost:** per request, the profile is compiled into a cost per edge (a few ms for about 2M
   edges). Cost = length × positive factors, so the search stays correct. Hard constraints
   remove edges. A* uses the smallest factor the profile allows as its lower bound. Regional

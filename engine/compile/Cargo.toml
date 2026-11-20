@@ -1,0 +1,17 @@
+[package]
+name = "kompass-compile"
+description = "The graph compiler: edges.parquet → the tiled graph files (native only, keeps parquet out of the wasm build)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+kompass-core.workspace = true
+parquet = { version = "=60.1.0", default-features = false, features = ["arrow", "zstd", "snap"] }
+arrow-array = "=60.1.0"
+arrow-schema = "=60.1.0"
+serde_json = { version = "=1.0.145", features = ["preserve_order"] }
+
+[lints]
+workspace = true
