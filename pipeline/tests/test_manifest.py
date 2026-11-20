@@ -36,13 +36,14 @@ def test_terrain_is_listed_when_built():
     assert "contours" not in manifest.build(REGION, None, has_terrain=True)["terrain"]
 
 
-def test_rewriting_the_manifest_keeps_built_at_for_the_same_edges(tmp_path):
+def test_rewriting_the_manifest_keeps_built_at_and_the_graph_for_the_same_edges(tmp_path):
     out = tmp_path / "manifest.json"
-    out.write_text(json.dumps({"buildId": "abc", "builtAt": "2030-01-02T03:04:05Z"}))
-    assert manifest.previous_built_at(out, "abc") == "2030-01-02T03:04:05Z"
-    assert manifest.previous_built_at(out, "other") is None
-    assert manifest.previous_built_at(out, None) is None
-    assert manifest.previous_built_at(tmp_path / "missing.json", "abc") is None
+    graph = {"buildId": "abc", "tiles": []}
+    out.write_text(json.dumps({"buildId": "abc", "builtAt": "2030-01-02T03:04:05Z", "graph": graph}))
+    assert manifest.previous(out, "abc") == {"builtAt": "2030-01-02T03:04:05Z", "graph": graph}
+    assert manifest.previous(out, "other") == {}
+    assert manifest.previous(out, None) == {}
+    assert manifest.previous(tmp_path / "missing.json", "abc") == {}
 
 
 def test_overlay_attributes_come_from_the_schema():

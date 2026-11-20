@@ -1,5 +1,6 @@
 {
   "schemaVersion": 1,
+  "buildId": "fixture",
   "builtAt": "2000-01-01T00:00:00Z",
   "bounds": [-0.020249999999999997, -0.020249999999999997, 0.020249999999999997, 0.020249999999999997],
   "center": [0, 0],
@@ -319,5 +320,71 @@
       "minzoom": 10,
       "maxzoom": 14
     }
+  },
+  "graph": {
+    "formatVersion": 1,
+    "buildId": "fixture",
+    "tileZoom": 11,
+    "nodes": 36,
+    "edges": 60,
+    "bytes": 5976,
+    "index": {
+      "file": "graph/index.kmpg",
+      "bytes": 352
+    },
+    "tiles": [
+      {
+        "x": 1023,
+        "y": 1023,
+        "edges": 13,
+        "graph": {
+          "file": "graph/tiles/11-1023-1023.kmpg",
+          "bytes": 1024
+        },
+        "geometry": {
+          "file": "graph/geometry/11-1023-1023.kmpg",
+          "bytes": 320
+        }
+      },
+      {
+        "x": 1023,
+        "y": 1024,
+        "edges": 15,
+        "graph": {
+          "file": "graph/tiles/11-1023-1024.kmpg",
+          "bytes": 1040
+        },
+        "geometry": {
+          "file": "graph/geometry/11-1023-1024.kmpg",
+          "bytes": 344
+        }
+      },
+      {
+        "x": 1024,
+        "y": 1024,
+        "edges": 17,
+        "graph": {
+          "file": "graph/tiles/11-1024-1024.kmpg",
+          "bytes": 1168
+        },
+        "geometry": {
+          "file": "graph/geometry/11-1024-1024.kmpg",
+          "bytes": 360
+        }
+      },
+      {
+        "x": 1024,
+        "y": 1023,
+        "edges": 15,
+        "graph": {
+          "file": "graph/tiles/11-1024-1023.kmpg",
+          "bytes": 1024
+        },
+        "geometry": {
+          "file": "graph/geometry/11-1024-1023.kmpg",
+          "bytes": 344
+        }
+      }
+    ]
   }
 }

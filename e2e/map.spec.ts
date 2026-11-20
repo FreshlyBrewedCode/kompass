@@ -109,12 +109,19 @@ test("tapping an edge lists all its attributes, labelled from the manifest", asy
   await page.mouse.click(5, 5 + (page.viewportSize()?.height ?? 800) / 2);
   await expect(panel).toHaveCount(0);
 
-  // with a layer on, the tap still works (edge 28 lies clear of the legend card)
+  // with a layer on, the tap still works (on an edge clear of the legend card and the controls)
   await pick(page, "surface_class");
   await waitIdle(page);
-  const again = await edgePoint(page, 28);
+  const height = page.viewportSize()?.height ?? 800;
+  let clear: number | null = null;
+  for (const id of [20, 25, 30, 35, 40, 45, 50, 55]) {
+    const p = await edgePoint(page, id);
+    if (p.y > 200 && p.y < height * 0.5) clear = id;
+  }
+  if (clear === null) throw new Error("no fixture edge in the clear part of the map");
+  const again = await edgePoint(page, clear);
   await page.mouse.click(again.x, again.y);
-  await expect(panel).toHaveAttribute("data-edge-id", "28");
+  await expect(panel).toHaveAttribute("data-edge-id", String(clear));
 });
 
 test("the explored layer highlights ridden edges by feature state; the store drives it", async ({
@@ -227,7 +234,7 @@ test.describe("in a dark system theme", () => {
     await page.getByRole("button", { name: "Close" }).click();
     await pick(page, "explored");
     await page.evaluate(() =>
-      window.__kompass.store.setRidden(Array.from({ length: 30 }, (_, i) => i * 2 + 2)),
+      window.__kompass.store.setRidden(Array.from({ length: 30 }, (_, i) => i * 2 + 1)),
     );
     await expect.poll(() => riddenRendered(page)).toBe(30);
     await screenshot(page, testInfo, "explored");

@@ -1,7 +1,10 @@
 // Builds the e2e fixture region: a tiny invented place (a grid of streets around 0°N 0°E, open sea in
-// reality) as GeoJSON + tippecanoe → PMTiles, in the same shape the pipeline will produce
-// (docs/map.md): manifest.json, overlay.pmtiles (layer `edges`, integer feature ids = edge ids) and a
-// minimal basemap.pmtiles in the Protomaps schema (earth, water, roads, places).
+// reality) in the shape of a real build (docs/map.md, docs/graph-format.md): manifest.json,
+// overlay.pmtiles (layer `edges`, integer feature ids = edge ids), a minimal basemap.pmtiles in the
+// Protomaps schema (earth, water, roads, places), edges.parquet (the pipeline contract, written by
+// edges-parquet.py with the pipeline's own writer) and the engine's graph compiled from it (graph/).
+// Edge ids are the row numbers of the Hilbert-sorted edges, as in a real build, so the overlay, the
+// parquet and the graph agree on them.
 //
 //   nix develop -c bun e2e/fixtures/build-region.ts
 //   nix develop -c uv run --project pipeline python e2e/fixtures/build-terrain.py   (the relief)
@@ -40,6 +43,45 @@ const HIGHWAYS = "primary secondary tertiary residential service track track pat
   " ",
 );
 
+// The pipeline's sort key (finalize.hilbert_order): the Hilbert index of the web-mercator z16 tile of
+// the edge midpoint (by planar length), ties by way id. edges-parquet.py checks the order.
+function z16Tile([lon, lat]: [number, number]): [number, number] {
+  const n = 2 ** 16;
+  const r = (lat * Math.PI) / 180;
+  const x = Math.floor(((lon + 180) / 360) * n);
+  const y = Math.floor(((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * n);
+  return [Math.min(Math.max(x, 0), n - 1), Math.min(Math.max(y, 0), n - 1)];
+}
+function hilbert([tx, ty]: [number, number]): number {
+  let [x, y] = [tx, ty];
+  const n = 2 ** 16;
+  let d = 0;
+  for (let s = n / 2; s >= 1; s /= 2) {
+    const rx = (x & s) > 0 ? 1 : 0;
+    const ry = (y & s) > 0 ? 1 : 0;
+    d += s * s * ((3 * rx) ^ ry);
+    if (ry === 0) {
+      if (rx === 1) [x, y] = [n - 1 - x, n - 1 - y];
+      [x, y] = [y, x];
+    }
+  }
+  return d;
+}
+function midpoint(line: [number, number][]): [number, number] {
+  const len = (a: [number, number], b: [number, number]) => Math.hypot(b[0] - a[0], b[1] - a[1]);
+  let left = line.slice(1).reduce((sum, p, i) => sum + len(line[i] as [number, number], p), 0) / 2;
+  for (let i = 0; i + 1 < line.length; i++) {
+    const [a, b] = [line[i] as [number, number], line[i + 1] as [number, number]];
+    const l = len(a, b);
+    if (left <= l) {
+      const t = l > 0 ? left / l : 0;
+      return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+    }
+    left -= l;
+  }
+  return line[line.length - 1] as [number, number];
+}
+
 type Feature = {
   type: "Feature";
   id?: number;
@@ -47,15 +89,29 @@ type Feature = {
   geometry: { type: "LineString" | "Polygon"; coordinates: unknown };
 };
 
-const edges: Feature[] = [];
-const roads: Feature[] = [];
-let id = 1;
-function edge(a: [number, number], b: [number, number], seed: number) {
+// the grid's streets, in generation order (`way` is the OSM-like way id the pipeline would carry)
+type Line = { way: number; coordinates: [number, number][] };
+const lines: Line[] = [];
+function line(a: [number, number], b: [number, number]) {
+  const k = lines.length + 1;
   // a bent line: the middle vertex is nudged sideways, so the lines are not all straight
   const mid: [number, number] = [
-    (a[0] + b[0]) / 2 + ((seed % 3) - 1) * 0.0004,
-    (a[1] + b[1]) / 2 + (((seed >> 1) % 3) - 1) * 0.0004,
+    (a[0] + b[0]) / 2 + ((k % 3) - 1) * 0.0004,
+    (a[1] + b[1]) / 2 + (((k >> 1) % 3) - 1) * 0.0004,
   ];
+  lines.push({ way: k, coordinates: [a, mid, b] });
+}
+for (let j = 0; j < N; j++) for (let i = 0; i < N - 1; i++) line(node(i, j), node(i + 1, j));
+for (let i = 0; i < N; i++) for (let j = 0; j < N - 1; j++) line(node(i, j), node(i, j + 1));
+// edge ids: the row numbers after the pipeline's sort
+const keyed = lines.map((l) => ({ ...l, key: hilbert(z16Tile(midpoint(l.coordinates))) }));
+keyed.sort((p, q) => p.key - q.key || p.way - q.way);
+
+const edges: Feature[] = [];
+const roads: Feature[] = [];
+keyed.forEach(({ way, coordinates }, id) => {
+  // the attributes follow from the id, so the e2e can name them (edge 1: a compacted secondary road, ...)
+  const seed = id;
   const properties: Record<string, unknown> = {
     highway: code("highway", HIGHWAYS[seed % HIGHWAYS.length] as string),
     surface_class: (seed * 3 + (seed >> 2)) % labels("surface_class").length,
@@ -65,20 +121,21 @@ function edge(a: [number, number], b: [number, number], seed: number) {
     route_level: seed % 6 === 0 ? code("route_level", "rcn") : 0,
     forest_share: Math.round((((seed * 7) % 11) / 10) * 100),
     road_near_share: (seed * 37) % 101,
+    // not in the overlay (tippecanoe -x), only in edges.parquet
+    way_id: way,
+    oneway_bike: seed % 17 === 3 ? 1 : seed % 19 === 10 ? -1 : 0,
   };
   // every seventh edge has no grade: "no value" is information too
   if (seed % 7 !== 0) properties.grade_max = (seed * 5) % 26;
-  edges.push({ type: "Feature", id, properties, geometry: { type: "LineString", coordinates: [a, mid, b] } });
+  edges.push({ type: "Feature", id, properties, geometry: { type: "LineString", coordinates } });
   const kind = seed % 9 === 0 ? "major_road" : seed % 3 === 0 ? "medium_road" : "minor_road";
+  const [a, b] = [coordinates[0], coordinates[2]];
   roads.push({
     type: "Feature",
     properties: { kind, kind_detail: kind === "major_road" ? "primary" : "residential", "pmap:level": 0 },
     geometry: { type: "LineString", coordinates: [a, b] },
   });
-  id++;
-}
-for (let j = 0; j < N; j++) for (let i = 0; i < N - 1; i++) edge(node(i, j), node(i + 1, j), id);
-for (let i = 0; i < N; i++) for (let j = 0; j < N - 1; j++) edge(node(i, j), node(i, j + 1), id);
+});
 
 // the manifest's bounds hug the grid; the invented earth reaches further, so the map has no edge in view
 const w = ORIGIN - STEP * 2;
@@ -134,18 +191,19 @@ const roadsFile = write("roads.geojson", roads);
 const placesFile = write("places.geojson", [place]);
 
 const common = ["-q", "-f", "--no-feature-limit", "--no-tile-size-limit"];
-await $`tippecanoe ${common} -o ${join(out, "overlay.pmtiles")} -l edges -Z8 -z14 --no-simplification-of-shared-nodes ${edgesFile}`;
+await $`tippecanoe ${common} -o ${join(out, "overlay.pmtiles")} -l edges -Z8 -z14 -x way_id -x oneway_bike --no-simplification-of-shared-nodes ${edgesFile}`;
 await $`tippecanoe ${common} -o ${join(out, "basemap.pmtiles")} -Z0 -z14 -A ${"Synthetic fixture"} -L earth:${earthFile} -L water:${waterFile} -L landuse:${landuseFile} -L roads:${roadsFile} -L places:${placesFile}`;
 
+const BUILD_ID = "fixture";
 const enumAttribute = (key: keyof typeof ENUMS, label: string) => ({
   key,
   label,
   kind: "enum",
   values: labels(key).map((l, value) => ({ value, label: l })),
 });
-// the terrain (terrain.pmtiles, contours.pmtiles) is built by build-terrain.py
 const manifest = {
   schemaVersion: 1,
+  buildId: BUILD_ID,
   builtAt: "2000-01-01T00:00:00Z",
   bounds: [w, w, e, e],
   center: [0, 0],
@@ -167,6 +225,7 @@ const manifest = {
       { key: "grade_max", label: "Max grade", kind: "number", unit: "%", min: 0, max: 25 },
     ],
   },
+  // built by build-terrain.py
   terrain: {
     file: "terrain.pmtiles",
     encoding: "terrarium",
@@ -177,4 +236,11 @@ const manifest = {
   },
 };
 writeFileSync(join(out, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
+
+// edges.parquet with the pipeline's writer, then the graph (adds the manifest's `graph` key)
+const root = resolve(here, "../..");
+await $`uv run --project ${join(root, "pipeline")} python ${join(here, "edges-parquet.py")} ${edgesFile} ${join(out, "edges.parquet")} ${BUILD_ID}`;
+await $`cargo run --quiet --release --manifest-path ${join(root, "engine/Cargo.toml")} -p kompass-cli -- compile --build ${out}`;
+// the repo's JSON style (the compiler writes one value per line)
+await $`bunx biome format --write ${join(out, "manifest.json")}`.quiet();
 console.log(`fixture region: ${edges.length} edges → ${resolve(out)}`);

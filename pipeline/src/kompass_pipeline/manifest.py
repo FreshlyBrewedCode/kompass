@@ -63,26 +63,34 @@ def build(
     }
 
 
-def previous_built_at(out: Path, build_id: str | None) -> str | None:
-    """`builtAt` of the manifest already there, if it describes the same edges: rewriting the manifest
-    (e.g. after adding the terrain) must not look like a new graph to what is matched against it."""
+def previous(out: Path, build_id: str | None) -> dict:
+    """What a rewrite keeps from the manifest already there, if it describes the same edges: `builtAt`
+    (adding the terrain must not look like a new build to what is matched against it) and `graph`
+    (written into the manifest by `kompass compile`, not by the pipeline)."""
     try:
         old = json.loads(out.read_text())
     except (OSError, ValueError):
-        return None
-    same = build_id is not None and isinstance(old, dict) and old.get("buildId") == build_id
-    return old.get("builtAt") if same and isinstance(old.get("builtAt"), str) else None
+        return {}
+    if build_id is None or not isinstance(old, dict) or old.get("buildId") != build_id:
+        return {}
+    kept = {"builtAt": old["builtAt"]} if isinstance(old.get("builtAt"), str) else {}
+    if isinstance(old.get("graph"), dict):
+        kept["graph"] = old["graph"]
+    return kept
 
 
 def run(region: Region, build_dir: Path, out: Path) -> None:
     build_id = tiles.build_id_of(build_dir / "edges.parquet")
+    kept = previous(out, build_id)
     manifest = build(
         region,
         build_id,
-        previous_built_at(out, build_id),
+        kept.get("builtAt"),
         has_terrain=(build_dir / "terrain.pmtiles").exists(),
         has_contours=(build_dir / "contours.pmtiles").exists(),
     )
+    if "graph" in kept:
+        manifest["graph"] = kept["graph"]
     tmp = out.with_name(out.name + ".part")
     tmp.write_text(json.dumps(manifest, indent=2) + "\n")
     tmp.replace(out)

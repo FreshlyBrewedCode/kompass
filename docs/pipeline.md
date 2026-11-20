@@ -12,6 +12,7 @@ is a directory per build:
 | `terrain.pmtiles` | the DEM as raster tiles (Terrarium PNG, 256 px, z6..12) for the hillshade |
 | `contours.pmtiles` | contour lines as vector tiles (layer `contours`, `ele` in metres, z10..14) |
 | `manifest.json` | bounds, centre, file names, the overlay's attributes with their enum labels, the terrain |
+| `graph/` | not the pipeline's: the engine's graph, compiled from `edges.parquet` by `kompass compile` ([graph-format.md](graph-format.md)) |
 | `work/` | intermediates (region extract, raw edges, context, elevation), kept so stages can resume |
 
 ```sh

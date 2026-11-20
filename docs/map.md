@@ -31,6 +31,8 @@ manifest; the app validates it (`manifest.ts`):
       { "key": "grade_max", "label": "Max grade", "kind": "number", "unit": "%", "min": 0, "max": 25 } ] } }
 ```
 
+- `buildId` ties the files of one build together; `graph` (absent until `kompass compile` ran) lists
+  the engine's graph files with their sizes: [graph-format.md](graph-format.md).
 - `basemap` may be `null`: the style falls back to a plain background (the e2e fixture has a tiny
   synthetic one; tests also cover `null`).
 - Overlay features carry an **integer feature id equal to the edge id** (`feature-state` and the
@@ -139,7 +141,9 @@ card. The e2e uses them.
 ## Fixture
 
 `e2e/fixtures/region/` is a committed synthetic region (60 edges on a grid around 0°N 0°E, open
-sea in reality) in exactly this format, rebuilt by `e2e/fixtures/build-region.ts` (tippecanoe) from the
-GeoJSON in `e2e/fixtures/src/`. Its edges use the pipeline's enum tables and cycle through every line
-style; its relief is invented hills, built by `e2e/fixtures/build-terrain.py` with the pipeline's
-terrain stage.
+sea in reality) in exactly this format, rebuilt by `e2e/fixtures/build-region.ts` from the GeoJSON in
+`e2e/fixtures/src/`: the map tiles with tippecanoe, `edges.parquet` with the pipeline's writer
+(`edges-parquet.py`) and the engine's graph with `kompass compile`. As in a real build, the edge ids
+are the row numbers of the Hilbert-sorted edges (0..59), the same in the overlay, the parquet and the
+graph. Its edges use the pipeline's enum tables and cycle through every line style of the map;
+its relief is invented hills, built by `e2e/fixtures/build-terrain.py` with the pipeline's terrain stage.

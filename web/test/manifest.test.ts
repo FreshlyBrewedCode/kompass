@@ -38,6 +38,41 @@ describe("parseManifest", () => {
     expect(m.basemap?.file).toBe("basemap.pmtiles");
   });
 
+  test("reads the build id and the graph files", () => {
+    const graph = {
+      formatVersion: 1,
+      buildId: "abc",
+      tileZoom: 11,
+      nodes: 36,
+      edges: 60,
+      bytes: 1700,
+      index: { file: "graph/index.kmpg", bytes: 352 },
+      tiles: [
+        {
+          x: 1023,
+          y: 1023,
+          edges: 13,
+          graph: { file: "graph/tiles/11-1023-1023.kmpg", bytes: 1024 },
+          geometry: { file: "graph/geometry/11-1023-1023.kmpg", bytes: 320 },
+        },
+      ],
+    };
+    const m = parseManifest({ ...valid(), buildId: "abc", graph });
+    expect(m.buildId).toBe("abc");
+    expect(m.graph).toEqual(graph);
+    // optional: absent (not compiled yet) or a manifest without a build id
+    expect(parseManifest(valid()).graph).toBeUndefined();
+    expect(parseManifest({ ...valid(), buildId: null }).buildId).toBeUndefined();
+    expect(parseManifest({ ...valid(), graph }).graph?.buildId).toBe("abc");
+    // the graph must be of the manifest's build, with relative paths and sizes
+    expect(() => parseManifest({ ...valid(), buildId: "other", graph })).toThrow(/not the manifest's build/);
+    const tile = graph.tiles[0] as (typeof graph.tiles)[0];
+    const bad = { ...graph, tiles: [{ ...tile, graph: { file: "/abs.kmpg", bytes: 1 } }] };
+    expect(() => parseManifest({ ...valid(), graph: bad })).toThrow(/graph.tiles\[0\].graph.file/);
+    expect(() => parseManifest({ ...valid(), graph: { ...graph, bytes: -1 } })).toThrow(/graph.bytes/);
+    expect(() => parseManifest({ ...valid(), graph: { ...graph, tiles: {} } })).toThrow(/graph.tiles/);
+  });
+
   test("a region without a base map is fine (basemap: null or absent)", () => {
     expect(parseManifest(mutate(["basemap"], null)).basemap).toBeNull();
     expect(parseManifest(mutate(["basemap"], undefined)).basemap).toBeNull();
