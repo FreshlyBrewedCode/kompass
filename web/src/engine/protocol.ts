@@ -49,6 +49,8 @@ export type EngineInfo = {
   tiles: number;
   geometryTiles: number;
   missingTiles: number;
+  /** the summed length of every edge (metres): what the explored share divides by */
+  networkM: number;
   /** heap bytes the engine accounts for, by part */
   heap: HeapStats;
   /** the wasm linear memory (it only grows): what the engine costs the tab */
@@ -111,6 +113,8 @@ export interface EngineMethods {
   explain: { params: { profile: Profile; arcs: number[] }; result: ArcExplanation[] };
   arcCosts: { params: Profile; result: Float32Array };
   setPersonal: { params: PersonalParams | null; result: undefined };
+  /** the summed length in metres of these edges, each once (the explored map's km) */
+  edgesLength: { params: { edges: Uint32Array }; result: number };
   snap: { params: { lon: number; lat: number; radiusM?: number }; result: SnapHit | null };
   matchRide: { params: { lat: Float64Array; lon: Float64Array }; result: RideMatchResult };
   /** seeded random pairs `[lon, lat, lon, lat]*` of the loaded graph (the bench page; never stored) */

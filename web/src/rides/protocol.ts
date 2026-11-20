@@ -3,7 +3,7 @@
 // so the UI thread never touches track data. Same request/response shape as the engine's protocol,
 // plus progress events for long jobs.
 import type { RideInfo } from "@/history/explored-store";
-import type { FileResult, MatchInput, RidePoints, RideSummary } from "./types";
+import type { FileResult, MatchInput, MatchStatus, RidePoints, RideSummary } from "./types";
 
 /** A GeoJSON line layer, one feature per ride (`properties.id`). */
 export type RidesGeoJson = {
@@ -46,6 +46,8 @@ export interface RideMethods {
   saveMatch: { params: { id: string } & MatchInput; result: undefined };
   clearMatches: { params: undefined; result: undefined };
   explored: { params: { graphBuild: string }; result: Map<number, RideInfo> };
+  /** the saved matches of this graph build, without their arcs (which rides are done, how well) */
+  matchStatus: { params: { graphBuild: string }; result: MatchStatus[] };
 }
 
 export type RideMethod = keyof RideMethods;

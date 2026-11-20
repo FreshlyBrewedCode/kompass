@@ -121,8 +121,16 @@ track needs (from the device), matches it (`docs/matching.md`) and returns
 `{ graphBuild, arcs, coverage, firstPoint, unmatched, trackM, matchedM, pathM, breaks, tilesLoaded }`.
 The ride store saves it with `saveMatch(rideId, { graphBuild, arcs, coverage, firstPoint?, trackM?,
 matchedM? })` (`docs/rides.md`); its explored fold applies the matching's 50 % rule in TypeScript
-(where the matches are: the ride worker), so nothing crosses to the engine for it. Orchestration
-(auto-match after import, progress, rematch on a new build) is #26.
+(where the matches are: the ride worker), so nothing crosses to the engine for it. The library drives
+this itself (`web/src/rides/matcher.ts`: after an import, at start-up, after a new build; one ride at a
+time; [rides.md](rides.md)) through `engine.client` directly, so the background work does not flicker the
+engine's `busy` state.
+
+Two more methods serve the explored map: `setPersonal({ rides, lastRidden, today } | null)` hands the
+fold to the route query as flat arrays sized to the graph's edge count (`EngineInfo.edges`; the novelty
+preferences read it), and `edgesLength({ edges })` is the summed length in metres of a set of edges, each
+once (the km explored). `EngineInfo.networkM` is the length of every edge: what "share of the network"
+divides by.
 
 ## Bench page
 

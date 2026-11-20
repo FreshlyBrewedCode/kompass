@@ -1,11 +1,25 @@
 // The ride library as the UI sees it: one external store (subscribe / snapshot, for
 // `useSyncExternalStore`) in front of the ride worker. No React, no layout: the components in
 // src/components/ read it and call its actions, and a redesign can replace them freely.
+import type { PersonalParams } from "@/engine/protocol";
 import type { ExploredStore } from "@/history/explored-store";
 import type { RidesClient } from "./client";
 import { describeSummary, summarizeImport } from "./format";
+import { IDLE, type MatchEngine, type MatchProgress, RideMatcher, type RideMatchInfo } from "./matcher";
+import { personalLayer } from "./personal";
 import type { BackupResult, RidesLayerData } from "./protocol";
-import type { FileResult, ImportSummary, RideSummary } from "./types";
+import type { ExploredStats } from "./summary";
+import { BACKUP_MAGIC, type FileResult, type ImportSummary, type RideSummary } from "./types";
+
+/** The engine as the library drives it: matching, the personal layer for routing, the length of edges. */
+export interface RegionEngine extends MatchEngine {
+  setPersonal(layer: PersonalParams | null): Promise<void>;
+  /** the summed length in metres of these edges */
+  edgesLength(edges: Uint32Array): Promise<number>;
+}
+
+/** What the loaded graph is: its build (matches belong to it), the edge count (the personal layer's size), its length. */
+export type EngineGraph = { graphBuild: string; edgeCount: number; networkM: number };
 
 export type StorageStatus = {
   /** `null` while unknown or unsupported */
@@ -30,6 +44,14 @@ export type RidesSnapshot = {
   storage: StorageStatus;
   /** the "My rides" lines; replaced after every change of the library */
   layer: RidesLayerData | null;
+  /** matching the rides onto the graph, in the background (docs/rides.md) */
+  matching: MatchProgress;
+  /** whether an engine with a graph is attached: without one nothing can be matched */
+  engineReady: boolean;
+  /** per ride with a match of the current build: the matched share and whether it is outside the region */
+  matches: ReadonlyMap<string, RideMatchInfo>;
+  /** the last fold of the matches; `null` until there was one */
+  explored: ExploredStats | null;
 };
 
 const EMPTY_LAYER: RidesLayerData = { type: "FeatureCollection", features: [] };
@@ -45,10 +67,22 @@ export class RidesState {
     report: null,
     storage: { persisted: null, usage: null, quota: null },
     layer: null,
+    matching: IDLE,
+    engineReady: false,
+    matches: new Map(),
+    explored: null,
   };
   readonly #listeners = new Set<() => void>();
   #explored: { store: ExploredStore; graphBuild: string } | null = null;
   #exploredNonEmpty = false;
+  #engine: { engine: RegionEngine; graph: EngineGraph } | null = null;
+  #matcher: RideMatcher | null = null;
+  /** the engine's personal layer is set (so it must be cleared when the last match goes) */
+  #personalSet = false;
+  #syncing: Promise<void> | null = null;
+  #syncAgain = false;
+  #progressAt = 0;
+  #progressTimer: ReturnType<typeof setTimeout> | null = null;
   /** how long the last layer fetch took (ms), for the measurements in docs */
   lastLayerMs = 0;
 
@@ -76,7 +110,9 @@ export class RidesState {
     try {
       const rides = await this.client.call("init", undefined);
       this.#set({ phase: "ready", rides });
-      await Promise.all([this.#refreshLayer(), this.refreshStorage(), this.#syncExplored()]);
+      // an engine that was ready before the library was starts matching now
+      if (this.#engine) this.#matcher?.setBuild(this.#engine.graph.graphBuild);
+      await Promise.all([this.#refreshLayer(), this.refreshStorage(), this.#sync()]);
     } catch (error) {
       this.#set({ phase: "error", error: message(error) });
     }
@@ -85,17 +121,130 @@ export class RidesState {
   /** The explored map follows the saved matches (of `graphBuild`); applied now and after every change. */
   attachExplored(store: ExploredStore, graphBuild: string) {
     this.#explored = { store, graphBuild };
-    void this.#syncExplored();
+    void this.#sync();
   }
 
-  async #syncExplored() {
+  /**
+   * An engine with a graph is ready: from now on the rides without a match for `graph.graphBuild` are
+   * matched in the background, the folded matches go to the engine as the personal layer, and the
+   * explored map follows the build (a build the matches are not of shows nothing until they are redone).
+   */
+  attachEngine(engine: RegionEngine, graph: EngineGraph) {
+    const same = this.#engine?.graph.graphBuild === graph.graphBuild && this.#engine.engine === engine;
+    this.#engine = { engine, graph };
+    if (same) return;
+    this.#personalSet = false; // a new graph has a new planner: no personal layer yet
+    this.#matcher ??= this.#createMatcher();
+    this.#set({ engineReady: true });
+    void this.#sync();
+    this.#matcher.setBuild(this.#snapshot.phase === "ready" ? graph.graphBuild : null);
+  }
+
+  /** The engine is gone (reloading another graph): matching waits. */
+  detachEngine() {
+    if (!this.#engine) return;
+    this.#engine = null;
+    this.#matcher?.setBuild(null);
+    this.#set({ engineReady: false });
+  }
+
+  /** Stops matching after the ride in progress; `resumeMatching` carries on. */
+  pauseMatching() {
+    this.#matcher?.pause();
+  }
+
+  resumeMatching() {
+    this.#matcher?.resume();
+  }
+
+  #createMatcher(): RideMatcher {
+    const client = this.client;
+    return new RideMatcher({
+      rides: {
+        list: () => client.call("list", undefined),
+        matched: (graphBuild) => client.call("matchStatus", { graphBuild }),
+        points: (id) => client.call("points", { id }),
+        save: (id, match) => client.call("saveMatch", { id, ...match }),
+      },
+      engine: {
+        matchRide: (lat, lon) => {
+          const target = this.#engine;
+          if (!target) return Promise.reject(new Error("the engine is not ready"));
+          return target.engine.matchRide(lat, lon);
+        },
+      },
+      onProgress: (progress) => this.#setMatching(progress),
+      onMatches: (matches) => this.#set({ matches }),
+      onBatch: () => void this.#sync(),
+    });
+  }
+
+  /** Progress changes at most ~4 times a second (a ride can match in 20 ms); a phase change is immediate. */
+  #setMatching(progress: MatchProgress) {
+    const now = Date.now();
+    const phaseChanged = progress.phase !== this.#snapshot.matching.phase;
+    if (this.#progressTimer) clearTimeout(this.#progressTimer);
+    this.#progressTimer = null;
+    if (phaseChanged || now - this.#progressAt >= 250) {
+      this.#progressAt = now;
+      this.#set({ matching: progress });
+    } else {
+      this.#progressTimer = setTimeout(() => {
+        this.#progressAt = Date.now();
+        this.#set({ matching: progress });
+      }, 250);
+    }
+  }
+
+  /** Folds the saved matches into the explored store and the engine's personal layer (coalesced). */
+  #sync(): Promise<void> {
+    if (this.#syncing) {
+      this.#syncAgain = true;
+      return this.#syncing;
+    }
+    const run = (async () => {
+      try {
+        do {
+          this.#syncAgain = false;
+          await this.#syncOnce();
+        } while (this.#syncAgain);
+      } finally {
+        this.#syncing = null;
+      }
+    })();
+    this.#syncing = run;
+    return run;
+  }
+
+  async #syncOnce() {
+    const graphBuild = this.#engine?.graph.graphBuild ?? this.#explored?.graphBuild;
+    if (!graphBuild || this.#snapshot.phase !== "ready") return;
+    const folded = await this.client.call("explored", { graphBuild });
     const target = this.#explored;
-    if (!target || this.#snapshot.phase !== "ready") return;
-    const folded = await this.client.call("explored", { graphBuild: target.graphBuild });
     // leave a hand-made (dev) ridden set alone as long as there are no matches at all
-    if (folded.size === 0 && !this.#exploredNonEmpty) return;
+    if (target && (folded.size > 0 || this.#exploredNonEmpty)) target.store.setRidden(folded);
     this.#exploredNonEmpty = folded.size > 0;
-    target.store.setRidden(folded);
+
+    const attached = this.#engine;
+    if (!attached) {
+      this.#set({ explored: { edges: folded.size, km: null, networkKm: null } });
+      return;
+    }
+    const { engine, graph } = attached;
+    let km: number | null = 0;
+    try {
+      if (folded.size > 0) {
+        await engine.setPersonal(personalLayer(folded, graph.edgeCount));
+        this.#personalSet = true;
+        km = (await engine.edgesLength(Uint32Array.from(folded.keys()))) / 1000;
+      } else if (this.#personalSet) {
+        await engine.setPersonal(null);
+        this.#personalSet = false;
+      }
+    } catch {
+      km = null; // the engine reloaded under us: the next sync (after its attach) says
+    }
+    this.#set({ explored: { edges: folded.size, km, networkKm: graph.networkM / 1000 } });
   }
 
   async #refreshLayer() {
@@ -110,7 +259,8 @@ export class RidesState {
 
   async #afterChange(rides: RideSummary[]) {
     this.#set({ rides });
-    await Promise.all([this.#refreshLayer(), this.refreshStorage(), this.#syncExplored()]);
+    this.#matcher?.kick(); // new rides are matched, removed ones are gone from the fold
+    await Promise.all([this.#refreshLayer(), this.refreshStorage(), this.#sync()]);
   }
 
   async refreshStorage(): Promise<void> {
@@ -141,8 +291,20 @@ export class RidesState {
     return granted;
   }
 
-  async importFiles(files: File[]): Promise<void> {
-    if (files.length === 0 || this.#snapshot.busy) return;
+  /**
+   * Imports what the picker or a drop delivered: GPX and FIT files and zips of them (read by the ride
+   * worker), and `.kompassrides` backups (told by their first bytes, restored after the tracks).
+   */
+  async importFiles(all: File[]): Promise<void> {
+    if (all.length === 0 || this.#snapshot.busy) return;
+    const files: File[] = [];
+    const backups: File[] = [];
+    for (const file of all) ((await isBackup(file)) ? backups : files).push(file);
+    if (files.length > 0) await this.#importTracks(files);
+    for (const backup of backups) await this.importBackup(backup);
+  }
+
+  async #importTracks(files: File[]): Promise<void> {
     this.#set({ busy: { label: "Importing", done: 0, total: files.length }, report: null });
     try {
       const results = await this.client.call("importFiles", { files }, (p) =>
@@ -208,6 +370,14 @@ export class RidesState {
 
   /** The empty layer, for a map that is created before the worker answered. */
   static readonly emptyLayer = EMPTY_LAYER;
+}
+
+async function isBackup(file: Blob): Promise<boolean> {
+  try {
+    return (await file.slice(0, BACKUP_MAGIC.length).text()) === BACKUP_MAGIC;
+  } catch {
+    return false;
+  }
 }
 
 function describeBackup(r: BackupResult): string {

@@ -235,7 +235,10 @@ export function infoLayers(manifest: Manifest, theme: Theme, layers: MapLayers):
   ];
 }
 
-/** The explored band: a highlighter over the ridden edges; the rest of the map stays as it is. */
+/**
+ * The explored band: a highlighter over the ridden edges; the rest of the map stays as it is. Edges
+ * ridden more often are a little stronger (the `count` of their feature state, explored-layer.ts).
+ */
 export function exploredLayer(manifest: Manifest, theme: Theme, layers: MapLayers): LayerSpecification {
   return {
     id: EXPLORED_LINE,
@@ -249,7 +252,13 @@ export function exploredLayer(manifest: Manifest, theme: Theme, layers: MapLayer
     },
     paint: {
       "line-color": EXPLORED[theme],
-      "line-opacity": ["case", ["boolean", ["feature-state", "ridden"], false], 0.7, 0],
+      // three calm steps of intensity: ridden once, a few times (2 to 4), often (5 or more)
+      "line-opacity": [
+        "case",
+        ["boolean", ["feature-state", "ridden"], false],
+        ["step", ["to-number", ["feature-state", "count"], 1], 0.5, 2, 0.7, 5, 0.9],
+        0,
+      ],
       "line-width": infoWidth(1.15),
     },
   };

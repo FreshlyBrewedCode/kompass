@@ -6,8 +6,9 @@ the source of truth; everything per edge is derived from them. **Nothing leaves 
 carries track data and the app makes no third-party requests at all (checked by `e2e/rides.spec.ts`: during
 import, export and restore every request goes to the app's own origin and none has a body).
 
-Code: `web/src/rides/` (logic, no layout), `web/src/components/rides-panel.tsx` (replaceable UI),
-`web/src/map/` (the "My rides" layer). Tests: `web/test/rides-*.test.ts`, `e2e/rides.spec.ts`;
+Code: `web/src/rides/` (logic, no layout), `web/src/components/rides-panel.tsx` and `rides-matching.tsx` (replaceable UI),
+`web/src/map/` (the "My rides" layer). Tests: `web/test/rides-*.test.ts` (the matcher with a fake engine, the personal layer, the zip import, …),
+`e2e/rides.spec.ts`, `e2e/explored.spec.ts` (import, matching, the explored layer, zip, reload, delete);
 `e2e/rides-bench.spec.ts` measures (`KOMPASS_BENCH=<n>`, skipped otherwise).
 
 ## Shape
@@ -27,6 +28,17 @@ GeoJSON object itself where `URL.createObjectURL` is missing in workers).
 
 - **Files**: `.gpx` and `.fit` (chosen by signature, not name: FIT has `.FIT` at byte 8). Many at once;
   progress per file, then a result: imported, duplicate, already imported, failed (with the reason).
+- **Zips** (`zip.ts`): a `.zip` (told by its first bytes) is read as a stream with fflate's `Unzip` (MIT,
+  ~8 kB used; already in the tree through pmtiles): the file is read in 1 MB slices and each entry is
+  imported as soon as it is complete, so a zip of a whole history never sits unpacked in memory. Only
+  `.gpx` / `.fit` entries count; folders, `__MACOSX`, dot files and other files are skipped. Progress runs
+  over the entries (from the end-of-central-directory record). A zip without rides, or one that cannot be
+  read, is one failed result with the reason; one entry that cannot be read does not stop the others.
+  How to make one from the Komoot download: [tools/komoot/README.md](../tools/komoot/README.md).
+- **Backups in the same picker**: a file that starts with the backup's magic bytes is restored instead
+  (after the tracks of the same pick), whatever its name. The picker's `accept` lists `.gpx,.fit,.zip,
+  .kompassrides` and the MIME types iOS attaches (`application/zip`, `application/x-zip-compressed`, and
+  octet-stream so nothing stays greyed out).
 - **GPX** (`gpx.ts`): a small scanner, no DOM (workers have no `DOMParser`) and no dependency. Reads every
   `<trkpt lat lon>` with `<ele>` and `<time>` across all tracks and segments, the track's `<name>` and
   `<type>` (Komoot writes its sport id there). Tolerates namespaces on children, comments, CDATA, self-closing
@@ -108,35 +120,75 @@ trailer:        u32 0 · u32 0 · u32 ride count · u32 CRC-32 of every byte bef
 ## The map-matching seam
 
 The matcher runs in the engine worker (`engine.call("matchRide", { lat, lon })`,
-[engine-web.md](engine-web.md), [matching.md](matching.md)); driving it from the library (after an import,
-after a new build, with progress) is the next task. The library gives it everything to plug in
+[engine-web.md](engine-web.md), [matching.md](matching.md)). The library gives it everything to plug in
 (`RideLibrary`, reachable through the worker as the `RideMethods` in `protocol.ts`):
 
 - `listRides()` summaries, `getPoints(rideId)` → `{ count, lat, lon, time, ele }` typed arrays (degrees, ms, m).
 - `saveMatch(rideId, { graphBuild, arcs: Uint32Array, coverage: Uint8Array, firstPoint?, trackM?, matchedM? })`:
   what the matcher returns (the arcs in riding order, `edge << 1 | reverse`; per arc the covered share of the
   edge × 255), marked with the graph build (the engine's build id). `clearMatches()` forgets them all (rides
-  stay). Database version 2 changed the stored format; the upgrade clears the version 1 matches (edge ids),
-  which are derived anyway.
+  stay). A match of another build is stale; saving replaces a ride's match.
+- `matchStatus(graphBuild)`: the saved matches of that build without their arcs (`rideId, trackM, matchedM,
+  arcs`): which rides are done and how well.
 - `exploredInput(graphBuild)` → `Map<edgeId, { count, lastRidden }>` (`match.ts`, `foldMatches`): the
   explored rule of [matching.md](matching.md) (an arc counts when the ride covers half of the edge, its
   pieces summed; an edge when either arc does), per edge the number of rides (once per ride) and the latest
   ride end (0 = only untimed rides). Matches of another `graphBuild` are stale and ignored.
-- **At start-up** `RidesState.attachExplored(exploredStore, graphBuild)` folds the saved matches of the
-  manifest's graph build into the `ExploredStore` and refolds after every import or delete. With no matches
-  at all the store is left alone (the `?fakeRidden` dev hook keeps working).
-- Tested with a fake matcher (`web/test/rides-library.test.ts`) and end to end in the e2e: a fixture ride's
-  points go through `window.__kompass.engine` to the matcher and back into the store, and the explored map
-  shows its edges after a reload.
+
+## Matching in the background
+
+`matcher.ts` (`RideMatcher`, logic only: the ride store and the engine are interfaces, tested with fakes in
+`web/test/rides-matcher.test.ts`) and `state.ts` (`RidesState`, which owns it) turn "import my rides" into
+"see my explored map" in one step.
+
+- **When**: once the engine has a graph (`session.ts` follows `engineStore()`: `attachEngine` with the
+  build id, the edge count and the network length; `detachEngine` while it reloads), after every import,
+  restore or delete, and at start-up. Nothing is remembered about progress: a ride is *pending* while it
+  has no saved match for the current build. So a reload resumes where it stopped, and a **new graph build**
+  (every saved match is stale) rematches everything, newest ride first.
+- **How**: one ride at a time. Points come from the ride worker to the main thread and on to the engine
+  worker (`points` results and the engine's inputs are transferred, not copied): a `MessageChannel` between
+  the two workers was not needed, because the main thread only forwards the buffers (48 kB for 3000 points)
+  and measured no long task (below). Rides imported during a run are picked up by it. The UI thread never
+  waits: every step is a worker message.
+- **Progress, pause**: `snapshot.matching` is `{ phase: idle | running | paused, done, total, failed }`
+  (updates are coalesced to ~4 per second); the panel shows "Matching rides to the map… n / m" with a pause
+  button and a resume. Pausing stops after the ride in the engine, which is dropped (matched again on resume).
+- **Results**: `snapshot.matches` maps a ride to `{ share, outside }`. `share` is `matchedM / trackM`; a
+  ride whose share is under 50 % (`OUTSIDE_SHARE`) is **outside the region**: a result, not an error (it is
+  saved all the same, so it is not pending again). A ride the engine throws on is skipped for the session and
+  counted in `failed` ("n rides could not be matched"); it is tried again at the next start. A ride deleted
+  while it is being matched is not a failure.
+- **After matching** (every ~2 s during a run, and when it ends; after every delete): the saved matches are
+  folded (`exploredInput`) into the `ExploredStore` (so the layer follows), into the engine's **personal
+  layer**, and into the explored stats. At start-up `attachExplored(store, graphBuild)` folds the saved
+  matches of the manifest's build at once, so the explored map shows before the engine has loaded; with no
+  matches at all the store is left alone (the `?fakeRidden` dev hook keeps working).
+- **The personal layer** (`personal.ts`): `engine.call("setPersonal", { rides, lastRidden, today })`, flat
+  arrays sized to the graph's edge count: per edge the number of rides (saturating at 65535) and the day (since
+  1970, UTC) of the last one (0 = only untimed rides), today. The profile's novelty preferences ("never
+  ridden", "not ridden for long", "ridden often") read it in the route query. With no matches left it is
+  cleared (`setPersonal(null)`); a new graph starts without one.
+- **Summary** (`summary.ts`): rides matched (n of m, how many outside the region), km of distinct ways
+  explored (`engine.edgesLength` over the explored edges: each edge counted once, whole) and the share of the
+  network (`EngineInfo.networkM`, every edge of the graph, including ways a gravel profile avoids).
+
+On the real history of 185 GPX files (180 rides after the dedup rule), headless Chromium with software
+WebGL, the app and the region from a local server: import 3 s (zip: 3 s), matching of all 180 rides 6 s
+(about 33 ms per ride, all in the background), 25,420 edges / 2,568 km explored, 13 rides outside the region,
+no UI long task during the import or the matching, the engine's wasm memory 236 MB after (graph 152 MB), and
+a reload brings the explored map back from the saved matches in under a second without matching again. The
+native matcher on the same 180 rides finds the same 25,420 edges / 2,568 km.
 
 ## UI
 
 `RidesButton` (the chrome's "Rides n" entry and the "My rides" eye toggle) and `RidesPanel`: a bottom sheet
 on a phone, a right-hand panel on a desktop, both without hiding the map. Add files (picker accepting
-`.gpx,.fit` and the MIME types iOS and Android attach, multiple; or drop them anywhere on the page),
-progress, the result summary with the problems listed, the list (newest first; tap a ride to highlight it
-and zoom the map to it; delete one; delete all after a confirmation), export, restore and the storage
-status. The list renders in pages of 60 as it is scrolled. "My rides" is a GeoJSON line layer between the
+`.gpx,.fit,.zip,.kompassrides` and the MIME types iOS and Android attach, multiple; or drop them anywhere
+on the page), progress, the matching progress line and the explored summary (`rides-matching.tsx`), the
+result summary with the problems listed, the list (newest first; each row says how much of the ride
+matched, or tags it "outside the region"; tap a ride to highlight it and zoom the map to it; delete one;
+delete all after a confirmation), export, restore and the storage status. The list renders in pages of 60 as it is scrolled. "My rides" is a GeoJSON line layer between the
 overlay and the labels (magenta, with a casing, readable on the light and the dark base map).
 
 ## Measured

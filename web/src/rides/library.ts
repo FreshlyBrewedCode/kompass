@@ -8,7 +8,7 @@ import { findSameRides, pickKeeper } from "./dedup";
 import { foldMatches } from "./match";
 import { parseTrackFile } from "./parse";
 import { RideStore } from "./store";
-import type { FileOutcome, MatchInput, RidePoints, RideSummary } from "./types";
+import type { FileOutcome, MatchInput, MatchStatus, RidePoints, RideSummary } from "./types";
 
 /** SHA-256 hex of the bytes; where Web Crypto is missing (insecure contexts) a 64-bit FNV-style fallback. */
 export async function hashBytes(bytes: Uint8Array): Promise<string> {
@@ -168,6 +168,21 @@ export class RideLibrary {
   /** The explored map's input: per edge count and last-ridden, from the matches of `graphBuild`. */
   async exploredInput(graphBuild: string): Promise<Map<number, RideInfo>> {
     return foldMatches(this.listRides(), await this.store.getMatches(), graphBuild);
+  }
+
+  /** The saved matches of `graphBuild` (rides still stored), arcs left out: which rides are matched and how well. */
+  async matchStatus(graphBuild: string): Promise<MatchStatus[]> {
+    const out: MatchStatus[] = [];
+    for (const m of await this.store.getMatches()) {
+      if (m.graphBuild !== graphBuild || !this.#rides.has(m.rideId)) continue;
+      out.push({
+        rideId: m.rideId,
+        trackM: m.trackM ?? null,
+        matchedM: m.matchedM ?? null,
+        arcs: m.arcs.length,
+      });
+    }
+    return out;
   }
 
   // ---- the map line

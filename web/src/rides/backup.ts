@@ -8,9 +8,9 @@
 // Writing builds the file as a chain of Blobs (the browser keeps big ones off the JS heap); reading
 // streams it twice (verify the CRC, then import), so memory stays at about one ride, not the file.
 import type { RideLibrary } from "./library";
-import type { FileOutcome, RideSummary } from "./types";
+import { BACKUP_MAGIC, type FileOutcome, type RideSummary } from "./types";
 
-export const BACKUP_MAGIC = "KMPSRIDE";
+export { BACKUP_MAGIC };
 export const BACKUP_VERSION = 1;
 /** ~8 MB: how much is gathered before it is handed to a Blob */
 const CHUNK_BYTES = 8 * 1024 * 1024;

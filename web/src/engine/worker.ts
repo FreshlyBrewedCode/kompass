@@ -234,6 +234,7 @@ const handlers: EngineHandlers = {
     else e.clearPersonal();
     return undefined;
   },
+  edgesLength: ({ edges }) => ready().engine.edgesLengthM(edges),
   snap: ({ lon, lat, radiusM = 250 }) => JSON.parse(ready().engine.snap(lon, lat, radiusM)),
   matchRide: async ({ lat, lon }) => {
     const r = ready();
