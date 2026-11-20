@@ -110,8 +110,9 @@ optimise if a phone start is too slow.
 | `error` | a download or load failed | `message`; `load` again retries (and resumes) |
 
 `busy` is true while any request through the store runs. The app starts the load as soon as the
-region manifest has a `graph`; the pill top right (`EngineStatus`) shows the state ("region data
-12.3 of 66.3 MB").
+region manifest has a `graph`; top right, `EngineStatus` shows the state: a pill (version, errors)
+and, while the graph downloads or loads, a card under it ("Downloading region data, 12.3 of 66.3 MB"
+and a bar).
 
 ## Matching and the rides seam
 

@@ -126,7 +126,7 @@ export default function BenchPage() {
               f(r.engine.max),
               f(r.roundTrip.median),
               f(r.km),
-              Math.round(r.resultKb),
+              Number.isFinite(r.resultKb) ? Math.round(r.resultKb) : "–",
             ])}
           />
           <Table

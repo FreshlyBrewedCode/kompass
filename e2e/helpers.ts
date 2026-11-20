@@ -33,6 +33,12 @@ export async function screenshot(page: Page, testInfo: TestInfo, name: string) {
   await page.screenshot({ path: join(SHOTS, `${name}-${dark ? "dark-" : ""}${testInfo.project.name}.png`) });
 }
 
+/** A screenshot as the page is now (no waiting for the map). */
+export async function rawScreenshot(page: Page, testInfo: TestInfo, name: string) {
+  mkdirSync(SHOTS, { recursive: true });
+  await page.screenshot({ path: join(SHOTS, `${name}-${testInfo.project.name}.png`) });
+}
+
 type Kompass = {
   store: { setRidden(ids: Iterable<number>): void };
   map: {

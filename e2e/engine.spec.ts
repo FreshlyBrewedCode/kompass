@@ -1,6 +1,6 @@
 import { expect, type Page, type Request, test } from "@playwright/test";
 import { node } from "../web/test/synthetic";
-import { engineReady, openMap, screenshot, waitIdle } from "./helpers";
+import { engineReady, openMap, rawScreenshot, screenshot, waitIdle } from "./helpers";
 
 // The engine in the browser on the synthetic fixture region (docs/engine-web.md): the graph
 // downloads with progress, is cached on the device, routes in the lab UI and offline, and matches a
@@ -39,17 +39,18 @@ const route = (page: Page, preset: string, points: [number, number][]) =>
 test("the graph downloads with progress, is cached on the device, and routes offline", async ({
   page,
   context,
-}) => {
+}, testInfo) => {
   const log = requestLog(page);
   // slow the graph files down a little, so the download state is visible on this tiny region
   await page.route(/\/data\/graph\//, async (r) => {
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await new Promise((resolve) => setTimeout(resolve, 400));
     await r.continue();
   });
   await page.goto("./?dev");
   const status = page.getByTestId("engine-status");
   await expect(status).toHaveAttribute("data-status", "downloading");
-  await expect(page.getByTestId("engine-progress")).toContainText(/region data \d+\.\d of \d+\.\d MB/);
+  await expect(page.getByTestId("engine-progress")).toContainText(/Downloading region data\d+ of \d+ KB/);
+  await rawScreenshot(page, testInfo, "engine-downloading");
   await engineReady(page);
   const first = log.filter((r) => isGraphFile(r.url()));
   // every graph file once, as its gzip sibling
@@ -159,10 +160,11 @@ test("the route lab: A, B and a waypoint, a preset, a second preset to compare",
   await screenshot(page, testInfo, "lab");
 });
 
-test("the bench page runs on the loaded region and reports as text", async ({ page }) => {
+test("the bench page runs on the loaded region and reports as text", async ({ page }, testInfo) => {
   await page.goto("./?bench&run&pairs=2&rides=2");
   await engineReady(page);
   await expect(page.getByTestId("bench-status")).toHaveText("done", { timeout: 20_000 });
+  await rawScreenshot(page, testInfo, "bench");
   const text = await page.getByTestId("bench-text").textContent();
   expect(text).toContain("profile compile");
   expect(text).toContain("| after load |");
