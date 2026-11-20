@@ -21,6 +21,8 @@ import { infoSpec, type MapLayers } from "./info";
 import type { Manifest } from "./manifest";
 import { CASING, EXPLORED, RIDES, SELECTED, type Theme } from "./palette";
 import { dataFileUrl } from "./region";
+import { baseTrackLayers, classes, specLayers, structureLayers } from "./round2/shared";
+import { type VariantId, variant } from "./round2/variants";
 import { routeLayer, WAY_UNDERLAY, wayLayers } from "./ways";
 
 type Expr = ExpressionSpecification;
@@ -60,6 +62,8 @@ export type StyleOptions = {
   lang?: string;
   /** the recorded rides; none by default */
   rides?: RidesLayerState;
+  /** design round 2 (`?mapstyle=`): one of the prototype variants instead of the shipped ways */
+  variant?: VariantId | null;
 };
 
 const visibility = (visible: boolean) => (visible ? "visible" : "none") as "visible" | "none";
@@ -268,7 +272,8 @@ const NO_BASE: BaseLayers = { ground: [], features: [], roads: [], top: [], labe
 
 export function buildStyle(options: StyleOptions): StyleSpecification {
   const { manifest, dataUrl, theme, assetsUrl, layers } = options;
-  const c = CARTO[theme];
+  const round2 = options.variant ? variant(options.variant, theme) : null;
+  const c = round2?.carto ?? CARTO[theme];
   const rides = options.rides ?? NO_RIDES;
   const pmtiles = (file: string) => `pmtiles://${dataFileUrl(dataUrl, file)}`;
   const sources: StyleSpecification["sources"] = {
@@ -323,13 +328,49 @@ export function buildStyle(options: StyleOptions): StyleSpecification {
     routes: layers.routes,
   };
   const attributes = manifest.overlay.attributes;
+  const glyphs = `${assetsUrl}fonts/{fontstack}/{range}.pbf`;
+  const sprite = `${assetsUrl}sprites/v4/${theme}`;
+
+  if (round2) {
+    // the prototype variants: the overlay draws every way it carries at every zoom (the big roads from
+    // z8, tracks from z13), the base tiles add tracks at z12, bridges and tunnels; the lakes lie above
+    // the relief (flat water is not shaded and carries no contours)
+    const k = classes(attributes);
+    const spec = round2.spec(k);
+    const drawn = specLayers(spec, k, { source: OVERLAY_SOURCE, sourceLayer: manifest.overlay.layer });
+    const water = base.ground.filter((l) => l.id === "water");
+    const hasBase = manifest.basemap !== null;
+    return {
+      version: 8,
+      glyphs,
+      sprite,
+      sources,
+      layers: [
+        ...base.ground.filter((l) => l.id !== "water"),
+        ...terrain.relief,
+        ...water,
+        ...base.features,
+        routeLayer(attributes, way),
+        ...(hasBase ? baseTrackLayers(BASEMAP_SOURCE, spec.base) : []),
+        ...drawn.under,
+        ...infoLayers(manifest, theme, layers),
+        exploredLayer(manifest, theme, layers),
+        ...drawn.over,
+        ...(hasBase ? structureLayers(BASEMAP_SOURCE, spec.base) : []),
+        ...base.top,
+        ...ridesLayers(theme, rides),
+        ...terrain.labels,
+        ...base.labels,
+      ],
+    };
+  }
   const ways = wayLayers(attributes, way);
 
   return {
     version: 8,
     // `{fontstack}` / `{range}` must stay literal braces: built as a string, not through `new URL`
-    glyphs: `${assetsUrl}fonts/{fontstack}/{range}.pbf`,
-    sprite: `${assetsUrl}sprites/v4/${theme}`,
+    glyphs,
+    sprite,
     sources,
     layers: [
       ...base.ground,

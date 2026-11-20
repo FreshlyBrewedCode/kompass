@@ -12,6 +12,7 @@ import { type PickedEdge, pickEdge } from "./inspect";
 import type { Manifest } from "./manifest";
 import type { Theme } from "./palette";
 import { registerPmtiles } from "./protocol";
+import { variantFromSearch } from "./round2/variants";
 import {
   buildStyle,
   CONTOUR_LABEL,
@@ -130,6 +131,7 @@ export class RegionMap {
       rides: this.#rides,
       assetsUrl: new URL("map/", document.baseURI).href,
       lang: labelLanguage(navigator.languages ?? [navigator.language]),
+      variant: variantFromSearch(location.search),
     });
   }
 
