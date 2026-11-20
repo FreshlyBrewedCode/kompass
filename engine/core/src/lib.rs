@@ -14,7 +14,8 @@
 //!   and limit with its text and strength, [`presets`]: the shipped base profiles.
 //! - [`cost`]: a profile compiled into a cost per arc; [`search`]: A* over it.
 //! - [`route`]: the `route` query and the route diff ([`Planner`]), [`personal`]: the rider's
-//!   history per edge.
+//!   history per edge; [`explain`]: the cost debug queries (edge costs for a map layer, one edge
+//!   explained, two routes compared).
 //! - [`testing`]: tiny graphs built in code, for tests here and in the other crates.
 #![allow(
     clippy::missing_errors_doc,
@@ -29,6 +30,7 @@ pub mod assemble;
 pub mod attrs;
 pub mod catalogue;
 pub mod cost;
+pub mod explain;
 pub mod format;
 pub mod geometry;
 pub mod graph;

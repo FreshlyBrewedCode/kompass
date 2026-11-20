@@ -120,7 +120,7 @@ pub enum SurfaceKind {
 }
 
 impl SurfaceKind {
-    fn of(s: SurfaceClass) -> SurfaceKind {
+    pub(crate) fn of(s: SurfaceClass) -> SurfaceKind {
         match s {
             SurfaceClass::PavedSmooth => SurfaceKind::Paved,
             SurfaceClass::PavedRough => SurfaceKind::PavedRough,
@@ -327,6 +327,11 @@ impl std::fmt::Display for RouteError {
 
 impl std::error::Error for RouteError {}
 
+/// An `invalid_request` error.
+pub(crate) fn invalid_request(message: String) -> RouteError {
+    err(ErrorCode::InvalidRequest, message)
+}
+
 fn err(code: ErrorCode, message: String) -> RouteError {
     RouteError {
         code,
@@ -437,6 +442,16 @@ pub struct Planner {
     personal: Option<PersonalLayer>,
     /// Profiles compiled since creation (for tests and stats).
     pub compiles: usize,
+}
+
+/// A compiled profile and what it is read with.
+pub(crate) struct CostView<'a> {
+    pub graph: &'a Graph,
+    pub grid: &'a Grid,
+    pub model: &'a CostModel,
+    pub costs: &'a [f32],
+    pub bound: f32,
+    pub personal: Option<&'a PersonalLayer>,
 }
 
 struct Endpoint {
@@ -558,6 +573,20 @@ impl Planner {
     pub fn arc_costs(&mut self, p: &Profile) -> Result<(&[f32], f32), RouteError> {
         let i = self.compile(p)?;
         Ok((&self.compiled[i].costs, self.compiled[i].bound))
+    }
+
+    /// A compiled profile with what reads it (the cost debug queries, [`crate::explain`]).
+    pub(crate) fn cost_view(&mut self, p: &Profile) -> Result<CostView<'_>, RouteError> {
+        let i = self.compile(p)?;
+        let c = &self.compiled[i];
+        Ok(CostView {
+            graph: &self.graph,
+            grid: &self.grid,
+            model: &c.model,
+            costs: &c.costs,
+            bound: c.bound,
+            personal: self.personal.as_ref(),
+        })
     }
 
     /// Snaps a waypoint: the nearest allowed way within the radius, else the nearest way at all
