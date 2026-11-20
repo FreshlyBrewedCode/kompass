@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 kompass-core.workspace = true
+kompass-compile.workspace = true
 
 [lints]
 workspace = true
