@@ -30,8 +30,11 @@ export type Terrain = {
   contours: { file: string; layer: string; minzoom: number; maxzoom: number } | null;
 };
 
-/** A file next to the manifest (path relative to it) and its size in bytes. */
-export type DataFile = { file: string; bytes: number };
+/**
+ * A file next to the manifest (path relative to it) and its size in bytes; `gzip`: the size of its
+ * gzip sibling `<file>.gz`, when the build wrote one (the graph files: the app fetches those).
+ */
+export type DataFile = { file: string; bytes: number; gzip?: number };
 
 /** One graph tile: its web-mercator tile at `tileZoom`, its edge count, and its two files. */
 export type GraphTile = { x: number; y: number; edges: number; graph: DataFile; geometry: DataFile };
@@ -46,6 +49,8 @@ export type GraphFiles = {
   edges: number;
   /** All files together. */
   bytes: number;
+  /** All gzip siblings together (absent in builds without them). */
+  gzipBytes?: number;
   index: DataFile;
   tiles: GraphTile[];
 };
@@ -130,7 +135,8 @@ function count(value: unknown, path: string): number {
 
 function dataFile(value: unknown, path: string): DataFile {
   const f = obj(value, path);
-  return { file: fileName(f.file, `${path}.file`), bytes: count(f.bytes, `${path}.bytes`) };
+  const file = { file: fileName(f.file, `${path}.file`), bytes: count(f.bytes, `${path}.bytes`) };
+  return f.gzip === undefined ? file : { ...file, gzip: count(f.gzip, `${path}.gzip`) };
 }
 
 function graphFiles(value: unknown, buildId: string | undefined): GraphFiles {
@@ -160,6 +166,7 @@ function graphFiles(value: unknown, buildId: string | undefined): GraphFiles {
     nodes: count(g.nodes, "graph.nodes"),
     edges: count(g.edges, "graph.edges"),
     bytes: count(g.bytes, "graph.bytes"),
+    ...(g.gzipBytes === undefined ? {} : { gzipBytes: count(g.gzipBytes, "graph.gzipBytes") }),
     index: dataFile(g.index, "graph.index"),
     tiles,
   };

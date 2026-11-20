@@ -1,59 +1,64 @@
-import { useEffect, useState } from "react";
-import { startEngine } from "@/engine/client";
-import type { LngLat } from "@/engine/protocol";
+import type { EngineSnapshot } from "@/engine/store";
+import { useEngine } from "@/engine/use-engine";
 
-// Two demo points: Zurich main station → Bern station (a hello-world through the engine chain).
-const FROM: LngLat = { lng: 8.5402, lat: 47.3782 };
-const TO: LngLat = { lng: 7.4391, lat: 46.949 };
+const MB = 1024 * 1024;
 
-type State =
-  | { status: "loading" }
-  | { status: "ready"; version: string; km: number }
-  | { status: "error"; error: string };
+/** "12.3 of 63.0 MB" */
+export function bytesOf(done: number, total: number): string {
+  return `${(done / MB).toFixed(1)} of ${(total / MB).toFixed(1)} MB`;
+}
 
-/** A small pill: the engine worker answered (it proves the wasm chain), with its version. */
+function label(s: EngineSnapshot): string {
+  switch (s.status) {
+    case "downloading":
+      return `Downloading region data ${bytesOf(s.done, s.total)}`;
+    case "loading":
+      return s.total > 0 ? `Loading region data ${bytesOf(s.done, s.total)}` : "Loading region data…";
+    case "error":
+      return `Engine failed: ${s.message}`;
+    case "ready":
+      return `Engine ${s.version ?? ""}: region graph ${s.stats.info.edges.toLocaleString("en")} edges`;
+    default:
+      return s.version ? `Engine ${s.version}` : "Starting the engine…";
+  }
+}
+
+/** A small pill: the engine worker's state (version, region data download and load, errors). */
 export function EngineStatus() {
-  const [state, setState] = useState<State>({ status: "loading" });
-
-  useEffect(() => {
-    const engine = startEngine();
-    Promise.all([engine.call("version"), engine.call("distance", { from: FROM, to: TO })])
-      .then(([version, metres]) => setState({ status: "ready", version, km: metres / 1000 }))
-      .catch((error: unknown) => setState({ status: "error", error: String(error) }));
-    return () => engine.terminate();
-  }, []);
-
+  const s = useEngine();
   const dot =
-    state.status === "ready"
+    s.status === "ready"
       ? "bg-emerald-500"
-      : state.status === "error"
+      : s.status === "error"
         ? "bg-destructive"
-        : "bg-muted-foreground";
+        : s.status === "idle"
+          ? "bg-muted-foreground"
+          : "animate-pulse bg-primary";
+  const share = s.status === "downloading" || s.status === "loading" ? s.done / Math.max(1, s.total) : null;
   return (
     <div
       data-testid="engine-status"
-      data-status={state.status}
-      title={
-        state.status === "ready"
-          ? `Engine ${state.version} answered: Zurich → Bern ${state.km.toFixed(1)} km`
-          : state.status === "error"
-            ? `Engine failed: ${state.error}`
-            : "Starting the engine…"
-      }
-      className="pointer-events-auto flex h-6 items-center gap-1.5 rounded-full border bg-card/90 px-2 text-xs text-muted-foreground backdrop-blur"
+      data-status={s.status}
+      data-busy={s.busy}
+      title={label(s)}
+      className="pointer-events-auto flex h-6 items-center gap-1.5 rounded-full border bg-card/90 px-2 text-muted-foreground text-xs backdrop-blur"
     >
       <span className={`size-1.5 rounded-full ${dot}`} aria-hidden />
-      {state.status === "ready" && (
+      {(s.status === "downloading" || s.status === "loading") && (
+        <span data-testid="engine-progress" className="tabular-nums">
+          {s.status === "downloading"
+            ? `region data ${bytesOf(s.done, s.total)}`
+            : `loading ${s.total > 0 ? `${Math.round((share ?? 0) * 100)} %` : "…"}`}
+        </span>
+      )}
+      {(s.status === "ready" || s.status === "idle") && s.version && (
         <>
           <span className="sr-only">Engine </span>
-          <span data-testid="engine-version">{state.version}</span>
-          <span className="sr-only">
-            , Zurich → Bern <span data-testid="engine-distance">{state.km.toFixed(1)}</span> km
-          </span>
+          <span data-testid="engine-version">{s.version}</span>
         </>
       )}
-      {state.status === "loading" && "engine…"}
-      {state.status === "error" && <span className="text-destructive">engine failed</span>}
+      {s.status === "idle" && !s.version && "engine…"}
+      {s.status === "error" && <span className="text-destructive">engine failed</span>}
     </div>
   );
 }

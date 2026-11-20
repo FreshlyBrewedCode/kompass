@@ -71,6 +71,16 @@ describe("parseManifest", () => {
     expect(() => parseManifest({ ...valid(), graph: bad })).toThrow(/graph.tiles\[0\].graph.file/);
     expect(() => parseManifest({ ...valid(), graph: { ...graph, bytes: -1 } })).toThrow(/graph.bytes/);
     expect(() => parseManifest({ ...valid(), graph: { ...graph, tiles: {} } })).toThrow(/graph.tiles/);
+    // gzip siblings are optional, per file and in total
+    const zipped = {
+      ...graph,
+      gzipBytes: 900,
+      index: { ...graph.index, gzip: 200 },
+      tiles: [{ ...tile, graph: { ...tile.graph, gzip: 500 }, geometry: { ...tile.geometry, gzip: 200 } }],
+    };
+    expect(parseManifest({ ...valid(), graph: zipped }).graph).toEqual(zipped);
+    const badZip = { ...graph, index: { ...graph.index, gzip: "x" } };
+    expect(() => parseManifest({ ...valid(), graph: badZip })).toThrow(/graph.index.gzip/);
   });
 
   test("a region without a base map is fine (basemap: null or absent)", () => {
