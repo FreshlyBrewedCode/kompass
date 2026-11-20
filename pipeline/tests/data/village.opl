@@ -1,0 +1,65 @@
+# An invented village on a made-up grid near 0N 0E (1 unit = 0.001 degrees, about 111 m). Not a real place.
+# Main street, 12 units east-west, with a route relation; junctions at n3, n4, n5, n6.
+n1 v1 x0.000 y0.000
+n2 v1 x0.002 y0.000
+n3 v1 x0.004 y0.000
+n4 v1 x0.006 y0.000
+n5 v1 x0.008 y0.000
+n6 v1 x0.010 y0.000
+n7 v1 x0.012 y0.000
+# track north from n3 to a closed track loop at n12; a gate in the middle
+n10 v1 x0.004 y0.002 Tbarrier=gate
+n11 v1 x0.004 y0.004
+n12 v1 x0.004 y0.006
+n13 v1 x0.005 y0.007
+n14 v1 x0.003 y0.007
+# separate cycleway along the main street (11 m north of it), from n4 to n6
+n40 v1 x0.007 y0.0001
+n41 v1 x0.009 y0.0001
+# cycleway going north from n5, then a rough path from its end
+n20 v1 x0.008 y0.002
+n21 v1 x0.008 y0.004
+n22 v1 x0.010 y0.005
+# footway and steps east of the street's end
+n50 v1 x0.012 y0.002
+n51 v1 x0.012 y0.003
+# one-way residential north from n1, a bicycle-exempt one-way and a reversed one-way
+n60 v1 x0.000 y0.002
+n61 v1 x0.000 y0.004
+n62 v1 x0.002 y0.004
+n63 v1 x0.001 y0.005
+n64 v1 x-0.001 y0.005
+# a private service road south of n6
+n70 v1 x0.010 y-0.002
+# a roundabout ring touching n1
+n90 v1 x-0.001 y0.0005
+n91 v1 x-0.002 y0.000
+n92 v1 x-0.001 y-0.0005
+# ways that must be dropped
+n100 v1 x0.020 y0.020
+n101 v1 x0.022 y0.020
+n102 v1 x0.020 y-0.020
+n103 v1 x0.022 y-0.020
+n104 v1 x0.024 y-0.020
+# an isolated service stub, a component far too small to keep
+n110 v1 x0.030 y0.030
+n111 v1 x0.031 y0.030
+w1 v1 Thighway=residential,name=Example%20%Street,surface=asphalt,maxspeed=30,lit=yes,cycleway=lane,lanes=2 Nn1,n2,n3,n4,n5,n6,n7
+w2 v1 Thighway=track,tracktype=grade3,motor_vehicle=agricultural Nn3,n10,n11,n12
+w3 v1 Thighway=track,tracktype=grade2,surface=gravel Nn12,n13,n14,n12
+w4 v1 Thighway=cycleway,surface=asphalt,segregated=no Nn4,n40,n41,n6
+w5 v1 Thighway=cycleway,surface=paving_stones Nn5,n20,n21
+w6 v1 Thighway=path,surface=ground,smoothness=bad,mtb:scale=2,trail_visibility=bad,sac_scale=hiking,width=0.8,informal=yes Nn21,n22
+w7 v1 Thighway=footway Nn7,n50
+w8 v1 Thighway=steps Nn50,n51
+w9 v1 Thighway=residential,oneway=yes,maxspeed=DE:urban Nn1,n60,n61
+w10 v1 Thighway=residential,oneway=yes,oneway:bicycle=no Nn61,n62
+w11 v1 Thighway=service,service=driveway,oneway=-1 Nn61,n63,n64
+w12 v1 Thighway=service,access=private Nn6,n70
+w13 v1 Thighway=residential,junction=roundabout Nn1,n90,n91,n92,n1
+w20 v1 Thighway=motorway Nn100,n101
+w21 v1 Thighway=construction Nn102,n103
+w22 v1 Thighway=pedestrian,area=yes Nn103,n104,n102
+w23 v1 Thighway=service Nn110,n111
+r1 v1 Troute=bicycle,network=rcn Mw1@
+r2 v1 Troute=mtb Mw6@

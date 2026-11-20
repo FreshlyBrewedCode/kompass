@@ -1,0 +1,390 @@
+{
+  "schemaVersion": 1,
+  "buildId": "fixture",
+  "builtAt": "2000-01-01T00:00:00Z",
+  "bounds": [-0.020249999999999997, -0.020249999999999997, 0.020249999999999997, 0.020249999999999997],
+  "center": [0, 0],
+  "basemap": {
+    "file": "basemap.pmtiles",
+    "maxzoom": 14
+  },
+  "overlay": {
+    "file": "overlay.pmtiles",
+    "layer": "edges",
+    "minzoom": 8,
+    "maxzoom": 14,
+    "attributes": [
+      {
+        "key": "highway",
+        "label": "Road class",
+        "kind": "enum",
+        "values": [
+          {
+            "value": 0,
+            "label": "other"
+          },
+          {
+            "value": 1,
+            "label": "trunk"
+          },
+          {
+            "value": 2,
+            "label": "trunk_link"
+          },
+          {
+            "value": 3,
+            "label": "primary"
+          },
+          {
+            "value": 4,
+            "label": "primary_link"
+          },
+          {
+            "value": 5,
+            "label": "secondary"
+          },
+          {
+            "value": 6,
+            "label": "secondary_link"
+          },
+          {
+            "value": 7,
+            "label": "tertiary"
+          },
+          {
+            "value": 8,
+            "label": "tertiary_link"
+          },
+          {
+            "value": 9,
+            "label": "unclassified"
+          },
+          {
+            "value": 10,
+            "label": "residential"
+          },
+          {
+            "value": 11,
+            "label": "living_street"
+          },
+          {
+            "value": 12,
+            "label": "service"
+          },
+          {
+            "value": 13,
+            "label": "road"
+          },
+          {
+            "value": 14,
+            "label": "track"
+          },
+          {
+            "value": 15,
+            "label": "path"
+          },
+          {
+            "value": 16,
+            "label": "cycleway"
+          },
+          {
+            "value": 17,
+            "label": "footway"
+          },
+          {
+            "value": 18,
+            "label": "bridleway"
+          },
+          {
+            "value": 19,
+            "label": "steps"
+          },
+          {
+            "value": 20,
+            "label": "pedestrian"
+          },
+          {
+            "value": 21,
+            "label": "ferry"
+          }
+        ]
+      },
+      {
+        "key": "surface_class",
+        "label": "Surface",
+        "kind": "enum",
+        "values": [
+          {
+            "value": 0,
+            "label": "unknown"
+          },
+          {
+            "value": 1,
+            "label": "paved_smooth"
+          },
+          {
+            "value": 2,
+            "label": "paved_rough"
+          },
+          {
+            "value": 3,
+            "label": "compacted"
+          },
+          {
+            "value": 4,
+            "label": "gravel"
+          },
+          {
+            "value": 5,
+            "label": "soft"
+          },
+          {
+            "value": 6,
+            "label": "other"
+          }
+        ]
+      },
+      {
+        "key": "tracktype",
+        "label": "Track type",
+        "kind": "enum",
+        "values": [
+          {
+            "value": 0,
+            "label": "unknown"
+          },
+          {
+            "value": 1,
+            "label": "grade1"
+          },
+          {
+            "value": 2,
+            "label": "grade2"
+          },
+          {
+            "value": 3,
+            "label": "grade3"
+          },
+          {
+            "value": 4,
+            "label": "grade4"
+          },
+          {
+            "value": 5,
+            "label": "grade5"
+          }
+        ]
+      },
+      {
+        "key": "bike_access",
+        "label": "Bicycle access",
+        "kind": "enum",
+        "values": [
+          {
+            "value": 0,
+            "label": "implicit"
+          },
+          {
+            "value": 1,
+            "label": "yes"
+          },
+          {
+            "value": 2,
+            "label": "designated"
+          },
+          {
+            "value": 3,
+            "label": "permissive"
+          },
+          {
+            "value": 4,
+            "label": "destination"
+          },
+          {
+            "value": 5,
+            "label": "use_sidepath"
+          },
+          {
+            "value": 6,
+            "label": "dismount"
+          },
+          {
+            "value": 7,
+            "label": "foot_only"
+          },
+          {
+            "value": 8,
+            "label": "agri_forestry"
+          },
+          {
+            "value": 9,
+            "label": "private"
+          },
+          {
+            "value": 10,
+            "label": "no"
+          }
+        ]
+      },
+      {
+        "key": "cycleway_kind",
+        "label": "Cycle infrastructure",
+        "kind": "enum",
+        "values": [
+          {
+            "value": 0,
+            "label": "none"
+          },
+          {
+            "value": 1,
+            "label": "shared_lane"
+          },
+          {
+            "value": 2,
+            "label": "lane"
+          },
+          {
+            "value": 3,
+            "label": "track"
+          },
+          {
+            "value": 4,
+            "label": "separate_path"
+          },
+          {
+            "value": 5,
+            "label": "bicycle_road"
+          }
+        ]
+      },
+      {
+        "key": "route_level",
+        "label": "Bicycle route",
+        "kind": "enum",
+        "values": [
+          {
+            "value": 0,
+            "label": "none"
+          },
+          {
+            "value": 1,
+            "label": "lcn"
+          },
+          {
+            "value": 2,
+            "label": "rcn"
+          },
+          {
+            "value": 3,
+            "label": "ncn"
+          },
+          {
+            "value": 4,
+            "label": "icn"
+          }
+        ]
+      },
+      {
+        "key": "forest_share",
+        "label": "In forest",
+        "kind": "share",
+        "min": 0,
+        "max": 100
+      },
+      {
+        "key": "road_near_share",
+        "label": "Near a motor road",
+        "kind": "share",
+        "min": 0,
+        "max": 100
+      },
+      {
+        "key": "grade_max",
+        "label": "Max grade",
+        "kind": "number",
+        "unit": "%",
+        "min": 0,
+        "max": 25
+      }
+    ]
+  },
+  "terrain": {
+    "file": "terrain.pmtiles",
+    "encoding": "terrarium",
+    "tileSize": 256,
+    "minzoom": 6,
+    "maxzoom": 12,
+    "contours": {
+      "file": "contours.pmtiles",
+      "layer": "contours",
+      "minzoom": 10,
+      "maxzoom": 14
+    }
+  },
+  "graph": {
+    "formatVersion": 1,
+    "buildId": "fixture",
+    "tileZoom": 11,
+    "nodes": 36,
+    "edges": 60,
+    "bytes": 5976,
+    "index": {
+      "file": "graph/index.kmpg",
+      "bytes": 352
+    },
+    "tiles": [
+      {
+        "x": 1023,
+        "y": 1023,
+        "edges": 13,
+        "graph": {
+          "file": "graph/tiles/11-1023-1023.kmpg",
+          "bytes": 1024
+        },
+        "geometry": {
+          "file": "graph/geometry/11-1023-1023.kmpg",
+          "bytes": 320
+        }
+      },
+      {
+        "x": 1023,
+        "y": 1024,
+        "edges": 15,
+        "graph": {
+          "file": "graph/tiles/11-1023-1024.kmpg",
+          "bytes": 1040
+        },
+        "geometry": {
+          "file": "graph/geometry/11-1023-1024.kmpg",
+          "bytes": 344
+        }
+      },
+      {
+        "x": 1024,
+        "y": 1024,
+        "edges": 17,
+        "graph": {
+          "file": "graph/tiles/11-1024-1024.kmpg",
+          "bytes": 1168
+        },
+        "geometry": {
+          "file": "graph/geometry/11-1024-1024.kmpg",
+          "bytes": 360
+        }
+      },
+      {
+        "x": 1024,
+        "y": 1023,
+        "edges": 15,
+        "graph": {
+          "file": "graph/tiles/11-1024-1023.kmpg",
+          "bytes": 1024
+        },
+        "geometry": {
+          "file": "graph/geometry/11-1024-1023.kmpg",
+          "bytes": 344
+        }
+      }
+    ]
+  }
+}

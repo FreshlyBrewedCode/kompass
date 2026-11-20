@@ -1,0 +1,127 @@
+import { type Ref, useEffect, useImperativeHandle, useRef } from "react";
+import type { ExploredStore } from "@/history/explored-store";
+import { useTheme } from "@/lib/theme";
+import { RegionMap } from "@/map/controller";
+import { devEnabled, fakeRiddenCount, fakeRiddenFromRendered, fakeRiddenRange } from "@/map/dev";
+import type { MapLayers } from "@/map/info";
+import type { PickedEdge } from "@/map/inspect";
+import type { Manifest } from "@/map/manifest";
+import type { RidesLayerData } from "@/rides/protocol";
+import type { Bounds } from "@/rides/types";
+
+/** What the chrome can ask of the map. */
+export type MapHandle = {
+  /** drop the edge highlight (the inspect panel closed) */
+  clearSelection: () => void;
+  /** highlight a ride's line and zoom to its bounds (`padding`: room for the panel) */
+  focusRide: (ride: { id: string; bounds: Bounds } | null, padding: Padding) => void;
+  /** dev: mark up to `n` of the edges on screen as ridden */
+  fakeRidden: (n: number) => void;
+};
+
+type Padding = { top: number; right: number; bottom: number; left: number };
+
+export type MapViewProps = {
+  ref?: Ref<MapHandle>;
+  manifest: Manifest;
+  dataUrl: string;
+  layers: MapLayers;
+  store: ExploredStore;
+  /** the recorded rides ("My rides"): lines and whether they show */
+  rides: RidesLayerData | null;
+  ridesVisible: boolean;
+  onPick: (edge: PickedEdge | null) => void;
+  onError: (message: string) => void;
+};
+
+/** The full-screen region map (the logic lives in src/map/controller.ts). Loaded lazily: MapLibre is big. */
+export default function MapView({
+  ref,
+  manifest,
+  dataUrl,
+  layers,
+  store,
+  rides,
+  ridesVisible,
+  onPick,
+  onError,
+}: MapViewProps) {
+  const container = useRef<HTMLDivElement>(null);
+  const regionMap = useRef<RegionMap | null>(null);
+  const theme = useTheme();
+  // the newest values, for the map created once per region
+  const latest = useRef({ layers, theme, rides, ridesVisible, onPick, onError });
+  latest.current = { layers, theme, rides, ridesVisible, onPick, onError };
+
+  useEffect(() => {
+    if (!container.current) return;
+    const instance = new RegionMap({
+      container: container.current,
+      manifest,
+      dataUrl,
+      theme: latest.current.theme,
+      layers: latest.current.layers,
+      store,
+      onPick: (edge) => latest.current.onPick(edge),
+      onError: (message) => latest.current.onError(message),
+    });
+    regionMap.current = instance;
+    if (latest.current.rides) instance.setRides(latest.current.rides);
+    instance.setRidesVisible(latest.current.ridesVisible);
+
+    const search = location.search;
+    if (devEnabled(search)) {
+      const w = window as unknown as { __kompass?: object };
+      w.__kompass = Object.assign(w.__kompass ?? {}, {
+        map: instance.map,
+        store,
+        regionMap: instance,
+        fakeRange: fakeRiddenRange,
+      });
+    }
+    const fake = fakeRiddenCount(search);
+    if (fake > 0) {
+      // once the first tiles are in, mark some of the edges on screen as ridden
+      instance.map.once("idle", () => {
+        store.setRidden(fakeRiddenFromRendered(instance.map, manifest.overlay.layer, fake));
+      });
+    }
+    return () => {
+      instance.destroy();
+      regionMap.current = null;
+    };
+  }, [manifest, dataUrl, store]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      clearSelection: () => regionMap.current?.select(null),
+      focusRide: (ride, padding) => {
+        const current = regionMap.current;
+        if (!current) return;
+        current.highlightRide(ride?.id ?? null);
+        if (ride) current.fitBounds(ride.bounds, padding);
+      },
+      fakeRidden: (n) => {
+        const current = regionMap.current;
+        if (current) store.setRidden(fakeRiddenFromRendered(current.map, manifest.overlay.layer, n));
+      },
+    }),
+    [store, manifest],
+  );
+
+  useEffect(() => regionMap.current?.setLayers(layers), [layers]);
+  useEffect(() => regionMap.current?.setTheme(theme), [theme]);
+  useEffect(() => {
+    if (rides) regionMap.current?.setRides(rides);
+  }, [rides]);
+  useEffect(() => regionMap.current?.setRidesVisible(ridesVisible), [ridesVisible]);
+
+  // MapLibre's (unlayered) CSS makes its container `position: relative`, beating Tailwind's layered
+  // utilities: the wrapper does the positioning.
+  return (
+    <div className="absolute inset-0">
+      <div ref={container} data-testid="map" className="h-full w-full" />
+    </div>
+  );
+}

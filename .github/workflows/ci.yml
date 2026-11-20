@@ -1,0 +1,94 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The gate (`bun run check`): engine (fmt, clippy, test), wasm build, web (biome, tsc, bun test),
+  # pipeline and tools (ruff, pytest); then the web build. CI uses the usual setup actions, no nix; the versions
+  # match flake.nix and engine/rust-toolchain.toml.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.100.0"
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine
+
+      # the same version as the `wasm-bindgen` crate (engine/Cargo.toml)
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.127
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pipeline/uv.lock
+            tools/komoot/uv.lock
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.4"
+
+      - run: bun install --frozen-lockfile
+
+      # the pipeline tests that need an external binary (tippecanoe) skip when it is absent; osmium,
+      # pmtiles and gdal are only used by the real region build, not by the tests
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq tippecanoe
+
+      - run: bun run check
+
+      - run: bun run build
+
+  # The built app served under a sub-path by a throwaway server (port 7959), phone and desktop viewports.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.100.0"
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.127
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.4"
+
+      - run: bun install --frozen-lockfile
+
+      - run: bunx playwright install --with-deps chromium
+
+      - run: bun run e2e
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-output
+          path: test-results/
+          retention-days: 7

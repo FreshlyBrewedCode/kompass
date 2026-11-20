@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <title>Kompass</title>
+  <rect width="512" height="512" fill="#171717"/>
+  <circle cx="256" cy="256" r="168" fill="none" stroke="#fafafa" stroke-width="20"/>
+  <path d="M256 104 L300 256 L256 232 L212 256 Z" fill="#f97316"/>
+  <path d="M256 408 L212 256 L256 280 L300 256 Z" fill="#fafafa"/>
+</svg>
