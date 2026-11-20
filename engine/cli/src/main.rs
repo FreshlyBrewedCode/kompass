@@ -216,9 +216,10 @@ fn compile(a: &Args) -> Result<(), Failure> {
             .sum::<u64>()
     };
     println!(
-        "wrote {} in {} files: graph tiles {}, geometry {}, index {} ({secs:.1} s)",
+        "wrote {} in {} files (gzip siblings {}): graph tiles {}, geometry {}, index {} ({secs:.1} s)",
         mb(written.total_bytes()),
         written.files.len(),
+        mb(written.gzip_bytes),
         mb(sum("/tiles/")),
         mb(sum("/geometry/")),
         mb(sum("index.kmpg"))

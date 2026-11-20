@@ -6,11 +6,15 @@
 //! "graph": { "formatVersion": 2, "buildId": "…", "tileZoom": 11, "nodes": 1, "edges": 1,
 //!   "bytes": 1, "index": { "file": "graph/index.kmpg", "bytes": 1 },
 //!   "tiles": [ { "x": 1, "y": 1, "edges": 1,
-//!                "graph": { "file": "graph/tiles/11-1-1.kmpg", "bytes": 1 },
-//!                "geometry": { "file": "graph/geometry/11-1-1.kmpg", "bytes": 1 } } ] }
+//!                "graph": { "file": "graph/tiles/11-1-1.kmpg", "bytes": 1, "gzip": 1 },
+//!                "geometry": { "file": "graph/geometry/11-1-1.kmpg", "bytes": 1, "gzip": 1 } } ] }
 //! ```
+//!
+//! Every file also gets a gzip sibling (`<file>.gz`, its size in `gzip`): the web app downloads
+//! those and decompresses them itself, so no host has to compress (`docs/engine-web.md`).
 
 use std::fs;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -31,6 +35,8 @@ pub struct Written {
     pub manifest_graph: Value,
     /// Relative path and size of every file.
     pub files: Vec<(String, u64)>,
+    /// The size of all gzip siblings together.
+    pub gzip_bytes: u64,
 }
 
 impl Written {
@@ -79,11 +85,15 @@ pub fn write(dir: &Path, graph: &Graph) -> Result<Written, Error> {
     fs::create_dir_all(tmp.join("tiles"))?;
     fs::create_dir_all(tmp.join("geometry"))?;
     let mut written = Vec::new();
+    let mut gzipped = Vec::new();
     let mut put = |rel: String, bytes: &[u8]| -> Result<Value, Error> {
         fs::write(tmp.join(&rel), bytes)?;
+        let gz = gzip(bytes)?;
+        fs::write(tmp.join(format!("{rel}.gz")), &gz)?;
         let file = format!("{GRAPH_DIR}/{rel}");
         written.push((file.clone(), bytes.len() as u64));
-        Ok(json!({ "file": file, "bytes": bytes.len() }))
+        gzipped.push(gz.len() as u64);
+        Ok(json!({ "file": file, "bytes": bytes.len(), "gzip": gz.len() }))
     };
     let index = put("index.kmpg".into(), &files.index)?;
     let mut tiles = Vec::with_capacity(files.tiles.len());
@@ -94,6 +104,7 @@ pub fn write(dir: &Path, graph: &Graph) -> Result<Written, Error> {
         tiles.push(json!({ "x": t.x, "y": t.y, "edges": t.edges, "graph": g, "geometry": geo }));
     }
     let total: u64 = written.iter().map(|(_, b)| b).sum();
+    let total_gzip: u64 = gzipped.iter().sum();
     let value = json!({
         "formatVersion": FORMAT_VERSION,
         "buildId": info.build_id,
@@ -101,6 +112,7 @@ pub fn write(dir: &Path, graph: &Graph) -> Result<Written, Error> {
         "nodes": info.node_count,
         "edges": info.edge_count,
         "bytes": total,
+        "gzipBytes": total_gzip,
         "index": index,
         "tiles": tiles,
     });
@@ -124,7 +136,18 @@ pub fn write(dir: &Path, graph: &Graph) -> Result<Written, Error> {
     Ok(Written {
         manifest_graph: value,
         files: written,
+        gzip_bytes: total_gzip,
     })
+}
+
+/// gzip at the default level (6): ~50 % of the raw graph, ~3 s for a 100 km region.
+fn gzip(bytes: &[u8]) -> Result<Vec<u8>, Error> {
+    let mut enc = flate2::write::GzEncoder::new(
+        Vec::with_capacity(bytes.len() / 2),
+        flate2::Compression::default(),
+    );
+    enc.write_all(bytes)?;
+    Ok(enc.finish()?)
 }
 
 /// How long [`load`] took, per phase (milliseconds).

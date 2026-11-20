@@ -1,6 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 import { gridLoop, node, syntheticTrack, toFit, toGpx } from "../web/test/synthetic";
-import { openMap, screenshot, waitIdle } from "./helpers";
+import { engineReady, openMap, screenshot, waitIdle } from "./helpers";
 
 // Made-up rides on the fixture region's grid (an invented place around 0°N 0°E).
 const DAY = 86_400_000;
@@ -265,26 +265,41 @@ test("privacy: during import, export and restore every request goes to the app's
   }
 });
 
-test("the explored map is filled at start-up from saved matches (the seam, with a fake matcher)", async ({
+test("a ride matched by the engine fills the explored map at start-up (the matching seam)", async ({
   page,
 }) => {
   await openMap(page, "layer=explored");
+  await engineReady(page);
   await openPanel(page);
   await importFiles(page, [komoot.a]);
   await expect(rows(page)).toHaveCount(1);
   await expect(page.getByTestId("ridden-count")).toHaveText("0 edges");
-  // the manifest's build date stands in for the graph build until matching defines one
-  await page.evaluate(async () => {
-    const [ride] = (await window.__kompass.ridesCall("list", undefined)) as { id: string }[];
-    await window.__kompass.ridesCall("saveMatch", {
-      id: ride?.id,
-      graphBuild: "2000-01-01T00:00:00Z",
-      edgeIds: new Uint32Array([1, 2, 3, 3, 8]),
-    });
+  // the ride's points → the engine's matcher → the ride store (the orchestration is #26)
+  const match = await page.evaluate(async () => {
+    const k = window.__kompass;
+    const [ride] = (await k.ridesCall("list", undefined)) as { id: string }[];
+    const points = (await k.ridesCall("points", { id: ride?.id })) as {
+      lat: Float64Array;
+      lon: Float64Array;
+    };
+    const m = (await k.engine.call("matchRide", { lat: points.lat, lon: points.lon })) as {
+      graphBuild: string;
+      arcs: Uint32Array;
+      coverage: Uint8Array;
+      firstPoint: Uint32Array;
+      trackM: number;
+      matchedM: number;
+    };
+    await k.ridesCall("saveMatch", { id: ride?.id, ...m });
+    return { graphBuild: m.graphBuild, arcs: m.arcs.length, share: m.matchedM / m.trackM };
   });
+  expect(match.graphBuild).toBe("fixture");
+  expect(match.arcs).toBeGreaterThanOrEqual(8);
+  expect(match.share).toBeGreaterThan(0.95);
   await page.reload();
   await waitIdle(page);
-  await expect(page.getByTestId("ridden-count")).toHaveText("4 edges");
+  // the loop around two by two blocks: 8 edges
+  await expect(page.getByTestId("ridden-count")).toHaveText("8 edges");
 });
 
 test.describe("in a dark system theme", () => {

@@ -3,7 +3,7 @@ import { IDBFactory } from "fake-indexeddb";
 import { exportBackup, importBackup, verifyBackup } from "../src/rides/backup";
 import { findSameRides, isSameRide, overlapRatio, pickKeeper } from "../src/rides/dedup";
 import { RideLibrary } from "../src/rides/library";
-import { foldMatches } from "../src/rides/match";
+import { foldMatches, MIN_COVERAGE, riddenEdges } from "../src/rides/match";
 import { gridLoop, syntheticTrack, toFit, toGpx } from "./synthetic";
 
 const T0 = Date.UTC(2026, 4, 2, 8, 0, 0);
@@ -281,8 +281,8 @@ describe("the map-matching seam", () => {
       );
       await lib.saveMatch(id, {
         graphBuild: build,
-        edgeIds: edges,
-        directions: new Uint8Array(edges.length),
+        arcs: edges.map((e) => e * 2),
+        coverage: new Uint8Array(edges.length).fill(255),
       });
     };
     await fakeMatch(a?.id as string, "build-1");
@@ -314,13 +314,16 @@ describe("the map-matching seam", () => {
     const lib = await open();
     await lib.importFile("a.gpx", bytes(toGpx(syntheticTrack({ path: gridLoop(0, 0), start: T0 }))));
     const id = lib.listRides()[0]?.id as string;
-    await lib.saveMatch(id, { graphBuild: "x", edgeIds: Uint32Array.of(1, 2, 3) });
-    await expect(lib.saveMatch("nope", { graphBuild: "x", edgeIds: Uint32Array.of(1) })).rejects.toThrow(
-      /no ride/,
-    );
+    const full = (...arcs: number[]) => ({
+      graphBuild: "x",
+      arcs: Uint32Array.from(arcs),
+      coverage: new Uint8Array(arcs.length).fill(255),
+    });
+    await lib.saveMatch(id, full(2, 4, 7));
+    await expect(lib.saveMatch("nope", full(2))).rejects.toThrow(/no ride/);
     await expect(
-      lib.saveMatch(id, { graphBuild: "x", edgeIds: Uint32Array.of(1, 2), directions: Uint8Array.of(0) }),
-    ).rejects.toThrow(/one entry per edge/);
+      lib.saveMatch(id, { graphBuild: "x", arcs: Uint32Array.of(2, 4), coverage: Uint8Array.of(255) }),
+    ).rejects.toThrow(/one entry per arc/);
     expect((await lib.exploredInput("x")).size).toBe(3);
     await lib.deleteRides([id]);
     expect((await lib.store.getMatches()).length).toBe(0);
@@ -331,14 +334,29 @@ describe("the map-matching seam", () => {
       { id: "a", startTime: 1000, endTime: 2000 },
       { id: "b", startTime: 5000, endTime: 6000 },
     ];
+    const m = (rideId: string, arcs: number[], coverage: number[]) => ({
+      rideId,
+      graphBuild: "g",
+      arcs: Uint32Array.from(arcs),
+      coverage: Uint8Array.from(coverage),
+      matchedAt: 0,
+    });
     const matches = [
-      { rideId: "a", graphBuild: "g", edgeIds: Uint32Array.of(1, 1, 2, 1), matchedAt: 0 },
-      { rideId: "b", graphBuild: "g", edgeIds: Uint32Array.of(2), matchedAt: 0 },
-      { rideId: "gone", graphBuild: "g", edgeIds: Uint32Array.of(9), matchedAt: 0 },
+      // edge 1 along twice and against once, edge 2 along: each counts once for ride a
+      m("a", [2, 2, 4, 3], [255, 255, 255, 255]),
+      m("b", [5], [255]),
+      m("gone", [18], [255]),
     ];
     const out = foldMatches(rides, matches, "g");
     expect(out.get(1)).toEqual({ count: 1, lastRidden: 2000 });
     expect(out.get(2)).toEqual({ count: 2, lastRidden: 6000 });
     expect(out.has(9)).toBe(false);
+  });
+
+  test("the explored rule: an arc counts from half the edge, its pieces summed", () => {
+    // arc 10 (edge 5): two pieces of 40 % add up to 80 %; arc 13 (edge 6): 30 % only; arc 14: exactly half
+    const edges = riddenEdges(Uint32Array.of(10, 13, 10, 14), Uint8Array.of(102, 77, 102, MIN_COVERAGE));
+    expect([...edges].sort()).toEqual([5, 7]);
+    expect(riddenEdges(Uint32Array.of(10), Uint8Array.of(MIN_COVERAGE - 1)).size).toBe(0);
   });
 });

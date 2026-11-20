@@ -469,6 +469,14 @@ impl Planner {
         &self.graph
     }
 
+    /// Adds a geometry tile to the graph after the planner was built (the browser loads geometry
+    /// lazily). Nothing else depends on it: the route geometry follows it from now on, the
+    /// snapping grid keeps the points it was built with (straight segments if it was built
+    /// without geometry), so snapping stays consistent.
+    pub fn add_geometry(&mut self, bytes: &[u8]) -> Result<usize, crate::format::FormatError> {
+        self.graph.add_geometry(bytes)
+    }
+
     #[must_use]
     pub fn grid(&self) -> &Grid {
         &self.grid

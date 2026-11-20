@@ -127,6 +127,26 @@ fn compiles_into_a_build_dir_and_loads_back() {
         total += bytes;
     }
     assert_eq!(mg["bytes"], total);
+    // every file has a gzip sibling that decompresses to it
+    let mut gz_total = 0;
+    let entries = std::iter::once(&mg["index"]).chain(
+        mg["tiles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|t| [&t["graph"], &t["geometry"]]),
+    );
+    for entry in entries {
+        let file = entry["file"].as_str().unwrap();
+        let gz = fs::read(dir.join(format!("{file}.gz"))).unwrap();
+        assert_eq!(entry["gzip"], gz.len(), "{file}");
+        let mut raw = Vec::new();
+        std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(gz.as_slice()), &mut raw).unwrap();
+        assert_eq!(raw, fs::read(dir.join(file)).unwrap(), "{file}");
+        gz_total += gz.len();
+    }
+    assert_eq!(mg["gzipBytes"], gz_total);
+    assert_eq!(written.gzip_bytes, gz_total as u64);
     let tile = &mg["tiles"][0];
     assert!(
         tile["graph"]["file"]

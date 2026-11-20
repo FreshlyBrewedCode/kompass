@@ -42,13 +42,15 @@ browser. The design and its numbers come from spike #4 (verdict in the issue). C
 | `index.kmpg` | build id, counts, bounds, the tile table |
 | `tiles/<z>-<x>-<y>.kmpg` | one tile's nodes and edges |
 | `geometry/<z>-<x>-<y>.kmpg` | one tile's edge geometry and OSM way references |
+| `….kmpg.gz` | the gzip sibling of every file (level 6): what the web app downloads ([engine-web.md](engine-web.md)) |
 
 ```json
 "graph": { "formatVersion": 2, "buildId": "…", "tileZoom": 11, "nodes": 1822503, "edges": 2340341,
-  "bytes": 120804952, "index": { "file": "graph/index.kmpg", "bytes": 9960 },
+  "bytes": 120804952, "gzipBytes": 69500000,
+  "index": { "file": "graph/index.kmpg", "bytes": 9960, "gzip": 4100 },
   "tiles": [ { "x": 1, "y": 2, "edges": 7400,
-               "graph": { "file": "graph/tiles/11-1-2.kmpg", "bytes": 230000 },
-               "geometry": { "file": "graph/geometry/11-1-2.kmpg", "bytes": 140000 } } ] }
+               "graph": { "file": "graph/tiles/11-1-2.kmpg", "bytes": 230000, "gzip": 110000 },
+               "geometry": { "file": "graph/geometry/11-1-2.kmpg", "bytes": 140000, "gzip": 90000 } } ] }
 ```
 
 `kompass compile` writes the files into `graph.part/`, swaps the directory in, then rewrites the
@@ -154,7 +156,7 @@ loading, not shipped: it follows the geometry when loaded, else the straight seg
 | geometry tiles (244) | 45.2 MB | 29.0 MB (largest 0.5 MB) |
 | index | 10 KB | |
 
-Native, release: compiling takes 2.1 s (0.3 GB peak), loading the tiles 50 ms plus 35 ms for the
+Native, release: compiling takes 2.1 s (0.3 GB peak; 6.8 s with the gzip siblings, 66.3 MB), loading the tiles 50 ms plus 35 ms for the
 adjacency and 30 ms for the geometry; in memory the graph is 106 MB with its adjacency and 156 MB
 with the geometry; the snapping grid is 20 MB and builds in 0.4 s; a nearest-edge query takes
 10 µs median and 35 µs p95.

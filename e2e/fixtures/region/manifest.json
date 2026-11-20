@@ -328,9 +328,11 @@
     "nodes": 36,
     "edges": 60,
     "bytes": 6160,
+    "gzipBytes": 3041,
     "index": {
       "file": "graph/index.kmpg",
-      "bytes": 352
+      "bytes": 352,
+      "gzip": 206
     },
     "tiles": [
       {
@@ -339,11 +341,13 @@
         "edges": 13,
         "graph": {
           "file": "graph/tiles/11-1023-1023.kmpg",
-          "bytes": 1072
+          "bytes": 1072,
+          "gzip": 475
         },
         "geometry": {
           "file": "graph/geometry/11-1023-1023.kmpg",
-          "bytes": 320
+          "bytes": 320,
+          "gzip": 208
         }
       },
       {
@@ -352,11 +356,13 @@
         "edges": 15,
         "graph": {
           "file": "graph/tiles/11-1023-1024.kmpg",
-          "bytes": 1088
+          "bytes": 1088,
+          "gzip": 486
         },
         "geometry": {
           "file": "graph/geometry/11-1023-1024.kmpg",
-          "bytes": 344
+          "bytes": 344,
+          "gzip": 221
         }
       },
       {
@@ -365,11 +371,13 @@
         "edges": 17,
         "graph": {
           "file": "graph/tiles/11-1024-1024.kmpg",
-          "bytes": 1216
+          "bytes": 1216,
+          "gzip": 521
         },
         "geometry": {
           "file": "graph/geometry/11-1024-1024.kmpg",
-          "bytes": 360
+          "bytes": 360,
+          "gzip": 230
         }
       },
       {
@@ -378,11 +386,13 @@
         "edges": 15,
         "graph": {
           "file": "graph/tiles/11-1024-1023.kmpg",
-          "bytes": 1064
+          "bytes": 1064,
+          "gzip": 472
         },
         "geometry": {
           "file": "graph/geometry/11-1024-1023.kmpg",
-          "bytes": 344
+          "bytes": 344,
+          "gzip": 222
         }
       }
     ]

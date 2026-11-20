@@ -32,6 +32,8 @@ export type MapViewProps = {
   ridesVisible: boolean;
   onPick: (edge: PickedEdge | null) => void;
   onError: (message: string) => void;
+  /** the MapLibre map once it exists (and `null` when it goes): for overlays kept outside src/map */
+  onMap?: (map: RegionMap["map"] | null) => void;
 };
 
 /** The full-screen region map (the logic lives in src/map/controller.ts). Loaded lazily: MapLibre is big. */
@@ -45,13 +47,14 @@ export default function MapView({
   ridesVisible,
   onPick,
   onError,
+  onMap,
 }: MapViewProps) {
   const container = useRef<HTMLDivElement>(null);
   const regionMap = useRef<RegionMap | null>(null);
   const theme = useTheme();
   // the newest values, for the map created once per region
-  const latest = useRef({ layers, theme, rides, ridesVisible, onPick, onError });
-  latest.current = { layers, theme, rides, ridesVisible, onPick, onError };
+  const latest = useRef({ layers, theme, rides, ridesVisible, onPick, onError, onMap });
+  latest.current = { layers, theme, rides, ridesVisible, onPick, onError, onMap };
 
   useEffect(() => {
     if (!container.current) return;
@@ -66,6 +69,7 @@ export default function MapView({
       onError: (message) => latest.current.onError(message),
     });
     regionMap.current = instance;
+    latest.current.onMap?.(instance.map);
     if (latest.current.rides) instance.setRides(latest.current.rides);
     instance.setRidesVisible(latest.current.ridesVisible);
 
@@ -87,6 +91,7 @@ export default function MapView({
       });
     }
     return () => {
+      latest.current.onMap?.(null);
       instance.destroy();
       regionMap.current = null;
     };

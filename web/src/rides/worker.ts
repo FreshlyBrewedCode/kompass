@@ -88,8 +88,8 @@ const handlers: RideHandlers = {
   },
 
   points: async ({ id }) => (await library()).getPoints(id),
-  saveMatch: async ({ id, graphBuild, edgeIds, directions }) => {
-    await (await library()).saveMatch(id, { graphBuild, edgeIds, ...(directions ? { directions } : {}) });
+  saveMatch: async ({ id, ...match }) => {
+    await (await library()).saveMatch(id, match);
   },
   clearMatches: async () => {
     await (await library()).clearMatches();
