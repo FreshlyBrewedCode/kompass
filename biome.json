@@ -10,6 +10,7 @@
       "**",
       "!!**/.claude",
       "!!docs",
+      "!!design",
       "!**/*.md",
       "!**/dist",
       "!!web/src/engine/pkg",

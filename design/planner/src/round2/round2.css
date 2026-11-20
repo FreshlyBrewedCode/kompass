@@ -1,0 +1,17 @@
+/* Round 2 (refined C). Lives inside .dir-c, so it inherits C's tokens. */
+.kcallout-flip { border-radius: 10px 10px 2px 10px; text-align: right; }
+.kcursor { width: 14px; height: 14px; border-radius: 999px; background: var(--hot, #f0451f); border: 2.5px solid #fff; box-shadow: 0 1px 6px rgb(0 0 0 / 0.4); }
+.r2 { --ghost: #111312; --sheet: rgb(255 255 255 / 0.93); }
+.dark .r2 { --ghost: #f1f1ee; --sheet: rgb(22 24 24 / 0.93); }
+.r2 input::placeholder { color: var(--muted-foreground); }
+
+/* C1: while a slider is held, the sheet gets out of the way and leaves only that row. */
+.r2-sheet { transition: height 0.28s cubic-bezier(0.2, 0.8, 0.2, 1), background-color 0.18s, box-shadow 0.18s, border-color 0.18s; }
+.r2-sheet [data-fade], .r2-sheet [data-row] { transition: opacity 0.16s; }
+.r2-sheet[data-grab] { background: transparent; border-color: transparent; box-shadow: none; backdrop-filter: none; }
+.r2-sheet[data-grab] [data-fade], .r2-sheet[data-grab] [data-row]:not([data-held]) { opacity: 0; }
+.r2-sheet[data-grab] [data-keep], .r2-sheet[data-grab] [data-row][data-held] {
+  background: var(--sheet); border-radius: 18px; box-shadow: 0 8px 30px rgb(0 0 0 / 0.18); backdrop-filter: blur(16px);
+}
+.r2-flash { animation: r2-flash 1.4s ease-out; }
+@keyframes r2-flash { 0% { background: color-mix(in oklab, var(--hot) 22%, transparent); } 100% { background: transparent; } }
