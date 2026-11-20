@@ -187,7 +187,7 @@ impl View {
             water: nib(8),
             built: nib(12),
             road_near: ctx2 & 15,
-            length: f32::from(c.length_dm[e]) * 0.1,
+            length: crate::attrs::length_m_of(c.length_dm[e]),
         }
     }
 
@@ -1277,7 +1277,7 @@ impl CostModel {
                 q *= pq;
                 bonus *= pb;
             }
-            let len = f32::from(c.length_dm[e]) * 0.1;
+            let len = crate::attrs::length_m_of(c.length_dm[e]);
             let mut penalty = f32::from(c.diff[e] >> 6) * BARRIER_M;
             if hwy == hw::STEPS {
                 penalty += len * STEPS_PER_M + STEPS_EACH_M;
