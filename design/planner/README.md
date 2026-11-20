@@ -4,6 +4,10 @@ Design rounds for the responsive Kompass planner (issue #7). Real stack (Vite, R
 Tailwind v4, shadcn/ui, MapLibre GL JS), mock data. This is a design sandbox: it does not depend on
 the monorepo and nothing here is the product yet.
 
+- **Round 3** (`/final`): the consolidated design the planner shell is built from. C2's strip on
+  the phone, C1's cards on desktop, one set of parts, a monotone chrome.
+  [Jump to round 3](#round-3-the-consolidated-design); the reference is
+  [docs/design/planner.md](../../docs/design/planner.md).
 - **Round 2** (`/c1`, `/c2`, `/c3`): three takes on the direction picked in round 1, C "Sentence",
   rebuilt around sliders and a preference picker. [Jump to round 2](#round-2-c-with-sliders).
 - **Round 1** (`/a` … `/d`): four directions. `/c` stays as the reference for round 2.
@@ -18,13 +22,42 @@ bun run dev        # http://127.0.0.1:7952
 
 - `/` is the index with links to every state. Resize the window or open it on a phone: below 900 px
   you get the phone layout.
-- URL switches: `?theme=light|dark`, `?view=plan|profile|layers`, `?layer=debug|explored`, `?compare=1`.
+- URL switches (rounds 1 and 2): `?theme=light|dark`, `?view=plan|profile|layers`, `?layer=debug|explored`, `?compare=1`.
   Round 2 adds `?demo=1` (two preferences already added), `?picker=1` (picker open) and, for `/c1`,
   `?hold=climb` (the sheet as it looks while a slider is held) and `?sheet=peek`.
 - Screenshots: `nix build nixpkgs#chromium -o .chromium`, start the dev server, then
   `bun scripts/shots2.mjs` (round 2, writes `/tmp/kompass-design-2/<id>-{phone,phone-profile,phone-picker,desktop,board}.png`;
   `EXTRA=1` adds compare, layers, dark phone and more) or `bun scripts/shots.mjs` (round 1). If
   Chromium fails with a GLIBC error, run it with `LD_LIBRARY_PATH` unset.
+
+## Round 3: the consolidated design
+
+The call on round 2: C1 (Sheet) on desktop, C2 (Strip) on the phone, and a chrome that is close to
+monotone, because the map and the data already bring the colour. `/final` is that, as one design.
+
+- **One set of parts, one state model.** `src/round3/parts.tsx` holds every component,
+  `state.ts` the state (`usePlan`, on top of round 2's `useTuner`), `Final.tsx` only arranges them:
+  phone below 720 px (map, summary card, chip strip, agent bar; everything larger is a bottom
+  sheet), desk from 1100 px (route card left, profile card right), tablet in between (the desk's
+  route card with the phone's strip, sheets as a side panel). A phone in landscape gets the phone
+  parts with side panels.
+- **C2's weak spots on the phone.** The profile chip opens the whole profile as a sheet (C1's
+  list, with hold-to-clear while a slider is dragged). The strip never scrolls sideways: two rows
+  at most, changed preferences first, the rest behind "+N", all limits in one chip. Timeline and
+  waypoints are the route sheet behind the summary card; compare replaces the summary card;
+  layers, legend and rides are the "Map & rides" sheet.
+- **Monotone chrome.** Ink, greys and one accent (`signal`, the route's vermilion) for the primary
+  action and the "changed from the base" marker. Sliders are ink; avoid ↔ seek is told by position
+  and word. Colour is data: route, surface, way type, ridden, attribute layers
+  (`src/round3/palette.ts`, picked against the real outdoor map; the sandbox map is repainted in
+  its colours to judge them).
+- **Tokens** for the real app: `src/round3/tokens.css`.
+- **States** the real app needs: `?state=empty|download|busy|error`.
+- URL switches: `?sheet=route|profile|layers`, `?chip=<id>` (e.g. `water` with `demo=1`),
+  `?hold=<id>`, `?line=surface`, plus round 2's `?demo=1`, `?picker=1`, `?compare=1`,
+  `?layer=debug|explored`, `?theme=`.
+- Screenshots and boards: `bun scripts/shots3.mjs` writes to `/tmp/kompass-design-3/`
+  (`EXTRA=1` adds the remaining states, `CHROMIUM=<path>` picks the browser).
 
 ## What is real and what is mock
 

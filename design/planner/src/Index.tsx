@@ -16,13 +16,24 @@ const ROUND2 = [
 ];
 const STATES2 = [["Planning", "view=plan"], ["Profile, two added", "view=profile&demo=1"], ["Picker", "view=profile&demo=1&picker=1"], ["Compare", "view=profile&compare=1"], ["Attribute map", "view=layers&layer=debug"], ["Explored map", "view=layers&layer=explored"]];
 
+const FINAL = [["Planning", "demo=0"], ["Chip slider", "demo=1&chip=water"], ["Whole profile", "demo=1&sheet=profile"], ["Picker", "demo=1&picker=1"], ["Route details", "demo=1&sheet=route"], ["Compare", "compare=1"], ["Attribute layer", "sheet=layers&layer=debug"], ["Explored", "layer=explored"], ["Empty", "state=empty"], ["Downloading", "state=download"], ["Engine busy", "state=busy"], ["No route", "state=error"]];
+
 export function Index() {
   return (
     <div className="min-h-full bg-neutral-50 px-5 py-10 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
       <div className="mx-auto max-w-3xl">
         <div className="flex items-center gap-2.5"><Mark size={28} accent="#e4572e" /><h1 className="text-2xl font-semibold tracking-tight">Kompass planner · design rounds</h1></div>
         <p className="mt-2 max-w-xl text-sm text-neutral-500">Four directions for the responsive planner. Mock data, real stack. Each one works at phone and desktop width; resize the window or open it on the phone. Add <code>&amp;theme=dark</code> or <code>&amp;theme=light</code> to force a theme.</p>
-        <h2 className="mt-8 text-sm font-semibold uppercase tracking-wider text-neutral-500">Round 2 · three takes on C “Sentence”, now with sliders</h2>
+        <h2 className="mt-8 text-sm font-semibold uppercase tracking-wider text-neutral-500">Round 3 · the consolidated design</h2>
+        <div className="mt-3 rounded-2xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+          <Link to="/final" className="flex items-baseline gap-3"><span className="text-3xl font-semibold uppercase">Final</span><span className="text-lg font-semibold">Strip on the phone, cards on desktop</span></Link>
+          <div className="mt-1 text-xs font-medium uppercase tracking-wider text-neutral-500">One set of parts · one state model · monotone chrome</div>
+          <p className="mt-2 text-sm leading-relaxed text-neutral-600 dark:text-neutral-400">The reference the planner shell is built from: docs/design/planner.md. Resize the window to walk through phone, tablet and desktop.</p>
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {FINAL.map(([label, q]) => <a key={q} href={`/final?${q}`} className="rounded-full border border-neutral-300 px-2.5 py-1 text-xs font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800">{label}</a>)}
+          </div>
+        </div>
+        <h2 className="mt-10 text-sm font-semibold uppercase tracking-wider text-neutral-500">Round 2 · three takes on C “Sentence”, now with sliders</h2>
         <div className="mt-3 grid gap-4 sm:grid-cols-3">
           {ROUND2.map((d) => (
             <div key={d.l} className="rounded-2xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">

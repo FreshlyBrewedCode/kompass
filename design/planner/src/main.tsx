@@ -10,6 +10,7 @@ import { Index } from "./Index";
 import { C1 } from "./round2/C1";
 import { C2 } from "./round2/C2";
 import { C3 } from "./round2/C3";
+import { Final } from "./round3/Final";
 
 createRoot(document.getElementById("root") as HTMLElement).render(
   <StrictMode>
@@ -23,6 +24,7 @@ createRoot(document.getElementById("root") as HTMLElement).render(
         <Route path="/c1" element={<C1 />} />
         <Route path="/c2" element={<C2 />} />
         <Route path="/c3" element={<C3 />} />
+        <Route path="/final" element={<Final />} />
       </Routes>
     </BrowserRouter>
   </StrictMode>,

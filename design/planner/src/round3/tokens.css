@@ -1,0 +1,119 @@
+/*
+ * Round 3: the chrome tokens of the planner. Near-monochrome: neutrals plus ONE accent (`--signal`).
+ *
+ * To use them in the real app (web/src/index.css): copy the `.r3` block into `:root`, the
+ * `.dark .r3` block into `.dark`, and the `@theme inline` block as it is. The names that shadcn/ui
+ * already knows keep their meaning; `signal`, `glass`, `track` and the `elev-*` shadows are new.
+ * Colours of DATA (route, surface, way type, ridden, attribute layers) are not tokens: they are
+ * picked against the map and live in `palette.ts`, like `web/src/map/palette.ts`.
+ */
+.r3 {
+  /* neutrals */
+  --background: #f4f4f1;
+  --foreground: #161816;
+  --card: #ffffff;
+  --card-foreground: #161816;
+  --popover: #ffffff;
+  --popover-foreground: #161816;
+  --primary: #161816;
+  --primary-foreground: #ffffff;
+  --secondary: #ecece8;
+  --secondary-foreground: #161816;
+  --muted: #ecece8;
+  --muted-foreground: #5f635f;
+  --accent: #ecece8;
+  --accent-foreground: #161816;
+  --destructive: #b3261e;
+  --border: rgb(22 24 22 / 0.1);
+  --input: rgb(22 24 22 / 0.18);
+  --ring: rgb(22 24 22 / 0.45);
+  /* the one accent: the primary action and "changed from the base". Same hue as the route line. */
+  --signal: #d23f18;
+  --signal-foreground: #ffffff;
+  /* floating cards over the map; the slider track and the empty part of a lane */
+  --glass: rgb(255 255 255 / 0.9);
+  --track: rgb(22 24 22 / 0.12);
+  /* elevation: two levels */
+  --elev-float: 0 8px 28px rgb(0 0 0 / 0.14), 0 1px 2px rgb(0 0 0 / 0.06);
+  --elev-sheet: 0 -10px 36px rgb(0 0 0 / 0.16);
+  --radius: 0.75rem;
+  /* the distance between a floating card and the screen edge */
+  --gutter: 10px;
+
+  /* map furniture (sandbox classes) */
+  --marker-bg: #161816; --marker-ring: #ffffff; --marker-accent: #161816;
+  --callout-bg: rgb(255 255 255 / 0.94); --callout-fg: #161816;
+  font-family: "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
+}
+.dark .r3 {
+  --background: #0f1110;
+  --foreground: #f0f1ed;
+  --card: #1a1c1b;
+  --card-foreground: #f0f1ed;
+  --popover: #1a1c1b;
+  --popover-foreground: #f0f1ed;
+  --primary: #f0f1ed;
+  --primary-foreground: #0f1110;
+  --secondary: #262928;
+  --secondary-foreground: #f0f1ed;
+  --muted: #262928;
+  --muted-foreground: #a2a7a2;
+  --accent: #262928;
+  --accent-foreground: #f0f1ed;
+  --destructive: #ff8a7a;
+  --border: rgb(255 255 255 / 0.1);
+  --input: rgb(255 255 255 / 0.2);
+  --ring: rgb(255 255 255 / 0.5);
+  --signal: #ff7a57;
+  --signal-foreground: #1c0b05;
+  --glass: rgb(26 28 27 / 0.9);
+  --track: rgb(255 255 255 / 0.16);
+  --elev-float: 0 8px 28px rgb(0 0 0 / 0.5), 0 0 0 1px rgb(255 255 255 / 0.04);
+  --elev-sheet: 0 -10px 36px rgb(0 0 0 / 0.55);
+
+  --marker-bg: #f0f1ed; --marker-fg: #0f1110; --marker-ring: #0f1110; --marker-accent: #f0f1ed; --marker-accent-fg: #0f1110;
+  --callout-bg: rgb(26 28 27 / 0.94); --callout-fg: #f0f1ed;
+}
+@media (min-width: 720px) {
+  .r3 { --gutter: 16px; }
+}
+
+@theme inline {
+  --color-signal: var(--signal);
+  --color-signal-foreground: var(--signal-foreground);
+  --color-glass: var(--glass);
+  --color-track: var(--track);
+  --shadow-float: var(--elev-float);
+  --shadow-sheet: var(--elev-sheet);
+  /* radii: a control (row, input, small card), a floating card, the top of a sheet; pills are `rounded-full` */
+  --radius-control: 12px;
+  --radius-card: 20px;
+  --radius-sheet: 26px;
+  /* type: five sizes, Tailwind's own names so class mergers know them: text-2xs (11, labels), text-xs (12, secondary),
+     text-sm (14, body and rows), text-base (16, titles), text-2xl (24, the totals; text-lg while tuning).
+     Only 2xs is new. Figures are always `tabular-nums`. */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 0.875rem;
+}
+
+/* ------------------------------------------------------------------ behaviour (sandbox) */
+.r3 input::placeholder { color: var(--muted-foreground); }
+.r3 .kcursor { background: var(--route); border-color: var(--route-casing); }
+.r3 .kcallout { font-weight: 500; }
+
+/* Hold-to-clear: while a slider is held in the phone's profile sheet, the sheet gets out of the way
+   and leaves only that row and the totals. */
+.r3-sheet { transition: height 0.28s cubic-bezier(0.2, 0.8, 0.2, 1), background-color 0.18s, box-shadow 0.18s, border-color 0.18s; }
+.r3-sheet [data-fade], .r3-sheet [data-row] { transition: opacity 0.16s; }
+.r3-sheet[data-grab] { background: transparent; border-color: transparent; box-shadow: none; backdrop-filter: none; }
+.r3-sheet[data-grab] [data-fade], .r3-sheet[data-grab] [data-row]:not([data-held]) { opacity: 0; }
+.r3-sheet[data-grab] [data-keep], .r3-sheet[data-grab] [data-row][data-held] {
+  background: var(--glass); border-radius: 16px; box-shadow: var(--elev-float); backdrop-filter: blur(16px);
+}
+/* a row that was just added */
+.r3-flash { animation: r3-flash 1.4s ease-out; }
+@keyframes r3-flash { 0% { background: var(--track); } 100% { background: transparent; } }
+/* the engine is working */
+.r3-busy { position: relative; overflow: hidden; }
+.r3-busy::after { content: ""; position: absolute; inset: 0 auto 0 0; width: 35%; border-radius: 999px; background: var(--foreground); animation: r3-busy 1.1s ease-in-out infinite; }
+@keyframes r3-busy { 0% { transform: translateX(-100%); } 100% { transform: translateX(290%); } }
