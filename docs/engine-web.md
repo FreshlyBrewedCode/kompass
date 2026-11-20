@@ -14,13 +14,13 @@ UI (React) ── engineStore() ── EngineClient ──postMessage──▶ w
 - **`kompass-wasm`** (`engine/wasm/src/engine.rs`, plain Rust tested natively; `lib.rs` maps it onto
   wasm-bindgen): an `Engine` built from the index bytes, `addTile` / `addGeometry` (any order;
   geometry also after `finish`), `finish` (adjacency, snapping grid, edge classes: the `Planner`),
-  then `route`, `prepare`, `diff`, `explain`, `arcCosts`, `regionCatalogue`, `setPersonal`, `snap`,
-  `matchTiles` + `matchRide`, `info` (counts and heap by part), `benchPairs`. Free functions:
-  `version`, `presets`, `catalogue`. The API types cross as JSON text (serde_json, the generated
+  then `route`, `prepare`, `diff`, `explain`, `arcCosts`, `edgeCosts`, `explainEdge`, `compare`,
+  `regionCatalogue`, `setPersonal`, `snap`, `matchTiles` + `matchRide`, `info` (counts and heap by
+  part), `benchPairs`. Free functions: `version`, `presets`, `catalogue`, `closedCodes`. The API types cross as JSON text (serde_json, the generated
   types in `web/src/engine/generated/`); big numeric payloads as typed arrays (graph files, track
-  points, matched arcs and coverage, the personal layer, arc costs). A route result stays JSON:
-  ~90 KB at 50 km parses in about a millisecond, below the noise of the route itself. 448 KB of
-  wasm, 178 KB gzip.
+  points, matched arcs and coverage, the personal layer, arc and edge costs). A route result stays
+  JSON: ~90 KB at 50 km parses in about a millisecond, below the noise of the route itself. 516 KB
+  of wasm.
 - **The worker** (`worker.ts`) owns the engine and the graph files. Requests run one at a time in
   arrival order (one wasm object; a request may wait for files halfway). Each answer carries the
   worker's time (`ms`); typed arrays in params and results are transferred, not copied (a caller's
@@ -132,11 +132,33 @@ preferences read it), and `edgesLength({ edges })` is the summed length in metre
 once (the km explored). `EngineInfo.networkM` is the length of every edge: what "share of the network"
 divides by.
 
+## The cost debug view
+
+Three methods ([routing.md](routing.md#explaining-the-cost) has the shapes):
+
+- `edgeCosts({ profile, edges?, bbox? })` → `EdgeCostsResult` (`protocol.ts`): typed arrays
+  `edges`, `factor` and `costPerM` (two per edge: along, against; 0 where that way may not be ridden),
+  `closed` (one per edge, `codes[code − 1]` names it), plus `minFactor`, `maxFactor`, `bound`. The
+  `edges` param is transferred (empty afterwards). For the map layer: per viewport, not the region.
+  Ask with the map's `bbox` (or the ids `querySourceFeatures` returns) after `moveend` and after a
+  profile change, and set `feature-state` on the overlay source by edge id in chunks, as the explored
+  layer does (`web/src/map/explored-layer.ts`), e.g. `{ fa, fb, c }`; colour by the smaller open
+  factor on a log scale with 1 neutral (`minFactor` … `maxFactor`), closed edges (`c > 0`) by what
+  closes them. A viewport at z13–14 is a few thousand edges: ~1 ms in the worker. Every edge of a
+  2.34 M region (~100 ms, 47 MB crossing the worker, then millions of `setFeatureState` calls) is not
+  for a phone.
+- `explainEdge({ profile, edge })` → `EdgeExplanation`, for the tap panel (the tapped feature's id).
+- `compare({ profile, a, b })` → `RouteComparison`: the current route against one with a via on the
+  wanted line (a second `route` on its own lane), stretch by stretch.
+
+The `?bench` page times `edgeCosts` for 20 k listed edges and for every edge.
+
 ## Bench page
 
 `?bench` (on whatever region the data URL names): seeded random pairs at 7–9, 37–43 and 75–85 km
 straight line (routes of ~11 / 57 / 112 km) from the loaded graph, each routed with the two main
-presets in the worker; the first route after load; five profile compiles per preset; 20 fake
+presets in the worker; the first route after load; five profile compiles per preset; `edgeCosts` for
+20 k listed edges and for every edge (five each); 20 fake
 rides along the ~50 km routes (a point every 5 m, ±3 m noise) matched; the wasm heap after load,
 after the routes and after matching. A table to read on the phone and the same as text to copy.
 `&run` starts it at once; `&pairs=`, `&rides=`, `&seed=`, `&geometry=lazy` change it. The pairs exist

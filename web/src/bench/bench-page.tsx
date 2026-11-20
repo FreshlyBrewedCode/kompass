@@ -134,6 +134,10 @@ export default function BenchPage() {
             rows={report.compile.map((c) => [c.preset, f(c.ms.median), f(c.ms.p95), f(c.ms.max)])}
           />
           <Table
+            head={["edge costs", "edges", "ms p50", "round trip"]}
+            rows={report.edgeCosts.map((c) => [c.label, c.edges, f(c.engine.median), f(c.roundTrip.median)])}
+          />
+          <Table
             head={["wasm heap", "linear memory MB", "engine MB"]}
             rows={report.heap.map((h) => [h.label, f(h.wasmBytes / 2 ** 20), f(h.engineBytes / 2 ** 20)])}
           />
