@@ -59,6 +59,52 @@ pub struct Found {
     pub arcs: Vec<ArcId>,
 }
 
+/// One search's inputs.
+#[derive(Debug, Clone)]
+pub struct Query<'a> {
+    /// Compiled cost per arc (infinite: not allowed).
+    pub costs: &'a [f32],
+    pub plane: Plane,
+    /// The factor of the straight-line bound (the smallest factor the profile produced).
+    pub bound: f32,
+    /// `(node, cost from the source point)`.
+    pub sources: &'a [(NodeId, f32)],
+    /// `(node, cost to the target point)`.
+    pub targets: &'a [(NodeId, f32)],
+    /// The target point, 1e-7 degrees.
+    pub target: (i32, i32),
+    /// A cost already known (the direct way along one edge): only something cheaper is returned.
+    pub best: f32,
+    /// Excluded ways usable near some points.
+    pub exempt: Option<Exempt<'a>>,
+}
+
+/// Near a waypoint whose way a limit excludes, excluded arcs may be ridden at `max_factor` per
+/// metre (never against one-way or where bikes are banned), so a route can get away from it.
+#[derive(Debug, Clone)]
+pub struct Exempt<'a> {
+    pub plane: Plane,
+    pub points: &'a [(i32, i32)],
+    pub radius_m: f32,
+    pub max_factor: f32,
+}
+
+impl Exempt<'_> {
+    /// The cost of an excluded arc `a` (leading to `w`) if the exemption covers it.
+    #[inline]
+    fn cost(&self, g: &Graph, a: ArcId, w: NodeId) -> Option<f32> {
+        let e = crate::graph::arc_edge(a);
+        if !g.arc_allowed(a) || g.bike_access(e) == crate::attrs::BikeAccess::No {
+            return None;
+        }
+        let at = g.node_e7(w);
+        self.points
+            .iter()
+            .any(|&p| self.plane.dist(at, p) <= self.radius_m)
+            .then(|| g.length_m(e) * self.max_factor)
+    }
+}
+
 /// The reusable state.
 #[derive(Debug, Clone)]
 pub struct Search {
@@ -68,6 +114,7 @@ pub struct Search {
     stamp: Vec<u32>,
     generation: u32,
     heap: BinaryHeap<Reverse<u64>>,
+    queue: Vec<NodeId>,
     /// Nodes settled by the last search.
     pub settled: usize,
 }
@@ -93,8 +140,63 @@ impl Search {
             stamp: vec![0; nodes],
             generation: 0,
             heap: BinaryHeap::new(),
+            queue: Vec::new(),
             settled: 0,
         }
+    }
+
+    /// Whether `starts` sit in a small pocket the profile cuts off: fewer than `limit` nodes can
+    /// be reached from them over allowed arcs (`forward`; backward: reach them), none of them in
+    /// `others`.
+    pub fn cut_off(
+        &mut self,
+        g: &Graph,
+        costs: &[f32],
+        starts: &[NodeId],
+        others: &[NodeId],
+        limit: usize,
+        forward: bool,
+    ) -> bool {
+        self.reset(g.node_count());
+        self.queue.clear();
+        let mut seen = 0usize;
+        for &s in starts {
+            if self.stamp[s as usize] >> 1 != self.generation {
+                self.label(s, 0.0, NONE);
+                self.queue.push(s);
+                seen += 1;
+            }
+        }
+        let mut i = 0;
+        while i < self.queue.len() {
+            if seen >= limit {
+                return false;
+            }
+            let v = self.queue[i];
+            i += 1;
+            let (arcs, flags) = g.arcs_at(v);
+            for (&a, &f) in arcs.iter().zip(flags) {
+                // forward: the slot's arc leaves v; backward: its opposite arrives at v
+                let (ok, arc) = if forward {
+                    (f & crate::graph::flags::OUT != 0, a)
+                } else {
+                    (f & crate::graph::flags::IN != 0, a ^ 1)
+                };
+                if !ok || !costs[arc as usize].is_finite() {
+                    continue;
+                }
+                let w = if forward { g.head(arc) } else { g.tail(arc) };
+                if self.stamp[w as usize] >> 1 != self.generation {
+                    self.label(w, 0.0, NONE);
+                    self.queue.push(w);
+                    seen += 1;
+                }
+            }
+        }
+        seen < limit
+            && others
+                .iter()
+                .all(|&o| self.stamp[o as usize] >> 1 != self.generation)
     }
 
     /// Heap bytes held.
@@ -137,31 +239,19 @@ impl Search {
         self.stamp[v as usize] = self.generation << 1;
     }
 
-    /// A* from labelled source nodes to labelled target nodes (`(node, cost to the target point)`),
-    /// over `costs` per arc; `bound` is the factor of the straight-line bound towards `target`
-    /// (1e-7 degrees). `best` is a cost already known (a direct way along one edge): the search only
-    /// returns something cheaper. `None` if nothing cheaper is reachable.
-    #[allow(clippy::too_many_arguments, reason = "a search's inputs")]
-    pub fn run(
-        &mut self,
-        g: &Graph,
-        costs: &[f32],
-        plane: Plane,
-        bound: f32,
-        sources: &[(NodeId, f32)],
-        targets: &[(NodeId, f32)],
-        target: (i32, i32),
-        best: f32,
-    ) -> Option<Found> {
+    /// A* from labelled source nodes to labelled target nodes. `None` if nothing cheaper than
+    /// `q.best` is reachable.
+    pub fn run(&mut self, g: &Graph, q: &Query<'_>) -> Option<Found> {
         self.reset(g.node_count());
+        let (plane, bound, target) = (q.plane, q.bound, q.target);
         let h = |v: NodeId| plane.dist(g.node_e7(v), target) * bound;
-        for &(s, d) in sources {
+        for &(s, d) in q.sources {
             if d.is_finite() && d < self.dist(s) {
                 self.label(s, d, NONE);
                 self.heap.push(key(d + h(s), s));
             }
         }
-        let mut best = best;
+        let mut best = q.best;
         let mut best_end = None;
         while let Some(Reverse(k)) = self.heap.pop() {
             let (f, v) = unkey(k);
@@ -174,18 +264,24 @@ impl Search {
             self.stamp[v as usize] |= 1;
             self.settled += 1;
             let dv = self.dist[v as usize];
-            for &(t, tail) in targets {
+            for &(t, tail) in q.targets {
                 if t == v && dv + tail < best {
                     best = dv + tail;
                     best_end = Some(v);
                 }
             }
             for a in g.out_arcs(v) {
-                let c = costs[a as usize];
-                if !c.is_finite() {
-                    continue;
-                }
+                let mut c = q.costs[a as usize];
                 let w = g.head(a);
+                if !c.is_finite() {
+                    match &q.exempt {
+                        Some(x) => match x.cost(g, a, w) {
+                            Some(cx) => c = cx,
+                            None => continue,
+                        },
+                        None => continue,
+                    }
+                }
                 let d = dv + c;
                 if d < self.dist(w) && !self.closed(w) {
                     self.label(w, d, a);
@@ -208,20 +304,5 @@ impl Search {
             end,
             arcs,
         })
-    }
-
-    /// Plain Dijkstra between the same labels (no bound): the reference for tests.
-    #[allow(clippy::too_many_arguments, reason = "a search's inputs")]
-    pub fn dijkstra(
-        &mut self,
-        g: &Graph,
-        costs: &[f32],
-        sources: &[(NodeId, f32)],
-        targets: &[(NodeId, f32)],
-        best: f32,
-    ) -> Option<f32> {
-        let plane = Plane { kx: 0.0, ky: 0.0 };
-        self.run(g, costs, plane, 0.0, sources, targets, (0, 0), best)
-            .map(|f| f.cost)
     }
 }

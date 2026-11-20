@@ -785,10 +785,13 @@ fn a_star_finds_what_dijkstra_finds() {
                 let want = dijkstra(&g, &costs, s, t);
                 let got = planner.route(&request(vec![wp(a.lng, a.lat), wp(b.lng, b.lat)], &p));
                 match got {
+                    // (without detours over excluded ways near the waypoints, which Dijkstra
+                    // over the compiled costs cannot take)
                     Ok(r)
-                        if r.waypoints
-                            .iter()
-                            .all(|w| w.excluded_by.is_none() && w.distance_m < 0.01) =>
+                        if r.notes.is_empty()
+                            && r.waypoints
+                                .iter()
+                                .all(|w| w.excluded_by.is_none() && w.distance_m < 0.01) =>
                     {
                         assert!(
                             want.is_finite(),
@@ -950,11 +953,21 @@ fn waypoints_snap_onto_allowed_ways() {
     };
     let fw = b.edge(f0, f1, foot);
     b.edge(f1, c, residential());
-    // a pedestrian pocket far away, only reachable on foot ways
-    let p0 = b.node(0.07 + 20.0 * step, 0.08);
-    let p1 = b.node(0.07 + 21.0 * step, 0.08);
-    b.edge(c, p0, foot);
+    // a pedestrian pocket 5 km away, only reachable on foot ways (more than the exemption's
+    // 1 km around either waypoint)
+    let m1 = b.node(0.07 + 18.0 * step, 0.08);
+    let m2 = b.node(0.07 + 34.0 * step, 0.08);
+    let p0 = b.node(0.07 + 50.0 * step, 0.08);
+    let p1 = b.node(0.07 + 51.0 * step, 0.08);
+    b.edge(c, m1, foot);
+    b.edge(m1, m2, foot);
+    b.edge(m2, p0, foot);
     let pocket = b.edge(p0, p1, foot);
+    // and a small one: 600 m of foot ways to the street
+    let q0 = b.node(0.07 + 3.0 * step, 0.08 + 6.0 * step);
+    let q1 = b.node(0.07 + 4.0 * step, 0.08 + 6.0 * step);
+    b.edge(c, q0, foot);
+    let small = b.edge(q0, q1, foot);
     let built = b.build();
     let mut planner = Planner::new(built.graph.clone());
     let mut legal = Profile::default();
@@ -1000,7 +1013,22 @@ fn waypoints_snap_onto_allowed_ways() {
     assert!(r.notes.iter().any(|n| n.contains("waypoint 1")), "{:?}", r.notes);
     // ... unless nothing allowed can be reached from it: an error naming the limit
     let mut req = request(
-        vec![wp(0.07 + 20.5 * step, 0.08), wp(0.07 + 2.0 * step, 0.08)],
+        vec![
+            wp(0.07 + 3.5 * step, 0.08 + 6.0 * step),
+            wp(0.07 + 2.0 * step, 0.08),
+        ],
+        &legal,
+    );
+    req.options.snap_radius_m = 20.0;
+    let r = planner.route(&req).unwrap();
+    assert_eq!(r.waypoints[0].edge, built.edge(small));
+    assert!(
+        r.notes.iter().any(|n| n.contains("ways the profile excludes")),
+        "{:?}",
+        r.notes
+    );
+    let mut req = request(
+        vec![wp(0.07 + 50.5 * step, 0.08), wp(0.07 + 2.0 * step, 0.08)],
         &legal,
     );
     req.options.snap_radius_m = 20.0;

@@ -5,12 +5,12 @@
     "name": "River valley",
     "weights": {
       "unpaved": 0,
-      "quiet": 20,
-      "climb": -70,
+      "quiet": 40,
+      "climb": -60,
       "novel": -10,
-      "water": 80,
-      "steep": -60
+      "water": 90,
+      "steep": -70
     },
-    "limits": { "max_grade": 10, "no_stairs": true }
+    "limits": { "no_stairs": true }
   }
 }

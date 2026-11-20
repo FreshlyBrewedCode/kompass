@@ -46,6 +46,8 @@ pub const FERRY_M: f32 = 1000.0;
 /// (the surface model's canopy noise; spike #3 measured ~3.5 vs ~13 m/km of spurious ascent).
 pub const CLIMB_DEADBAND_OPEN: f32 = 0.004;
 pub const CLIMB_DEADBAND_FOREST: f32 = 0.010;
+/// The time model's climbing: metres of ascent per hour on top of the flat riding time.
+pub const CLIMB_M_PER_H: f32 = 900.0;
 /// Average grade (after the deadband) at which seeking climbs reaches its full bonus.
 pub const CLIMB_FULL_GRADE: f32 = 0.05;
 
@@ -1361,7 +1363,8 @@ pub fn reported_surface(g: &Graph, e: EdgeId) -> SurfaceClass {
     }
 }
 
-/// Riding speed on an arc, km/h, and the climbing time: a rough model by surface and grade.
+/// Seconds to ride a fraction of an arc: a rough model, a speed by surface (slower on narrow
+/// paths, walking on `dismount`, carrying on steps, faster downhill) plus time per metre climbed.
 #[must_use]
 pub fn arc_seconds(g: &Graph, a: crate::ArcId, fraction: f32) -> f32 {
     let c = g.edge_columns();
@@ -1369,12 +1372,12 @@ pub fn arc_seconds(g: &Graph, a: crate::ArcId, fraction: f32) -> f32 {
     let v = View::decode(c, e);
     let (s, _) = v.surface();
     let mut kmh = match s {
-        sc::PAVED => 21.0,
-        sc::ROUGH => 15.0,
-        sc::COMPACTED => 18.0,
-        sc::GRAVEL => 16.0,
-        sc::SOFT => 11.0,
-        _ => 13.0,
+        sc::PAVED => 22.0,
+        sc::ROUGH => 16.0,
+        sc::COMPACTED => 19.0,
+        sc::GRAVEL => 17.0,
+        sc::SOFT => 12.0,
+        _ => 14.0,
     };
     if v.is_narrow_path() {
         kmh *= 0.9;
@@ -1397,7 +1400,7 @@ pub fn arc_seconds(g: &Graph, a: crate::ArcId, fraction: f32) -> f32 {
     if v.hw != hw::STEPS && fall_rate > 0.02 {
         kmh *= 1.0 + 0.4 * ((fall_rate - 0.02) / 0.04).min(1.0);
     }
-    let mut secs = len / (kmh / 3.6) + climb * 3600.0 / 700.0;
+    let mut secs = len / (kmh / 3.6) + climb * 3600.0 / CLIMB_M_PER_H;
     if v.hw == hw::FERRY {
         secs = len / (10.0 / 3.6) + 600.0;
     }

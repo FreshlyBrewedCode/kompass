@@ -11,10 +11,10 @@ use ts_rs::TS;
 
 use crate::attrs::SurfaceClass;
 use crate::cost::{self, CostModel, WayKind};
-use crate::graph::{ArcId, EdgeId, Graph, arc, arc_edge, arc_is_reverse};
+use crate::graph::{ArcId, EdgeId, Graph, NodeId, arc, arc_edge, arc_is_reverse};
 use crate::personal::PersonalLayer;
 use crate::profile::{PrefId, Profile};
-use crate::search::{Plane, Search};
+use crate::search::{Exempt, Plane, Query, Search};
 use crate::spatial::{DEFAULT_CELL_M, Grid, Snap};
 use crate::{LngLat, M_PER_E7};
 
@@ -413,6 +413,14 @@ struct Compiled {
 /// How many compiled profiles stay cached (the current one and, e.g., the base profile's ghost).
 pub const COMPILED_CACHE: usize = 2;
 
+/// How far from a waypoint on an excluded way the route may ride excluded ways to get away
+/// (metres, at `max_factor` per metre).
+pub const EXEMPT_RADIUS_M: f32 = 1000.0;
+
+/// An end that reaches fewer nodes than this over allowed ways is in a pocket (and may get away
+/// over excluded ways near it).
+pub const POCKET_NODES: usize = 10_000;
+
 /// Candidates looked at when snapping.
 const SNAP_CANDIDATES: usize = 48;
 
@@ -751,10 +759,53 @@ impl Planner {
         }
         .to_e7();
         let c = &self.compiled[ci];
-        let found = self.search.run(
-            g, &c.costs, self.plane, c.bound, &sources, &targets, target, direct,
-        );
-        let settled = u32::try_from(self.search.settled).unwrap_or(u32::MAX);
+        // an end in a small pocket the limits cut off may get away over excluded ways (checked up
+        // front: a search that fails explores everything it can reach)
+        let starts: Vec<NodeId> = sources.iter().filter(|s| s.1.is_finite()).map(|s| s.0).collect();
+        let ends: Vec<NodeId> = targets.iter().filter(|t| t.1.is_finite()).map(|t| t.0).collect();
+        let pocket_a = !xa
+            && self
+                .search
+                .cut_off(g, &c.costs, &starts, &ends, POCKET_NODES, true);
+        let pocket_b = !xb
+            && self
+                .search
+                .cut_off(g, &c.costs, &ends, &starts, POCKET_NODES, false);
+        let exempt_points: Vec<(i32, i32)> = [(a, pocket_a), (b, pocket_b)]
+            .iter()
+            .filter(|(ep, pocket)| ep.exempt.is_some() || *pocket)
+            .map(|(ep, _)| ep.snap.point.to_e7())
+            .collect();
+        let both = [a.snap.point.to_e7(), b.snap.point.to_e7()];
+        let mut query = Query {
+            costs: &c.costs,
+            plane: self.plane,
+            bound: c.bound,
+            sources: &sources,
+            targets: &targets,
+            target,
+            best: direct,
+            exempt: (!exempt_points.is_empty()).then_some(Exempt {
+                plane: self.plane,
+                points: &exempt_points,
+                radius_m: EXEMPT_RADIUS_M,
+                max_factor: c.model.max_factor,
+            }),
+        };
+        let mut found = self.search.run(g, &query);
+        let mut settled_all = self.search.settled;
+        if found.is_none() && direct_piece.is_none() && exempt_points.len() < 2 {
+            // a waypoint in a pocket the limits cut off: let both ends get away over excluded ways
+            query.exempt = Some(Exempt {
+                plane: self.plane,
+                points: &both,
+                radius_m: EXEMPT_RADIUS_M,
+                max_factor: c.model.max_factor,
+            });
+            found = self.search.run(g, &query);
+            settled_all += self.search.settled;
+        }
+        let settled = u32::try_from(settled_all).unwrap_or(u32::MAX);
         match found {
             Some(f) => {
                 // the first piece: from the point to the start node
@@ -853,6 +904,7 @@ impl Planner {
         let mut surface_m: Vec<(SurfaceKind, f32)> = Vec::new();
         let mut way_m: Vec<(WayKind, f32)> = Vec::new();
         let (mut new_m, mut ridden_m) = (0.0f32, 0.0f32);
+        let mut excluded_m = 0.0f32;
         let mut dist = 0.0f32;
         let (mut tot_up, mut tot_down, mut tot_secs, mut tot_cost) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
         let mut acc = SegAcc::default();
@@ -883,7 +935,9 @@ impl Planner {
                     None => {}
                 }
                 let ex = model.explain(g, personal, piece.arc);
-                let (factor, extra) = if piece.exempt && ex.excluded.is_some() {
+                let (factor, extra) = if ex.excluded.is_some() {
+                    // ridden near a waypoint on an excluded way, to get away from it
+                    excluded_m += len;
                     (model.max_factor, 0.0)
                 } else {
                     (ex.factor, (ex.climb_m + ex.penalty_m) * frac)
@@ -913,6 +967,12 @@ impl Planner {
             });
         }
         let total = dist.max(1e-6);
+        let mut notes = notes;
+        if excluded_m > 0.0 {
+            notes.push(format!(
+                "{excluded_m:.0} m of the route are on ways the profile excludes, near a waypoint that lies on one"
+            ));
+        }
         let sum = |it: &mut dyn Iterator<Item = f32>| it.fold(0.0f32, |a, b| a + b);
         let unpaved = sum(&mut surface_m.iter().filter(|(k, _)| k.unpaved()).map(|(_, m)| *m));
         let unknown = sum(&mut surface_m

@@ -44,7 +44,7 @@ browser. The design and its numbers come from spike #4 (verdict in the issue). C
 | `geometry/<z>-<x>-<y>.kmpg` | one tile's edge geometry and OSM way references |
 
 ```json
-"graph": { "formatVersion": 1, "buildId": "…", "tileZoom": 11, "nodes": 1822503, "edges": 2340341,
+"graph": { "formatVersion": 2, "buildId": "…", "tileZoom": 11, "nodes": 1822503, "edges": 2340341,
   "bytes": 120804952, "index": { "file": "graph/index.kmpg", "bytes": 9960 },
   "tiles": [ { "x": 1, "y": 2, "edges": 7400,
                "graph": { "file": "graph/tiles/11-1-2.kmpg", "bytes": 230000 },
@@ -62,7 +62,7 @@ Every file is one `KMPG` container, little endian:
 | bytes | field |
 |---|---|
 | 0..4 | magic `KMPG` |
-| 4..6 | u16 format version (**1**) |
+| 4..6 | u16 format version (**2**; 2 added node elevations) |
 | 6..8 | u16 kind: 1 index, 2 graph tile, 3 geometry tile |
 | 8..12 | u32 section count |
 | 12..16 | reserved, 0 |
@@ -92,6 +92,7 @@ the tile's range:
 | section | type | per | meaning |
 |---|---|---|---|
 | `lon_____`, `lat_____` | i32 | node | coordinates in 1e-7° (OSM precision) |
+| `ele_dm__` | u16 | node | elevation in decimetres above −1000 m (0 unknown; from `ele_from_m` / `ele_to_m`), for the route's elevation profile |
 | `from____`, `to______` | u32 | edge | end nodes (global ids); the geometry runs from → to |
 | `len_dm__` | u16 | edge | length in decimetres (edges over 6553.5 m are rejected; the longest real one is 5.1 km) |
 | `highway_` | u8 | edge | `highway` code |
@@ -110,7 +111,7 @@ The enum codes are those of `edges.parquet`. The engine's enums (`attrs.rs`) are
 them twice: a unit test compares them with the generated `docs/edges-parquet.md`, and the compiler
 compares them with the `kompass:enums` metadata of every file it reads. Not carried (the profile
 does not need them): `service`, `surface` (raw), `maxspeed_src`, `foot_access_no`, `segregated`,
-`is_sidepath_tag`, `lit`, `name`, `ref`, node elevations.
+`is_sidepath_tag`, `lit`, `name`, `ref`.
 
 ### Geometry tile (kind 3)
 
@@ -149,7 +150,7 @@ loading, not shipped: it follows the geometry when loaded, else the straight seg
 
 | | raw | gzip -6 (sum of files) |
 |---|---:|---:|
-| graph tiles (244) | 75.6 MB | 33.9 MB (largest 1.0 MB) |
+| graph tiles (244) | 79.2 MB | 36.6 MB (largest 1.1 MB; node elevations are 3.6 MB raw, 2.7 MB gzip of it) |
 | geometry tiles (244) | 45.2 MB | 29.0 MB (largest 0.5 MB) |
 | index | 10 KB | |
 
