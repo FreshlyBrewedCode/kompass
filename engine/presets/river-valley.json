@@ -1,0 +1,16 @@
+{
+  "id": "river_valley",
+  "blurb": "Flat, along the water, easy legs",
+  "profile": {
+    "name": "River valley",
+    "weights": {
+      "unpaved": 0,
+      "quiet": 20,
+      "climb": -70,
+      "novel": -10,
+      "water": 80,
+      "steep": -60
+    },
+    "limits": { "max_grade": 10, "no_stairs": true }
+  }
+}

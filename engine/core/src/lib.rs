@@ -10,6 +10,11 @@
 //! - [`matching`]: map-matching recorded tracks onto the graph, and the explored fold of the matches.
 //! - [`assemble`]: building a [`Graph`] from edges in tile order (the compiler and tests use it) and
 //!   writing it as files.
+//! - [`profile`]: the routing profile (weights, limits, bounds), [`catalogue`]: every preference
+//!   and limit with its text and strength, [`presets`]: the shipped base profiles.
+//! - [`cost`]: a profile compiled into a cost per arc; [`search`]: A* over it.
+//! - [`route`]: the `route` query and the route diff ([`Planner`]), [`personal`]: the rider's
+//!   history per edge.
 //! - [`testing`]: tiny graphs built in code, for tests here and in the other crates.
 #![allow(
     clippy::missing_errors_doc,
@@ -22,15 +27,29 @@
 
 pub mod assemble;
 pub mod attrs;
+pub mod catalogue;
+pub mod cost;
 pub mod format;
 pub mod geometry;
 pub mod graph;
 pub mod hilbert;
 pub mod matching;
+pub mod personal;
+pub mod presets;
+pub mod profile;
+pub mod route;
+#[cfg(feature = "schema")]
+pub mod schema;
+pub mod search;
 pub mod spatial;
 pub mod testing;
 
+pub use catalogue::{Catalogue, catalogue};
 pub use graph::{ArcId, EdgeId, Graph, GraphInfo, GraphLoader, NodeId, TileInfo};
+pub use personal::PersonalLayer;
+pub use presets::{Preset, preset, presets};
+pub use profile::{LimitId, LimitValue, PrefId, Profile, Weight};
+pub use route::{DiffRequest, Planner, RouteDiff, RouteError, RouteRequest, RouteResult};
 
 /// The engine version (the crate version), shown by the CLI and the web app.
 #[must_use]

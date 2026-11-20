@@ -11,8 +11,10 @@ name = "kompass"
 path = "src/main.rs"
 
 [dependencies]
-kompass-core.workspace = true
+kompass-core = { workspace = true, features = ["schema"] }
 kompass-compile.workspace = true
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.145"
 
 [lints]
 workspace = true
