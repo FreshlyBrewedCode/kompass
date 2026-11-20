@@ -5,6 +5,13 @@ import { expect, type Page, type TestInfo } from "@playwright/test";
 // Screenshots land outside the repo; KOMPASS_E2E_SCREENSHOT_DIR moves them.
 const SHOTS = process.env.KOMPASS_E2E_SCREENSHOT_DIR ?? "test-results/screenshots";
 
+/** The engine has loaded the region graph (the pill says so). */
+export async function engineReady(page: Page) {
+  await expect(page.getByTestId("engine-status")).toHaveAttribute("data-status", "ready", {
+    timeout: 20_000,
+  });
+}
+
 /** Opens the app on the fixture region (`?dev` exposes `window.__kompass`) and waits for the first paint. */
 export async function openMap(page: Page, query = "") {
   await page.goto(`./?dev${query ? `&${query}` : ""}`);
@@ -49,6 +56,11 @@ type Kompass = {
   };
   /** the ride worker, called directly (dev hook) */
   ridesCall(method: string, params: unknown): Promise<unknown>;
+  /** the engine store (dev hook): its worker, called directly */
+  engine: {
+    call(method: string, params?: unknown): Promise<unknown>;
+    getSnapshot(): { status: string; stats?: { downloadedFiles: number; cached: boolean } };
+  };
 };
 declare global {
   interface Window {

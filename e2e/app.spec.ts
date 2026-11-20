@@ -16,15 +16,12 @@ test("the app loads from a sub-path, draws the region map and gets an answer fro
   await page.goto("./");
   await expect(page).toHaveTitle("Kompass");
 
-  // the engine: Rust → wasm → Web Worker → typed client → React (a small, unobtrusive pill)
+  // the engine: Rust → wasm → Web Worker → typed client → React (a small, unobtrusive pill), with the
+  // region graph loaded
   await expect(page.getByTestId("engine-status")).toHaveAttribute("data-status", "ready", {
     timeout: 15_000,
   });
   await expect(page.getByTestId("engine-version")).toHaveText(/^\d+\.\d+\.\d+$/);
-  // Zurich main station → Bern station as the crow flies
-  const km = Number(await page.getByTestId("engine-distance").textContent());
-  expect(km).toBeGreaterThan(94);
-  expect(km).toBeLessThan(97);
 
   // the map: a full-screen canvas, its style (base map + overlay) loaded from the fixture region
   await waitIdle(page);

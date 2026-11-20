@@ -1,9 +1,12 @@
+import type { Map as MapLibreMap } from "maplibre-gl";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { EngineStatus } from "@/components/engine-status";
 import { ExploredCard, InspectPanel, LayersControl, LegendCard } from "@/components/map-controls";
 import type { MapHandle } from "@/components/map-view";
 import { EmptyState, ErrorState } from "@/components/region-state";
 import { RidesButton, RidesPanel } from "@/components/rides-panel";
+import type { GeometryMode } from "@/engine/protocol";
+import { engineStore } from "@/engine/store";
 import { exploredStore } from "@/history/explored-store";
 import { useTheme } from "@/lib/theme";
 import { devEnabled } from "@/map/dev";
@@ -15,11 +18,18 @@ import type { RideSummary } from "@/rides/types";
 
 // MapLibre (and with it the map code) is the heavy part: the first paint does not wait for it
 const MapView = lazy(() => import("@/components/map-view"));
+// TEMPORARY: the route lab (src/planner-lab/, `?lab`), with MapLibre in the same lazy chunk
+const PlannerLab = lazy(() => import("@/planner-lab/planner-lab"));
 
 const params = new URLSearchParams(location.search);
 const DEV = devEnabled(location.search);
 /** how many edges the dev button fakes */
 const FAKE_COUNT = 400;
+
+/** TEMPORARY: `?lab` opens the route lab (src/planner-lab/) until the planner shell replaces it. */
+const LAB = params.has("lab");
+/** `?geometry=lazy`: geometry tiles load per route instead of up front (docs/engine-web.md) */
+const GEOMETRY: GeometryMode = params.get("geometry") === "lazy" ? "lazy" : "eager";
 
 /** `?terrain=0` / `?routes=0` start with a toggle off. */
 const flag = (name: string) => params.get(name) !== "0";
@@ -94,6 +104,7 @@ function RegionScreen({
   const [routes, setRoutes] = useState(() => flag("routes"));
   const [picked, setPicked] = useState<PickedEdge | null>(null);
   const [mapError, setMapError] = useState<string | null>(null);
+  const [labMap, setLabMap] = useState<MapLibreMap | null>(null);
   const ridden = useSyncExternalStore(
     (onChange) => exploredStore.subscribe(onChange),
     () => exploredStore.size,
@@ -106,15 +117,24 @@ function RegionScreen({
   const [ridesVisible, setRidesVisible] = useState(true);
   const [selectedRide, setSelectedRide] = useState<string | null>(null);
   useEffect(() => {
-    // `builtAt` stands in for the graph build until the matching task defines one (docs/rides.md)
-    library.attachExplored(exploredStore, manifest.builtAt);
+    // matches belong to a graph build (docs/rides.md): the engine's build id
+    library.attachExplored(exploredStore, manifest.graph?.buildId ?? manifest.buildId ?? manifest.builtAt);
     void library.init();
     if (DEV) {
       // dev / e2e: drive the ride worker directly (e.g. save a fake match)
       const w = window as unknown as { __kompass?: object };
       w.__kompass = Object.assign(w.__kompass ?? {}, { rides: library, ridesCall: library.call });
     }
-  }, [library, manifest.builtAt]);
+  }, [library, manifest]);
+  // the engine: the region graph downloads (once per build) and loads in its worker
+  useEffect(() => {
+    const engine = engineStore();
+    if (manifest.graph) void engine.load(dataUrl, manifest.graph, GEOMETRY).catch(() => undefined);
+    if (DEV) {
+      const w = window as unknown as { __kompass?: object };
+      w.__kompass = Object.assign(w.__kompass ?? {}, { engine });
+    }
+  }, [manifest, dataUrl]);
   useFileDrop((files) => {
     setRidesOpen(true);
     void library.importFiles(files);
@@ -149,8 +169,9 @@ function RegionScreen({
           store={exploredStore}
           rides={rides.layer}
           ridesVisible={ridesVisible}
-          onPick={setPicked}
+          onPick={LAB ? (edge) => edge && mapRef.current?.clearSelection() : setPicked}
           onError={setMapError}
+          {...(LAB ? { onMap: setLabMap } : {})}
         />
       </Suspense>
 
@@ -200,7 +221,11 @@ function RegionScreen({
       <div
         className={`pointer-events-none absolute inset-x-0 bottom-0 flex flex-col gap-2 p-3 pb-[max(2rem,env(safe-area-inset-bottom))] md:right-auto md:w-80 ${ridesOpen ? "max-md:hidden" : ""}`}
       >
-        {picked ? (
+        {LAB ? (
+          <Suspense fallback={null}>
+            <PlannerLab map={labMap} />
+          </Suspense>
+        ) : picked ? (
           <InspectPanel manifest={manifest} edge={picked} onClose={() => mapRef.current?.clearSelection()} />
         ) : legend ? (
           <LegendCard legend={legend} />

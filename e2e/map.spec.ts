@@ -193,10 +193,9 @@ test.describe("without usable region data", () => {
     await expect(page.getByTestId("region-empty")).toBeVisible();
     await expect(page.getByTestId("region-empty")).toContainText("No region data");
     await expect(page.getByTestId("map")).toHaveCount(0);
-    // the engine status is independent of the region
-    await expect(page.getByTestId("engine-status")).toHaveAttribute("data-status", "ready", {
-      timeout: 15_000,
-    });
+    // the engine starts without a region: idle, with its version
+    await expect(page.getByTestId("engine-version")).toHaveText(/^\d+\.\d+\.\d+$/, { timeout: 15_000 });
+    await expect(page.getByTestId("engine-status")).toHaveAttribute("data-status", "idle");
   });
 
   test("an invalid manifest: an error that says what is wrong", async ({ page }) => {
