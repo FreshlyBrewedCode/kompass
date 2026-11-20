@@ -9,6 +9,8 @@ import { dataDirPlugin } from "./vite-data-dir.ts";
 // KOMPASS_BASE overrides it with an absolute one if a host ever needs that.
 // Dev serves a region build at /data/ (the app's default data URL): KOMPASS_DATA_DIR, default
 // data/build/region in the repo root; without that directory the app shows its empty state.
+// KOMPASS_DEV_PORT moves the dev server (its HMR websocket takes the next port).
+const port = Number(process.env.KOMPASS_DEV_PORT ?? 7950);
 const dataDir = resolve(import.meta.dirname, "..", process.env.KOMPASS_DATA_DIR ?? "data/build/region");
 export default defineConfig({
   base: process.env.KOMPASS_BASE ?? "./",
@@ -19,11 +21,11 @@ export default defineConfig({
   build: { target: "es2023", chunkSizeWarningLimit: 1600 },
   server: {
     host: "127.0.0.1",
-    port: 7950,
+    port,
     strictPort: true,
-    hmr: { port: 7951 },
+    hmr: { port: port + 1 },
     // tailscale serve forwards the tailnet hostname
     allowedHosts: [".ts.net", "localhost"],
   },
-  preview: { host: "127.0.0.1", port: 7950, strictPort: true },
+  preview: { host: "127.0.0.1", port, strictPort: true },
 });

@@ -17,6 +17,19 @@ export type NumberAttribute = {
 };
 export type OverlayAttribute = EnumAttribute | ShareAttribute | NumberAttribute;
 
+export type DemEncoding = "terrarium" | "mapbox";
+
+/** The relief: raster-DEM tiles for the hillshade, and optionally contour lines as vector tiles. */
+export type Terrain = {
+  file: string;
+  encoding: DemEncoding;
+  tileSize: number;
+  minzoom: number;
+  maxzoom: number;
+  /** lines with an `ele` attribute (metres) */
+  contours: { file: string; layer: string; minzoom: number; maxzoom: number } | null;
+};
+
 export type Manifest = {
   schemaVersion: number;
   builtAt: string;
@@ -34,6 +47,8 @@ export type Manifest = {
     maxzoom: number;
     attributes: OverlayAttribute[];
   };
+  /** `null`: the build has no terrain, the map is drawn flat. */
+  terrain: Terrain | null;
 };
 
 export class ManifestError extends Error {
@@ -123,6 +138,40 @@ function attribute(value: unknown, path: string): OverlayAttribute {
   }
 }
 
+function zoomRange(o: Obj, path: string): { minzoom: number; maxzoom: number } {
+  const minzoom = int(o.minzoom, `${path}.minzoom`);
+  const maxzoom = int(o.maxzoom, `${path}.maxzoom`);
+  if (minzoom < 0 || maxzoom < minzoom || maxzoom > 22)
+    throw new ManifestError(`${path} zoom range is invalid`);
+  return { minzoom, maxzoom };
+}
+
+function terrain(value: unknown): Terrain | null {
+  if (value === null || value === undefined) return null;
+  const t = obj(value, "terrain");
+  if (t.encoding !== "terrarium" && t.encoding !== "mapbox") {
+    throw new ManifestError('terrain.encoding must be "terrarium" or "mapbox"');
+  }
+  const tileSize = int(t.tileSize, "terrain.tileSize");
+  if (tileSize !== 256 && tileSize !== 512) throw new ManifestError("terrain.tileSize must be 256 or 512");
+  let contours: Terrain["contours"] = null;
+  if (t.contours !== null && t.contours !== undefined) {
+    const c = obj(t.contours, "terrain.contours");
+    contours = {
+      file: fileName(c.file, "terrain.contours.file"),
+      layer: str(c.layer, "terrain.contours.layer"),
+      ...zoomRange(c, "terrain.contours"),
+    };
+  }
+  return {
+    file: fileName(t.file, "terrain.file"),
+    encoding: t.encoding,
+    tileSize,
+    ...zoomRange(t, "terrain"),
+    contours,
+  };
+}
+
 /** Checks the parsed JSON of a manifest and returns it typed; throws `ManifestError` naming what is wrong. */
 export function parseManifest(json: unknown): Manifest {
   const m = obj(json, "the manifest");
@@ -157,10 +206,7 @@ export function parseManifest(json: unknown): Manifest {
   }
 
   const o = obj(m.overlay, "overlay");
-  const minzoom = int(o.minzoom, "overlay.minzoom");
-  const maxzoom = int(o.maxzoom, "overlay.maxzoom");
-  if (minzoom < 0 || maxzoom < minzoom || maxzoom > 22)
-    throw new ManifestError("overlay zoom range is invalid");
+  const { minzoom, maxzoom } = zoomRange(o, "overlay");
   if (!Array.isArray(o.attributes)) throw new ManifestError("overlay.attributes must be a list");
   const attributes = o.attributes.map((a: unknown, i) => attribute(a, `overlay.attributes[${i}]`));
   if (new Set(attributes.map((a) => a.key)).size !== attributes.length) {
@@ -180,5 +226,6 @@ export function parseManifest(json: unknown): Manifest {
       maxzoom,
       attributes,
     },
+    terrain: terrain(m.terrain),
   };
 }

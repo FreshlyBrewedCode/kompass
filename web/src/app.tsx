@@ -1,19 +1,13 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { EngineStatus } from "@/components/engine-status";
-import {
-  AttributePicker,
-  ExploredCard,
-  InspectPanel,
-  LegendCard,
-  ModeSwitch,
-} from "@/components/map-controls";
+import { ExploredCard, InspectPanel, LayersControl, LegendCard } from "@/components/map-controls";
 import type { MapHandle } from "@/components/map-view";
 import { EmptyState, ErrorState } from "@/components/region-state";
 import { RidesButton, RidesPanel } from "@/components/rides-panel";
 import { exploredStore } from "@/history/explored-store";
 import { useTheme } from "@/lib/theme";
 import { devEnabled } from "@/map/dev";
-import { legendFor, MAP_MODES, type MapMode } from "@/map/expressions";
+import { infoLayerFromName, infoLayerName, infoSpec, type MapLayers } from "@/map/info";
 import type { PickedEdge } from "@/map/inspect";
 import { loadRegion, type RegionState, resolveDataUrl } from "@/map/region";
 import { ridesState } from "@/rides/session";
@@ -27,10 +21,8 @@ const DEV = devEnabled(location.search);
 /** how many edges the dev button fakes */
 const FAKE_COUNT = 400;
 
-function initialMode(): MapMode {
-  const mode = params.get("mode");
-  return MAP_MODES.find((m) => m === mode) ?? "attribute";
-}
+/** `?terrain=0` / `?routes=0` start with a toggle off. */
+const flag = (name: string) => params.get(name) !== "0";
 
 function useRegion(): RegionState {
   const [state, setState] = useState<RegionState>({ status: "loading" });
@@ -95,13 +87,11 @@ function RegionScreen({
   dataUrl: string;
 }) {
   const theme = useTheme();
-  const [mode, setMode] = useState<MapMode>(initialMode);
   const attributes = manifest.overlay.attributes;
-  const [attributeKey, setAttributeKey] = useState(() => {
-    const wanted = params.get("attr");
-    return attributes.find((a) => a.key === wanted)?.key ?? attributes[0]?.key ?? "";
-  });
-  const attribute = attributes.find((a) => a.key === attributeKey);
+  // the readable map is the default; `?layer=<attribute key>|explored` opens with a layer on
+  const [info, setInfo] = useState(() => infoLayerFromName(params.get("layer"), attributes));
+  const [terrain, setTerrain] = useState(() => flag("terrain"));
+  const [routes, setRoutes] = useState(() => flag("routes"));
   const [picked, setPicked] = useState<PickedEdge | null>(null);
   const [mapError, setMapError] = useState<string | null>(null);
   const ridden = useSyncExternalStore(
@@ -130,8 +120,11 @@ function RegionScreen({
     void library.importFiles(files);
   });
 
-  const overlay = useMemo(() => ({ mode, attribute }), [mode, attribute]);
-  const legend = useMemo(() => (attribute ? legendFor(attribute, theme) : null), [attribute, theme]);
+  const layers = useMemo<MapLayers>(() => ({ info, terrain, routes }), [info, terrain, routes]);
+  const legend = useMemo(
+    () => (info.kind === "attribute" ? infoSpec(info.attribute, theme).legend : null),
+    [info, theme],
+  );
   // the map owns the selection highlight: closing the panel goes through it
   const mapRef = useRef<MapHandle>(null);
 
@@ -152,7 +145,7 @@ function RegionScreen({
           ref={mapRef}
           manifest={manifest}
           dataUrl={dataUrl}
-          overlay={overlay}
+          layers={layers}
           store={exploredStore}
           rides={rides.layer}
           ridesVisible={ridesVisible}
@@ -161,8 +154,16 @@ function RegionScreen({
         />
       </Suspense>
 
-      <div className="pointer-events-none absolute inset-x-0 top-0 flex flex-col gap-2 p-3 pt-[max(0.75rem,env(safe-area-inset-top))] md:w-[26rem]">
-        <ModeSwitch mode={mode} onChange={setMode} />
+      <div className="pointer-events-none absolute inset-x-0 top-0 flex flex-col gap-2 p-3 pt-[max(0.75rem,env(safe-area-inset-top))] max-md:pr-24 md:w-[26rem]">
+        <LayersControl
+          attributes={attributes}
+          value={infoLayerName(info)}
+          onChange={(name) => setInfo(infoLayerFromName(name, attributes))}
+          terrain={manifest.terrain ? terrain : null}
+          onTerrain={setTerrain}
+          routes={routes}
+          onRoutes={setRoutes}
+        />
         <RidesButton
           count={rides.rides.length}
           open={ridesOpen}
@@ -173,9 +174,6 @@ function RegionScreen({
           }}
           onToggleVisible={setRidesVisible}
         />
-        {mode === "attribute" && attribute && (
-          <AttributePicker attributes={attributes} value={attributeKey} onChange={setAttributeKey} />
-        )}
         {mapError && (
           <div
             data-testid="map-error"
@@ -202,11 +200,11 @@ function RegionScreen({
       <div
         className={`pointer-events-none absolute inset-x-0 bottom-0 flex flex-col gap-2 p-3 pb-[max(2rem,env(safe-area-inset-bottom))] md:right-auto md:w-80 ${ridesOpen ? "max-md:hidden" : ""}`}
       >
-        {picked && mode !== "plain" ? (
+        {picked ? (
           <InspectPanel manifest={manifest} edge={picked} onClose={() => mapRef.current?.clearSelection()} />
-        ) : mode === "attribute" && legend ? (
+        ) : legend ? (
           <LegendCard legend={legend} />
-        ) : mode === "explored" ? (
+        ) : info.kind === "explored" ? (
           <ExploredCard
             theme={theme}
             ridden={ridden}
