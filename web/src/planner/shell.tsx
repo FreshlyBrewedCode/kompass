@@ -395,6 +395,13 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
 
 function Arrangement(props: Slots & { onStackHeight: (h: number) => void }) {
   useFlashScroll();
+  // a preference added from the strip's "+" opens as a chip straight away
+  const store = usePlanner();
+  const fresh = usePlan((s) => s.fresh);
+  useEffect(() => {
+    if (props.mode === "desk" || !fresh) return;
+    if (store.getSnapshot().sheet === null) store.setChip(fresh);
+  }, [fresh, props.mode, store]);
   return props.mode === "phone" ? <Phone {...props} /> : <Desk {...props} />;
 }
 

@@ -1,9 +1,9 @@
 import { expect, type Page, type Request, test } from "@playwright/test";
 import { node } from "../web/test/synthetic";
-import { engineReady, openMap, rawScreenshot, screenshot, waitIdle } from "./helpers";
+import { engineReady, rawScreenshot } from "./helpers";
 
 // The engine in the browser on the synthetic fixture region (docs/engine-web.md): the graph
-// downloads with progress, is cached on the device, routes in the lab UI and offline, and matches a
+// downloads with progress, is cached on the device, routes offline (the planner's flows: planner.spec.ts), and matches a
 // ride. Its nodes: a 6 × 6 street grid around 0°N 0°E (e2e/fixtures/build-region.ts).
 
 const isGraphFile = (url: string) => /\/data\/graph\/.*\.kmpg(\.gz)?$/.test(url);
@@ -49,7 +49,7 @@ test("the graph downloads with progress, is cached on the device, and routes off
   await page.goto("./?dev");
   const status = page.getByTestId("engine-status");
   await expect(status).toHaveAttribute("data-status", "downloading");
-  await expect(page.getByTestId("engine-progress")).toContainText(/Downloading region data\d+ of \d+ KB/);
+  await expect(page.getByTestId("engine-status")).toContainText(/Downloading region data \d+ of \d+ KB/);
   await rawScreenshot(page, testInfo, "engine-downloading");
   await engineReady(page);
   const first = log.filter((r) => isGraphFile(r.url()));
@@ -83,81 +83,6 @@ test("the graph downloads with progress, is cached on the device, and routes off
     if (/^(data|blob):/.test(r.url())) continue;
     expect(new URL(r.url()).origin, r.url()).toBe(origin);
   }
-});
-
-/** The lab's two lines as drawn: main and compare, their coordinates. */
-const labLines = (page: Page) =>
-  page.evaluate(() => {
-    const map = window.__kompass.map as unknown as {
-      getSource(id: string):
-        | {
-            serialize(): {
-              data: { features: { properties: { route: string }; geometry: { coordinates: number[][] } }[] };
-            };
-          }
-        | undefined;
-    };
-    const data = map.getSource("lab-routes")?.serialize().data;
-    return Object.fromEntries(
-      (data?.features ?? []).map((f) => [f.properties.route, f.geometry.coordinates]),
-    );
-  });
-
-async function tapAt(page: Page, [lon, lat]: [number, number]) {
-  const p = await page.evaluate((at) => window.__kompass.map.project(at), [lon, lat] as [number, number]);
-  const box = (await page.getByTestId("map").boundingBox()) as { x: number; y: number };
-  await page.mouse.click(box.x + p.x, box.y + p.y);
-}
-
-test("the route lab: A, B and a waypoint, a preset, a second preset to compare", async ({
-  page,
-}, testInfo) => {
-  await openMap(page, "lab");
-  await engineReady(page);
-  const lab = page.getByTestId("planner-lab");
-  await expect(lab).toBeVisible();
-  await expect(lab).toContainText("temporary");
-  await expect(page.getByTestId("lab-hint")).toHaveText("Tap the map to set A.");
-  // the lab draws on the upper part of the map, clear of its panel at the bottom
-  await page.evaluate(() => {
-    const map = window.__kompass.map as unknown as { jumpTo(o: object): void };
-    map.jumpTo({ center: [-0.002, -0.004], zoom: 13.5 });
-  });
-  await waitIdle(page);
-
-  await tapAt(page, node(1, 1));
-  await expect(page.getByTestId("lab-count")).toHaveText("1 waypoint");
-  await expect(page.getByTestId("lab-hint")).toHaveText("Tap the map to set B.");
-  await tapAt(page, node(3, 0));
-  await expect(page.getByTestId("lab-count")).toHaveText("2 waypoints");
-  await expect(page.getByTestId("lab-totals")).toBeVisible();
-  const direct = Number(await page.getByTestId("lab-totals-km").textContent());
-  expect(direct).toBeGreaterThanOrEqual(1.4);
-
-  // a waypoint in the middle of the way: a longer route through it
-  await tapAt(page, node(3, 2));
-  await expect(page.getByTestId("lab-count")).toHaveText("3 waypoints");
-  await expect
-    .poll(async () => Number(await page.getByTestId("lab-totals-km").textContent()))
-    .toBeGreaterThan(direct);
-  await expect(page.getByTestId("lab-waypoint")).toHaveCount(3);
-  // tap it again: removed
-  await page.getByTestId("lab-waypoint").nth(2).click();
-  await expect(page.getByTestId("lab-count")).toHaveText("2 waypoints");
-  await expect.poll(async () => Number(await page.getByTestId("lab-totals-km").textContent())).toBe(direct);
-
-  // the two main presets take different ways: both lines on the map
-  await page.getByTestId("lab-preset").selectOption("gravel_explorer");
-  await page.getByTestId("lab-compare").selectOption("paved_quiet");
-  await expect(page.getByTestId("lab-compare-totals")).toBeVisible();
-  await expect.poll(async () => Object.keys(await labLines(page)).sort()).toEqual(["compare", "main"]);
-  const lines = await labLines(page);
-  expect(JSON.stringify(lines.main)).not.toBe(JSON.stringify(lines.compare));
-  const drawnLines = await page.evaluate(
-    () => window.__kompass.map.queryRenderedFeatures({ layers: ["lab-routes-line"] }).length,
-  );
-  expect(drawnLines).toBeGreaterThanOrEqual(2);
-  await screenshot(page, testInfo, "lab");
 });
 
 test("the bench page runs on the loaded region and reports as text", async ({ page }, testInfo) => {
