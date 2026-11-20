@@ -6,6 +6,7 @@
 //! Geometry tiles go in before or after `finish` ([`Engine::add_geometry`]); the snapping grid
 //! follows the geometry that was loaded at `finish`.
 
+use kompass_core::explain::{ClosedBy, CompareRequest, EdgeCosts, EdgeSelection, ExplainEdgeRequest};
 use kompass_core::graph::arc_edge;
 use kompass_core::matching::{Matcher, TileGrids, missing_geometry};
 use kompass_core::route::ErrorCode;
@@ -255,6 +256,43 @@ impl Engine {
         Ok(costs.to_vec())
     }
 
+    /// `edgeCosts`: the factor and cost per metre of many edges under a profile (JSON) for a map
+    /// layer: the listed edges, else those in `bbox` (`[west, south, east, north]` degrees), else
+    /// every edge. Not both.
+    pub fn edge_costs(
+        &mut self,
+        profile: &str,
+        edges: Option<Vec<u32>>,
+        bbox: Option<Vec<f64>>,
+    ) -> Result<EdgeCosts, String> {
+        let p: Profile = serde_json::from_str(profile).map_err(|e| format!("profile: {e}"))?;
+        let which = match (edges, bbox) {
+            (Some(_), Some(_)) => return Err("edgeCosts: edges or bbox, not both".into()),
+            (Some(list), None) => EdgeSelection::List(list),
+            (None, Some(b)) => EdgeSelection::Bbox(
+                <[f64; 4]>::try_from(b.as_slice()).map_err(|_| "edgeCosts: bbox takes four numbers")?,
+            ),
+            (None, None) => EdgeSelection::All,
+        };
+        self.planner()?.edge_costs(&p, &which).map_err(|e| e.message)
+    }
+
+    /// `explainEdge`: an `ExplainEdgeRequest` as JSON → an `EdgeExplanation` as JSON.
+    pub fn explain_edge(&mut self, request: &str) -> Result<String, String> {
+        let req: ExplainEdgeRequest =
+            serde_json::from_str(request).map_err(|e| format!("explainEdge request: {e}"))?;
+        let out = self.planner()?.explain_edge(&req).map_err(|e| e.message)?;
+        Ok(to_json(&out))
+    }
+
+    /// `compare`: a `CompareRequest` as JSON → a `RouteComparison` as JSON.
+    pub fn compare(&mut self, request: &str) -> Result<String, String> {
+        let req: CompareRequest =
+            serde_json::from_str(request).map_err(|e| format!("compare request: {e}"))?;
+        let out = self.planner()?.compare(&req).map_err(|e| e.message)?;
+        Ok(to_json(&out))
+    }
+
     /// The catalogue with this region's coverage (JSON).
     pub fn catalogue(&mut self) -> Result<String, String> {
         let p = self.planner()?;
@@ -442,6 +480,12 @@ pub fn presets_json() -> String {
     to_json(&kompass_core::presets())
 }
 
+/// What the codes of `EdgeCosts::closed` name (JSON list, `codes[code - 1]`).
+#[must_use]
+pub fn closed_codes_json() -> String {
+    to_json(&ClosedBy::ALL)
+}
+
 /// The catalogue without a region's coverage (JSON).
 #[must_use]
 pub fn catalogue_json() -> String {
@@ -591,6 +635,44 @@ mod tests {
         assert_eq!(x.as_array().unwrap().len(), 1);
         let costs = e.arc_costs(&preset("paved_quiet")).unwrap();
         assert_eq!(costs.len(), e.graph().unwrap().arc_count());
+        // the cost debug queries
+        let gravel = preset("gravel_explorer");
+        let all = e.edge_costs(&gravel, None, None).unwrap();
+        let edges = e.graph().unwrap().edge_count();
+        assert_eq!(
+            (all.edges.len(), all.factor.len(), all.closed.len()),
+            (edges, edges * 2, edges)
+        );
+        let two = e.edge_costs(&gravel, Some(vec![1, 0]), None).unwrap();
+        assert_eq!(two.edges, vec![1, 0]);
+        assert_eq!(two.factor[..2], all.factor[2..4]);
+        let b = e.graph().unwrap().info().bounds();
+        let boxed = e.edge_costs(&gravel, None, Some(b.to_vec())).unwrap();
+        assert_eq!(boxed.edges.len(), edges);
+        assert!(e.edge_costs(&gravel, Some(vec![0]), Some(b.to_vec())).is_err());
+        assert!(e.edge_costs(&gravel, None, Some(vec![0.0])).is_err());
+        let first = arcs[0].as_u64().unwrap() >> 1;
+        let req = serde_json::json!({
+            "profile": serde_json::from_str::<Value>(&gravel).unwrap(),
+            "edge": first,
+        });
+        let x: Value = serde_json::from_str(&e.explain_edge(&req.to_string()).unwrap()).unwrap();
+        assert_eq!(x["edge"], first);
+        assert!(
+            x["along"]["preferences"]
+                .as_array()
+                .is_some_and(|p| !p.is_empty())
+        );
+        let req = serde_json::json!({
+            "profile": serde_json::from_str::<Value>(&gravel).unwrap(),
+            "a": arcs, "b": arcs,
+        });
+        let cmp: Value = serde_json::from_str(&e.compare(&req.to_string()).unwrap()).unwrap();
+        assert_eq!(cmp["stretches"], serde_json::json!([]));
+        assert_eq!(cmp["a"]["cost"], cmp["b"]["cost"]);
+        let codes: Vec<String> = serde_json::from_str(&super::closed_codes_json()).unwrap();
+        assert_eq!(codes[0], "no_main_roads");
+        assert_eq!(codes.last().map(String::as_str), Some("oneway"));
         let c: Value = serde_json::from_str(&e.catalogue().unwrap()).unwrap();
         assert!(c["preferences"].as_array().is_some_and(|p| !p.is_empty()));
         let n = e.graph().unwrap().node(0);

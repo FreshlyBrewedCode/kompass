@@ -1180,3 +1180,374 @@ fn the_compiled_profiles_are_cached() {
     planner.route(&req(&a)).unwrap();
     assert_eq!(planner.compiles, 2);
 }
+
+// --- the cost debug queries (explain.rs) ---
+
+/// The presets, a few extreme profiles and random ones.
+fn explain_profiles(rng: &mut Rng) -> Vec<Profile> {
+    let mut out: Vec<Profile> = kompass_core::presets().into_iter().map(|p| p.profile).collect();
+    let mut all_max = Profile::default();
+    let mut all_min = Profile::default();
+    for &id in PrefId::ALL {
+        all_max.set_weight(id, Some(100));
+        all_min.set_weight(id, Some(-100));
+    }
+    all_min.bounds = Some(kompass_core::profile::Bounds {
+        min_factor: 0.3,
+        max_factor: 100.0,
+    });
+    out.extend([all_max, all_min]);
+    out.extend((0..6).map(|_| random_profile(rng)));
+    out
+}
+
+#[test]
+fn the_explained_cost_is_the_routed_cost() {
+    use kompass_core::cost::Role;
+    use kompass_core::explain::{ClosedBy, EdgeSelection, ExplainEdgeRequest};
+    let mut rng = Rng(0x5eed_cafe_f00d_0001);
+    for round in 0..4 {
+        let built = random_grid(&mut rng, 8);
+        let g = built.graph.clone();
+        let mut planner = Planner::new(g.clone());
+        if round % 2 == 1 {
+            planner
+                .set_personal(Some(random_personal(&mut rng, g.edge_count())))
+                .unwrap();
+        }
+        for p in explain_profiles(&mut rng) {
+            let compiled = planner.arc_costs(&p).unwrap().0.to_vec();
+            let costs = planner.edge_costs(&p, &EdgeSelection::All).unwrap();
+            assert_eq!(costs.edges.len(), g.edge_count());
+            let bounds = p.bounds();
+            for e in 0..g.edge_count() as EdgeId {
+                let x = planner
+                    .explain_edge(&ExplainEdgeRequest {
+                        profile: p.clone(),
+                        edge: e,
+                    })
+                    .unwrap();
+                let len = g.length_m(e);
+                for (dir, side) in [&x.along, &x.against].into_iter().enumerate() {
+                    let a = (e << 1) | dir as u32;
+                    assert_eq!(side.arc, a);
+                    let c = compiled[a as usize];
+                    let i = e as usize * 2 + dir;
+                    assert_eq!(
+                        side.closed_by.is_empty(),
+                        c.is_finite(),
+                        "arc {a} under {p:?}: {side:?}"
+                    );
+                    // the steps add up
+                    let q: f32 = side
+                        .preferences
+                        .iter()
+                        .filter(|t| matches!(t.role, Role::Quality | Role::GatedPenalty))
+                        .map(|t| t.factor)
+                        .product();
+                    let bonus: f32 = side
+                        .preferences
+                        .iter()
+                        .filter(|t| t.role == Role::GatedBonus)
+                        .map(|t| t.factor)
+                        .product();
+                    assert!(
+                        (q - side.quality).abs() <= 1e-4 * q,
+                        "quality {q} {}",
+                        side.quality
+                    );
+                    assert!((bonus - side.bonus).abs() <= 1e-4, "bonus {bonus} {}", side.bonus);
+                    let raw = side.quality * (1.0 + (side.bonus - 1.0) * side.gate);
+                    assert!((raw - side.raw_factor).abs() <= 1e-5 * raw);
+                    assert!(
+                        (side.raw_factor.clamp(bounds.min_factor, bounds.max_factor) - side.factor).abs()
+                            < 1e-6
+                    );
+                    assert_eq!(
+                        side.clamp.is_some(),
+                        side.raw_factor < bounds.min_factor || side.raw_factor > bounds.max_factor
+                    );
+                    let extra: f32 = side.additive.iter().map(|t| t.metres).sum();
+                    assert!((extra - side.extra_m).abs() <= 1e-3);
+                    for t in &side.preferences {
+                        assert_eq!(t.weight, i32::from(p.weight(t.id).unwrap()), "{t:?}");
+                    }
+                    if c.is_finite() {
+                        // exactly the router's cost, and the breakdown recomputes it
+                        assert_eq!(side.cost, Some(c));
+                        let again = len * side.factor + side.extra_m;
+                        assert!(
+                            (again - c).abs() <= 1e-4 * c.max(1.0),
+                            "arc {a}: {again} vs {c} under {p:?}"
+                        );
+                        assert!(
+                            (costs.factor[i] - side.factor).abs() <= 1e-3 * side.factor,
+                            "arc {a}"
+                        );
+                        assert!((costs.cost_per_m[i] * len.max(0.1) - c).abs() <= 1e-4 * c.max(1.0));
+                    } else {
+                        assert_eq!(side.cost, None);
+                        assert_eq!(costs.factor[i], 0.0);
+                        assert_eq!(costs.cost_per_m[i], 0.0);
+                    }
+                }
+                let both_closed = !x.along.closed_by.is_empty() && !x.against.closed_by.is_empty();
+                let code = costs.closed[e as usize];
+                if both_closed {
+                    let first = x.along.closed_by[0].by;
+                    assert_eq!(code, first.code(), "edge {e}");
+                    assert_ne!(first, ClosedBy::Oneway);
+                    assert_eq!(ClosedBy::ALL[code as usize - 1], first);
+                } else {
+                    assert_eq!(code, 0, "edge {e}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn closed_edges_name_every_limit_that_closes_them() {
+    use kompass_core::explain::{ClosedBy, EdgeSelection, ExplainEdgeRequest};
+    for (id, value, top, scale) in limit_cases() {
+        let d = diamond(top, HALF_M / 1.1, residential(), HALF_M * scale, None);
+        let mut planner = Planner::new(d.built.graph.clone());
+        let mut p = Profile::default();
+        p.limits.insert(id, value);
+        let e = d.built.edge(d.top[0]);
+        let x = planner
+            .explain_edge(&ExplainEdgeRequest {
+                profile: p.clone(),
+                edge: e,
+            })
+            .unwrap();
+        let by: Vec<ClosedBy> = x.along.closed_by.iter().map(|c| c.by).collect();
+        assert_eq!(
+            by,
+            vec![ClosedBy::from(kompass_core::cost::Exclusion::Limit(id))],
+            "{id}"
+        );
+        assert_eq!(by[0].limit(), Some(id));
+        assert_eq!(by[0].id(), id.id());
+        assert!(x.along.cost.is_none() && x.against.cost.is_none());
+        let costs = planner.edge_costs(&p, &EdgeSelection::List(vec![e])).unwrap();
+        assert_eq!(costs.closed, vec![by[0].code()], "{id}");
+        assert_eq!(costs.factor, vec![0.0, 0.0]);
+    }
+    // several at once, each with the attribute that triggers it
+    let private_main = EdgeAttrs {
+        highway: Highway::Secondary,
+        bike_access: BikeAccess::Private,
+        oneway: Oneway::Along,
+        ..residential()
+    };
+    let d = diamond(private_main, HALF_M, residential(), HALF_M, None);
+    let mut planner = Planner::new(d.built.graph.clone());
+    let mut p = Profile::default();
+    p.limits.insert(LimitId::NoMainRoads, LimitValue::Flag(true));
+    p.limits.insert(LimitId::LegalOnly, LimitValue::Flag(true));
+    let x = planner
+        .explain_edge(&ExplainEdgeRequest {
+            profile: p.clone(),
+            edge: d.built.edge(d.top[0]),
+        })
+        .unwrap();
+    let words: Vec<String> = x
+        .against
+        .closed_by
+        .iter()
+        .map(kompass_core::explain::describe_closure)
+        .collect();
+    assert_eq!(
+        words,
+        [
+            "no_main_roads (highway = secondary)",
+            "legal_only (bike_access = private)",
+            "oneway (oneway_bike = along)"
+        ]
+    );
+    assert_eq!(x.along.closed_by.len(), 2);
+    // without the limits only the one-way closes it, one way
+    let x = planner
+        .explain_edge(&ExplainEdgeRequest {
+            profile: Profile::default(),
+            edge: d.built.edge(d.top[0]),
+        })
+        .unwrap();
+    assert!(x.along.closed_by.is_empty() && x.along.cost.is_some());
+    assert_eq!(x.against.closed_by.len(), 1);
+    let attr = |k: &str| {
+        x.attributes
+            .iter()
+            .find(|a| a.attribute == k)
+            .unwrap()
+            .value
+            .clone()
+    };
+    assert_eq!(
+        attr("highway"),
+        Some(kompass_core::explain::AttrValue::Text("secondary".into()))
+    );
+    assert_eq!(attr("maxspeed_kmh"), None);
+    // a bicycle ban, whatever the profile
+    let banned = EdgeAttrs {
+        bike_access: BikeAccess::No,
+        ..residential()
+    };
+    let d = diamond(banned, HALF_M, residential(), HALF_M, None);
+    let mut planner = Planner::new(d.built.graph.clone());
+    let costs = planner
+        .edge_costs(
+            &Profile::default(),
+            &EdgeSelection::List(vec![d.built.edge(d.top[0])]),
+        )
+        .unwrap();
+    assert_eq!(costs.closed, vec![ClosedBy::NoBikes.code()]);
+    assert!(
+        planner
+            .edge_costs(&Profile::default(), &EdgeSelection::List(vec![99]))
+            .is_err()
+    );
+}
+
+#[test]
+fn the_clamp_and_the_gate_are_explained() {
+    use kompass_core::cost::{Clamp, Role};
+    use kompass_core::explain::ExplainEdgeRequest;
+    let gravel = EdgeAttrs {
+        highway: Highway::Track,
+        surface: SurfaceClass::Gravel,
+        forest: 1.0,
+        ..EdgeAttrs::default()
+    };
+    let d = diamond(gravel, HALF_M, residential(), HALF_M, None);
+    let mut planner = Planner::new(d.built.graph.clone());
+    let e = d.built.edge(d.top[0]);
+    let mut p = weights(&[
+        (PrefId::Unpaved, 100),
+        (PrefId::Track, 100),
+        (PrefId::Forest, 100),
+        (PrefId::Main, -50),
+    ]);
+    let x = planner
+        .explain_edge(&ExplainEdgeRequest {
+            profile: p.clone(),
+            edge: e,
+        })
+        .unwrap();
+    let s = &x.along;
+    // unpaved × track × forest at +100 (forest is gated: the quality is fine, so it counts in
+    // full), below 0.5: clamped
+    let bonus = |id: PrefId| {
+        kompass_core::catalogue()
+            .preferences
+            .iter()
+            .find(|m| m.id == id)
+            .unwrap()
+            .max_bonus
+    };
+    let want = bonus(PrefId::Unpaved) * bonus(PrefId::Track) * bonus(PrefId::Forest);
+    assert_eq!(s.clamp, Some(Clamp::Min));
+    assert!((s.factor - 0.5).abs() < 1e-6);
+    assert!((s.gate - 1.0).abs() < 1e-6);
+    let forest = s.preferences.iter().find(|t| t.id == PrefId::Forest).unwrap();
+    assert_eq!(forest.role, Role::GatedBonus);
+    let main = s.preferences.iter().find(|t| t.id == PrefId::Main).unwrap();
+    assert!((main.factor - 1.0).abs() < 1e-6 && main.membership == 0.0 && main.weight == -50);
+    assert!(
+        want < 0.5 && (s.raw_factor - want).abs() < 1e-3,
+        "{}",
+        s.raw_factor
+    );
+    // a bad way: the gate closes and the forest bonus no longer counts
+    p.set_weight(PrefId::Unpaved, Some(-100));
+    p.set_weight(PrefId::Track, None);
+    let x = planner
+        .explain_edge(&ExplainEdgeRequest { profile: p, edge: e })
+        .unwrap();
+    assert!(x.along.quality >= 2.2 && x.along.gate == 0.0);
+    assert!((x.along.raw_factor - x.along.quality).abs() < 1e-5);
+}
+
+#[test]
+fn compare_says_why_not_the_other_way() {
+    let (built, pts) = line();
+    let mut planner = Planner::new(built.graph.clone());
+    let wps = vec![wp(pts[0].0, pts[0].1), wp(pts[6].0, pts[6].1)];
+    let plain = Profile::default();
+    let a = planner.route(&request(wps.clone(), &plain)).unwrap();
+    // forced over the gravel detour: through a via on it
+    let up = (pts[3].0, 0.08 + 100.0 / 111_195.0);
+    let via = vec![wps[0].clone(), wp(up.0, up.1), wps[1].clone()];
+    let b = planner.route(&request(via, &plain)).unwrap();
+    let c = planner
+        .compare(&kompass_core::explain::CompareRequest {
+            profile: weights(&[(PrefId::Unpaved, -60)]),
+            a: a.arcs.clone(),
+            b: b.arcs.clone(),
+        })
+        .unwrap();
+    assert_eq!(c.stretches.len(), 1, "{c:?}");
+    let s = &c.stretches[0];
+    assert!(s.cost_delta > 0.0 && s.length_delta_m > 0.0);
+    assert!((s.cost_delta - (s.b.cost - s.a.cost)).abs() < 1e-3);
+    // b is dearer for the gravel: unpaved is its strongest reason, a has none
+    assert_eq!(s.b.why[0].id, PrefId::Unpaved);
+    assert!(s.b.why[0].factor > 1.0);
+    assert_eq!(s.a.why, vec![]);
+    assert_eq!(s.b.ways[0].key, kompass_core::cost::WayKind::Track);
+    assert!(s.b.factor > s.a.factor);
+    // the totals cover the whole routes, the shared part included
+    assert!((c.a.cost + s.cost_delta - c.b.cost).abs() < 1e-2);
+    assert!((c.shared_m + s.a.span.length_m - c.a.span.length_m).abs() < 1.0);
+    // a closed arc counts at max_factor and is named
+    let mut paved = Profile::default();
+    paved.limits.insert(LimitId::PavedOnly, LimitValue::Flag(true));
+    let c = planner
+        .compare(&kompass_core::explain::CompareRequest {
+            profile: paved,
+            a: a.arcs.clone(),
+            b: b.arcs.clone(),
+        })
+        .unwrap();
+    let side = &c.stretches[0].b;
+    assert_eq!(side.closed[0].by, kompass_core::explain::ClosedBy::PavedOnly);
+    assert!((side.closed[0].length_m - side.span.length_m).abs() < 1e-3);
+    assert!((side.factor - 20.0).abs() < 1e-4);
+}
+
+#[test]
+fn edge_costs_by_bbox_cover_the_box() {
+    use kompass_core::explain::EdgeSelection;
+    let mut rng = Rng(77);
+    let built = random_grid(&mut rng, 8);
+    let g = &built.graph;
+    let mut planner = Planner::new(g.clone());
+    let p = Profile::default();
+    let step = 200.0 / 111_195.0;
+    let bbox = [0.07 + step, 0.07 + step, 0.07 + 3.5 * step, 0.07 + 2.5 * step];
+    let costs = planner.edge_costs(&p, &EdgeSelection::Bbox(bbox)).unwrap();
+    assert!(costs.edges.windows(2).all(|w| w[0] < w[1]), "ascending, once");
+    assert_eq!(costs.factor.len(), costs.edges.len() * 2);
+    let inside = |v: NodeId| {
+        let n = g.node(v);
+        n.lng >= bbox[0] && n.lng <= bbox[2] && n.lat >= bbox[1] && n.lat <= bbox[3]
+    };
+    let want: Vec<EdgeId> = (0..g.edge_count() as EdgeId)
+        .filter(|&e| inside(g.from(e)) && inside(g.to(e)))
+        .collect();
+    assert_ne!(want, Vec::<EdgeId>::new());
+    for e in want {
+        assert!(costs.edges.contains(&e), "edge {e} is in the box");
+    }
+    assert!(costs.edges.len() < g.edge_count() / 2, "not the whole graph");
+    let outside = planner
+        .edge_costs(&p, &EdgeSelection::Bbox([1.0, 1.0, 1.1, 1.1]))
+        .unwrap();
+    assert_eq!(outside.edges, Vec::<EdgeId>::new());
+    assert!(
+        planner
+            .edge_costs(&p, &EdgeSelection::Bbox([f64::NAN, 0.0, 1.0, 1.0]))
+            .is_err()
+    );
+}

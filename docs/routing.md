@@ -2,7 +2,7 @@
 
 The `route` query: waypoints in, a route with everything the planner draws out. Plain serde data on
 both sides (JSON in the browser worker; schemas and TypeScript types in `web/src/engine/generated/`).
-Code: `engine/core/src/{route,search}.rs`; the cost it searches is [profile.md](profile.md).
+Code: `engine/core/src/{route,search,explain}.rs`; the cost it searches is [profile.md](profile.md).
 
 ## The engine object
 
@@ -16,7 +16,11 @@ compiled profiles (19 MB each: the current one and, typically, the base preset's
 | `route(&RouteRequest)` | → `RouteResult` or `RouteError` |
 | `diff(&DiffRequest)` | two routes' `arcs` → `RouteDiff`: where they part and meet again |
 | `explain(&Profile, &[arc])` | → per arc every factor, the gate, additive terms, what excludes it |
-| `arc_costs(&Profile)` | → the compiled cost per arc (a "cost in this profile" map layer, later) |
+| `arc_costs(&Profile)` | → the compiled cost per arc |
+| `edge_costs(&Profile, &EdgeSelection)` | → factor and cost per metre per edge and direction, what closes it ([below](#explaining-the-cost)) |
+| `explain_edge(&ExplainEdgeRequest)` | → one edge, both directions, every step of its cost |
+| `compare(&CompareRequest)` | two routes' `arcs` → `RouteComparison`: the `diff` stretches, each side costed |
+| `stretch_costs(&Profile, arcs, spans, n)` | → stretches of one route costed like `compare`'s sides |
 | `prepare(&Profile)` | compile ahead of the first route |
 | `set_personal(Option<PersonalLayer>)` | ride history per edge ([profile.md](profile.md)) |
 | `catalogue()`, `catalogue_for(graph)`, `presets()`, `preset(id)` | free functions |
@@ -108,3 +112,51 @@ the edges both share in the same order (a longest increasing run, so a detour or
 not confuse it) are anchors, and every gap between anchors is a stretch with its span in `a` and in
 `b` (`[first, end)` arcs, start and length in metres, edges counted in full). Plus the shared length
 and what only one of them rides.
+
+## Explaining the cost
+
+The cost debug view (`explain.rs`): why the route goes where it goes. All three queries read the
+compiled profile the router uses (compiled once, cached like a route's), and the breakdown runs the
+same functions the compile does (`CostModel::breakdown`: membership, tables, gate, clamp, additive
+terms, limits). A test checks on every arc of random graphs, for the presets, extreme and random
+profiles, that `length × factor + extra` is the compiled cost and that a closed arc is exactly one
+with closures.
+
+**`edgeCosts`: a map layer.** For many edges at once: the edges listed (the overlay tiles' feature ids
+are edge ids, [map.md](map.md)), or those in a `bbox` (from the snapping grid: every edge in it and a
+few just outside, ascending), or every edge. Flat arrays (typed arrays in the browser, transferred):
+`edges`, `factor` and `costPerM` two per edge (`[2i]` along the geometry, `[2i + 1]` against it; the
+factor after the clamp, the cost per metre with the additive terms; 0 where that direction may not
+be ridden), `closed` one per edge (0 when one direction at least is open, else the code of what closes
+it: `codes[code − 1]`, a limit id, `no_bikes` or `oneway`), and `minFactor`, `maxFactor`, `bound`.
+Native: every edge of the demo region (51 k) in 1.3 ms, 25 k listed in 0.5 ms, a box of 2.4 k in 0.08 ms
+(so ~60 ms for 2.34 M); the browser worker: 2.2 ms for the 51 k, 1.2 ms for 25 k listed (round trip
+included, `?bench`).
+
+**`explainEdge`: the tap panel.** `{ profile, edge }` → `EdgeExplanation`: the way type, the reported
+surface and the one the cost uses (`tagged`, `strong_guess`, `weak_guess`), the traffic level, every
+attribute by its `edges.parquet` column (shares in percent), the bounds, and per direction (`along`,
+`against`) an `ArcCostExplanation`: every active preference (weight ≠ 0, also where it does not
+apply) with its weight, membership (−1…1, fifteenths), factor and role (`quality`, `gated_penalty`,
+`gated_bonus`, `additive` for avoiding climbs), then `quality`, `bonus`, `gate`, `raw_factor` (before the
+clamp), `factor`, `clamp` (`min` / `max` when it bit), ascent beyond the deadband and the tamed grades,
+the additive terms (`climb`, `barriers`, `steps`, `dismount`, `ferry`) and their sum `extra_m`, the
+router's `cost` and `cost_per_m` (absent when closed), and `closed_by`: every closure in the order the
+engine checks, each with the attribute that triggers it (`legal_only (bike_access = agri_forestry)`).
+
+**`compare`: why not this way?** Route as usual, route again with a via on the wanted line, then
+`compare({ profile, a, b })` with both routes' `arcs` and the profile to judge them by. The answer: both
+whole routes and every `diff` stretch, each side a `StretchCost`: its span, cost under the profile
+(closed arcs at `max_factor` per metre, as near a waypoint), mean factor, additive metres, length at the
+clamp (`clamped_min_m`: the bonuses wanted it lower, more seeking changes nothing; `clamped_max_m`),
+the up to five strongest preferences (length-weighted geometric mean factor), the way types and the
+length on closed arcs by closure; per stretch `cost_delta` (b − a; > 0 is why the router took `a`) and
+`length_delta_m`. Edges count in full (the routes' partial first and last arcs too). The `segments` of a
+route stay as they are (three reasons, no closures); `compare` is the on-demand detail.
+
+**CLI.** `kompass route … --explain` prints every segment (length, surface, way, factor, extra,
+cost per metre, reasons, share at the clamp, closures), a table by way type and surface, and the
+whole route per preference; `--why-not lon,lat` routes again through that point (inserted where it
+adds the least straight-line distance) and prints the comparison. Text only, no coordinates; the GeoJSON
+then goes only to `--out`. `kompass explain --build … --profile … --edge <id> [--json]` prints one edge;
+`--time` times `edgeCosts`.

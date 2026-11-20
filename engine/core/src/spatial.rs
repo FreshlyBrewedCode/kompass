@@ -200,6 +200,29 @@ impl Grid {
         self.bbox
     }
 
+    /// The edges with a segment whose bounding box touches a cell overlapping `bbox` (min lon, min
+    /// lat, max lon, max lat, 1e-7 degrees), ascending and each once: every edge inside the box and
+    /// a few just outside it (a map viewport's edges).
+    #[must_use]
+    pub fn edges_in(&self, bbox: [i32; 4]) -> Vec<EdgeId> {
+        let [w, s, e, n] = bbox;
+        let gb = self.bbox;
+        if w > e || s > n || e < gb[0] || w > gb[2] || n < gb[1] || s > gb[3] {
+            return Vec::new();
+        }
+        let (c0, r0) = self.cell_clamped(w, s);
+        let (c1, r1) = self.cell_clamped(e, n);
+        let mut out = Vec::new();
+        for r in r0..=r1 {
+            let row = r * self.cols;
+            let (a, b) = (self.first[row + c0] as usize, self.first[row + c1 + 1] as usize);
+            out.extend_from_slice(&self.edges[a..b]);
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
     /// The up to `max_results` nearest edges within `radius_m` of a point, nearest first.
     #[must_use]
     pub fn snap(&self, g: &Graph, at: LngLat, radius_m: f64, max_results: usize) -> Vec<Snap> {

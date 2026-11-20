@@ -71,6 +71,14 @@ something bad (a never-ridden grass track the profile dislikes stays disliked).
 **Clamp.** The product is clamped to the bounds. The smallest factor a compile actually produces
 (≥ `min_factor`, 1.0 for a blank profile) is the A* bound per metre of straight line.
 
+**Seeing it.** Every step of this, per arc, is what the cost debug queries return (`edgeCosts` for a
+map layer, `explainEdge` for one edge, `compare` for two routes; [routing.md](routing.md#explaining-the-cost)),
+computed by the same code as the compile. On a 24 km demo-region route the Gravel explorer has 41 %
+of the length at exactly `min_factor`: a compacted track is 0.65 (unpaved) × 0.87 (track) × 0.89
+(fine gravel) ≈ 0.50 already, and any climb or forest-edge bonus takes it below. There a slider
+pushed further changes nothing, and a gravel detour more than twice as long loses against a way at
+factor 1; `clamp` (one edge) and `clamped_min_m` (a stretch) show it.
+
 **Additive terms** (all ≥ 0): avoiding climbs costs `−w × 25` m per metre of ascent beyond the
 deadband (25 m at −100, 10 m at −40); 15 m per barrier (gate, bollard); steps 5 m per metre plus 20 m
 (carrying); `bicycle=dismount` 2 m per metre (walking); a ferry 1000 m (waiting).

@@ -1,4 +1,5 @@
-//! `kompass route`: one route as a GeoJSON FeatureCollection.
+//! `kompass route`: one route as a GeoJSON FeatureCollection; with `--explain` / `--why-not` the
+//! cost debug view as text ([`crate::explain`]).
 
 use std::path::Path;
 use std::time::Instant;
@@ -106,6 +107,7 @@ pub(crate) fn run(a: &Args) -> Result<(), Failure> {
         "--to",
         "--out",
         "--radius",
+        "--why-not",
     ])?;
     let build = a.build()?;
     let profile = load_profile(
@@ -127,8 +129,9 @@ pub(crate) fn run(a: &Args) -> Result<(), Failure> {
     )?);
     let (graph, _) = kompass_compile::build::load(&build, true)?;
     let mut planner = Planner::new(graph);
+    let why_not = a.get("--why-not").map(|v| coord("--why-not", v)).transpose()?;
     let req = RouteRequest {
-        waypoints,
+        waypoints: waypoints.clone(),
         profile: profile.clone(),
         leg_profiles: None,
         options: RouteOptions {
@@ -155,15 +158,53 @@ pub(crate) fn run(a: &Args) -> Result<(), Failure> {
         s.unknown_surface_share * 100.0,
         s.main_road_m / 1000.0
     );
+    // the cost debug view: text on stdout, the GeoJSON only to --out
+    let text = a.switch("--explain") || why_not.is_some();
     match a.get("--out") {
         Some(path) => {
             std::fs::write(path, out)?;
             println!("{summary}");
         }
+        None if text => println!("{summary}"),
         None => {
             println!("{out}");
             eprintln!("{summary}");
         }
     }
+    if a.switch("--explain") {
+        print!(
+            "\n{}",
+            crate::explain::route_explanation(&mut planner, &profile, &r)?
+        );
+    }
+    if let Some(p) = why_not {
+        let forced = RouteRequest {
+            waypoints: with_via(&waypoints, p),
+            ..req.clone()
+        };
+        let b = planner.route(&forced).map_err(|e| Failure::Run(e.message))?;
+        print!("\n{}", crate::explain::why_not(&mut planner, &profile, &r, &b)?);
+    }
     Ok(())
+}
+
+/// The waypoints with `via` inserted where it adds the least straight-line distance.
+fn with_via(waypoints: &[Waypoint], via: Waypoint) -> Vec<Waypoint> {
+    let d = |a: &Waypoint, b: &Waypoint| {
+        kompass_core::haversine_m(
+            kompass_core::route::waypoint_lnglat(a),
+            kompass_core::route::waypoint_lnglat(b),
+        )
+    };
+    let best = (1..waypoints.len())
+        .min_by(|&i, &j| {
+            let cost = |k: usize| {
+                d(&waypoints[k - 1], &via) + d(&via, &waypoints[k]) - d(&waypoints[k - 1], &waypoints[k])
+            };
+            cost(i).total_cmp(&cost(j))
+        })
+        .unwrap_or(1);
+    let mut out = waypoints.to_vec();
+    out.insert(best, via);
+    out
 }

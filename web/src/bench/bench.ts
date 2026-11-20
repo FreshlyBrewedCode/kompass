@@ -1,5 +1,6 @@
 // The engine benchmark (docs/engine-web.md "Bench page"): seeded random routes at ~10 / 50 / 100 km
-// for the two main presets, in the worker, on whatever region is loaded; profile compiles; matching
+// for the two main presets, in the worker, on whatever region is loaded; profile compiles; the cost
+// debug layer's edge costs; matching
 // rides made from the routes; the wasm heap along the way. The pairs are generated on the device from
 // the loaded graph and only ever held in memory: never shown, logged or stored.
 import type { Profile, RouteResult } from "@/engine/generated/types";
@@ -8,7 +9,7 @@ import type { EngineInfo, LoadStats } from "@/engine/protocol";
 /** What the bench needs of the engine (the store's client in the app, a fake in tests). */
 export interface BenchEngine {
   timed(
-    method: "route" | "prepare" | "matchRide" | "benchPairs" | "info",
+    method: "route" | "prepare" | "matchRide" | "benchPairs" | "info" | "edgeCosts",
     params?: unknown,
   ): Promise<{
     result: unknown;
@@ -61,6 +62,8 @@ export type BenchReport = {
   firstRouteMs: number;
   routes: RouteRow[];
   compile: { preset: string; ms: Stat }[];
+  /** `edgeCosts` under the first preset (compiled): worker ms and the round trip with the transfer */
+  edgeCosts: { label: string; edges: number; engine: Stat; roundTrip: Stat }[];
   match: { rides: number; ms: Stat; matchedShare: number; km: number } | null;
   heap: { label: string; wasmBytes: number; engineBytes: number }[];
 };
@@ -203,6 +206,35 @@ export async function runBench(
     compile.push({ preset: id, ms: stat(ms) });
   }
 
+  // the cost debug layer: a viewport-sized list of ids and every edge of the region
+  const edgeCosts: BenchReport["edgeCosts"] = [];
+  const first = profiles[0];
+  if (first) {
+    await call("prepare", first.profile);
+    const count = load.info.edges;
+    const step = Math.max(1, Math.floor(count / 20_000));
+    for (const [label, all] of [
+      ["20 k listed", false],
+      ["every edge", true],
+    ] as const) {
+      onStatus?.(`edge costs, ${label}`);
+      const engineMs: number[] = [];
+      const trip: number[] = [];
+      let edges = 0;
+      for (let k = 0; k < 5; k++) {
+        const list = all
+          ? undefined
+          : Uint32Array.from({ length: Math.ceil(count / step) }, (_, i) => i * step);
+        const t = performance.now();
+        const { result, ms } = await call("edgeCosts", { profile: first.profile, edges: list });
+        trip.push(performance.now() - t);
+        engineMs.push(ms);
+        edges = (result as { edges: Uint32Array }).edges.length;
+      }
+      edgeCosts.push({ label, edges, engine: stat(engineMs), roundTrip: stat(trip) });
+    }
+  }
+
   let match: BenchReport["match"] = null;
   if (rides > 0 && lines.length > 0) {
     const random = rng(seed);
@@ -228,6 +260,7 @@ export async function runBench(
     firstRouteMs,
     routes,
     compile,
+    edgeCosts,
     match,
     heap,
   };
@@ -257,6 +290,10 @@ export function reportText(r: BenchReport): string {
     "| profile compile | ms p50 / p95 / max |",
     "|---|---:|",
     ...r.compile.map((c) => `| ${c.preset} | ${s3(c.ms)} |`),
+    "",
+    "| edge costs | edges | engine ms p50 / p95 / max | round trip ms p50 / p95 / max |",
+    "|---|---:|---:|---:|",
+    ...r.edgeCosts.map((c) => `| ${c.label} | ${c.edges} | ${s3(c.engine)} | ${s3(c.roundTrip)} |`),
   ];
   if (r.match) {
     out.push(

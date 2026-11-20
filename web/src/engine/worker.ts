@@ -3,9 +3,10 @@
 // requests (protocol.ts, docs/engine-web.md). Requests run one at a time, in order: the wasm engine is
 // one object and a request may wait for files (geometry) halfway through.
 import type { DataFile, GraphFiles } from "@/map/manifest";
-import type { Catalogue, Preset, RouteError, RouteResult } from "./generated/types";
+import type { Catalogue, ClosedBy, Preset, RouteError, RouteResult } from "./generated/types";
 import { type CacheStorageLike, GraphStore, graphFileList, wireBytes } from "./graph-cache";
 import init, {
+  closedCodes,
   Engine,
   catalogue as plainCatalogue,
   presets as presetList,
@@ -39,6 +40,7 @@ type Region = {
 
 let region: Region | null = null;
 let presetsCache: Preset[] | null = null;
+let closedCodesCache: ClosedBy[] | null = null;
 
 function ready(): Region {
   if (!region) throw new Error("no region graph loaded");
@@ -228,6 +230,30 @@ const handlers: EngineHandlers = {
   diff: (request) => JSON.parse(ready().engine.diff(JSON.stringify(request))),
   explain: (request) => JSON.parse(ready().engine.explain(JSON.stringify(request))),
   arcCosts: (profile) => ready().engine.arcCosts(JSON.stringify(profile)),
+  edgeCosts: ({ profile, edges, bbox }) => {
+    const out = ready().engine.edgeCosts(
+      JSON.stringify(profile),
+      edges,
+      bbox ? Float64Array.from(bbox) : undefined,
+    );
+    try {
+      closedCodesCache ??= JSON.parse(closedCodes()) as ClosedBy[];
+      return {
+        edges: out.edges,
+        factor: out.factor,
+        costPerM: out.costPerM,
+        closed: out.closed,
+        codes: closedCodesCache,
+        minFactor: out.minFactor,
+        maxFactor: out.maxFactor,
+        bound: out.bound,
+      };
+    } finally {
+      out.free();
+    }
+  },
+  explainEdge: (request) => JSON.parse(ready().engine.explainEdge(JSON.stringify(request))),
+  compare: (request) => JSON.parse(ready().engine.compare(JSON.stringify(request))),
   setPersonal: (layer) => {
     const e = ready().engine;
     if (layer) e.setPersonal(layer.rides, layer.lastRidden, layer.today);

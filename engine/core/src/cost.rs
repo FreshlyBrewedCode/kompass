@@ -23,6 +23,8 @@
 
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::attrs::SurfaceClass;
 use crate::catalogue::pref_meta;
 use crate::graph::{EdgeColumns, EdgeId, Graph, arc_edge, arc_is_reverse};
@@ -632,6 +634,81 @@ pub struct ArcCost {
     pub excluded: Option<Exclusion>,
 }
 
+/// How a preference enters an arc's factor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema, ts_rs::TS))]
+pub enum Role {
+    /// Multiplies into the quality product.
+    Quality,
+    /// A gated preference whose factor here is a penalty (> 1): it counts like quality.
+    GatedPenalty,
+    /// A gated preference whose factor here is a bonus (≤ 1): it counts through the gate.
+    GatedBonus,
+    /// Avoiding climbs: no factor, metres of cost per metre of ascent (the `climb` additive term).
+    Additive,
+}
+
+/// One preference's part in an arc's cost.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Term {
+    pub id: PrefId,
+    /// How much the way is what the preference names, −1..=1, as the cost quantises it
+    /// (fifteenths). Climbing: the average grade beyond the deadband over its full grade.
+    pub membership: f32,
+    /// The preference's factor at the profile's weight (1: no effect).
+    pub factor: f32,
+    pub role: Role,
+}
+
+/// Which bound the clamp applied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema, ts_rs::TS))]
+pub enum Clamp {
+    /// Raised to `bounds.min_factor` (the detour budget).
+    Min,
+    /// Lowered to `bounds.max_factor`.
+    Max,
+}
+
+/// An arc's cost, every step of it: what [`CostModel::compile_into`] computes, kept apart. The
+/// explanations of the API ([`crate::explain`]) are built from it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArcBreakdown {
+    /// Every active preference (weight ≠ 0), catalogue order.
+    pub terms: Vec<Term>,
+    /// The product of the quality factors, the gated penalties and the ramps.
+    pub quality: f32,
+    /// The product of the gated bonuses.
+    pub bonus: f32,
+    /// How much of the bonus counts, 0..=1 (1 up to quality `GATE_OK`, 0 from `GATE_BAD`).
+    pub gate: f32,
+    /// `quality × (1 + (bonus − 1) × gate)`, before the clamp.
+    pub raw: f32,
+    /// After the clamp.
+    pub factor: f32,
+    pub clamp: Option<Clamp>,
+    /// Ascent beyond the deadband (metres) and the tamed steepest grade up and down (percent).
+    pub ascent_m: f32,
+    pub grade_up_pct: f32,
+    pub grade_down_pct: f32,
+    /// Additive metres: avoiding climbs, then barriers, steps, dismount, ferry.
+    pub climb_m: f32,
+    pub penalties_m: [f32; 4],
+    /// Everything that closes the arc: the limits and rules of the edge in order, then one-way.
+    pub exclusions: Vec<Exclusion>,
+}
+
+impl ArcBreakdown {
+    /// The additive metres in all.
+    #[must_use]
+    pub fn extra_m(&self) -> f32 {
+        let [b, s, d, f] = self.penalties_m;
+        b + s + d + f + self.climb_m
+    }
+}
+
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -692,66 +769,115 @@ impl CostModel {
             .any(|(id, _)| matches!(id, PrefId::Novel | PrefId::Stale | PrefId::Familiar))
     }
 
-    /// The limit (or rule) that excludes an edge in both directions, if any.
+    /// The limit (or rule) that excludes an edge in both directions, if any: the first of
+    /// [`CostModel::exclusions`].
     #[inline]
     fn excluded(
+        &self,
+        v: &View,
+        surface: (u8, Confidence),
+        grade_up: f32,
+        grade_down: f32,
+    ) -> Option<Exclusion> {
+        let mut first = None;
+        self.exclusions(v, surface, grade_up, grade_down, |x| {
+            first = Some(x);
+            true
+        });
+        first
+    }
+
+    /// Every limit (or rule) that excludes an edge in both directions, in a fixed order, handed to
+    /// `hit` until it returns `true` (stop). The one place the limits are decided.
+    #[inline]
+    fn exclusions(
         &self,
         v: &View,
         (s, conf): (u8, Confidence),
         grade_up: f32,
         grade_down: f32,
-    ) -> Option<Exclusion> {
+        mut hit: impl FnMut(Exclusion) -> bool,
+    ) {
         let l = &self.limits;
-        if v.bike == ba::NO {
-            return Some(Exclusion::NoBikes);
+        if v.bike == ba::NO && hit(Exclusion::NoBikes) {
+            return;
         }
-        if l.no_main && v.is_main() && v.cyc != 3 {
-            return Some(Exclusion::Limit(LimitId::NoMainRoads));
+        if l.no_main && v.is_main() && v.cyc != 3 && hit(Exclusion::Limit(LimitId::NoMainRoads)) {
+            return;
         }
-        if l.paved_only || l.no_unknown {
-            if l.paved_only && (!matches!(s, sc::PAVED | sc::ROUGH) || conf == Confidence::Weak) {
-                return Some(Exclusion::Limit(LimitId::PavedOnly));
-            }
-            if l.no_unknown && conf == Confidence::Weak {
-                return Some(Exclusion::Limit(LimitId::NoUnknownSurface));
-            }
+        if l.paved_only
+            && (!matches!(s, sc::PAVED | sc::ROUGH) || conf == Confidence::Weak)
+            && hit(Exclusion::Limit(LimitId::PavedOnly))
+        {
+            return;
+        }
+        if l.no_unknown && conf == Confidence::Weak && hit(Exclusion::Limit(LimitId::NoUnknownSurface)) {
+            return;
         }
         if let Some(max) = l.max_grade
             && grade_up.max(grade_down) > max
+            && hit(Exclusion::Limit(LimitId::MaxGrade))
         {
-            return Some(Exclusion::Limit(LimitId::MaxGrade));
+            return;
         }
         if let Some(max) = l.max_mtb
             && v.difficulty().is_some_and(|d| d > max)
+            && hit(Exclusion::Limit(LimitId::MaxMtbScale))
         {
-            return Some(Exclusion::Limit(LimitId::MaxMtbScale));
+            return;
         }
-        if l.no_stairs && (v.hw == hw::STEPS || v.sac >= 3 || v.mtb >= 5) {
-            return Some(Exclusion::Limit(LimitId::NoStairs));
+        if l.no_stairs
+            && (v.hw == hw::STEPS || v.sac >= 3 || v.mtb >= 5)
+            && hit(Exclusion::Limit(LimitId::NoStairs))
+        {
+            return;
         }
-        if l.legal_only && matches!(v.bike, ba::USE_SIDEPATH | ba::FOOT_ONLY | ba::AGRI | ba::PRIVATE) {
-            return Some(Exclusion::Limit(LimitId::LegalOnly));
+        if l.legal_only
+            && matches!(v.bike, ba::USE_SIDEPATH | ba::FOOT_ONLY | ba::AGRI | ba::PRIVATE)
+            && hit(Exclusion::Limit(LimitId::LegalOnly))
+        {
+            return;
         }
         if l.no_ferries && v.hw == hw::FERRY {
-            return Some(Exclusion::Limit(LimitId::NoFerries));
+            hit(Exclusion::Limit(LimitId::NoFerries));
         }
-        None
     }
 
     /// Fixed additive metres of an edge (barriers, steps, dismount, ferry).
     #[inline]
     fn penalty_m(v: &View) -> f32 {
-        let mut add = f32::from(v.barriers) * BARRIER_M;
+        let [barriers, steps, dismount, ferry] = Self::penalty_parts(v);
+        // in the order `compile_into` adds them
+        let mut add = barriers;
         if v.hw == hw::STEPS {
-            add += v.length * STEPS_PER_M + STEPS_EACH_M;
+            add += steps;
         }
         if v.bike == ba::DISMOUNT {
-            add += v.length * DISMOUNT_PER_M;
+            add += dismount;
         }
         if v.hw == hw::FERRY {
-            add += FERRY_M;
+            add += ferry;
         }
         add
+    }
+
+    /// The fixed additive metres one by one: barriers, steps, dismount, ferry.
+    #[inline]
+    fn penalty_parts(v: &View) -> [f32; 4] {
+        [
+            f32::from(v.barriers) * BARRIER_M,
+            if v.hw == hw::STEPS {
+                v.length * STEPS_PER_M + STEPS_EACH_M
+            } else {
+                0.0
+            },
+            if v.bike == ba::DISMOUNT {
+                v.length * DISMOUNT_PER_M
+            } else {
+                0.0
+            },
+            if v.hw == hw::FERRY { FERRY_M } else { 0.0 },
+        ]
     }
 
     /// The gate: how much of the gated bonuses count at a quality factor.
@@ -851,9 +977,40 @@ impl CostModel {
         f.clamp(self.min_factor, self.max_factor)
     }
 
-    /// The cost of one arc, explained.
+    /// The cost of one arc, explained (the flat form of [`CostModel::breakdown`]).
     #[must_use]
     pub fn explain(&self, g: &Graph, personal: Option<&PersonalLayer>, a: crate::ArcId) -> ArcCost {
+        let b = self.breakdown(g, personal, a);
+        let v = View::decode(g.edge_columns(), arc_edge(a) as usize);
+        let penalty_m = Self::penalty_m(&v);
+        let excluded = b.exclusions.first().copied();
+        ArcCost {
+            factors: b
+                .terms
+                .iter()
+                .filter(|t| t.role != Role::Additive)
+                .map(|t| (t.id, t.factor))
+                .collect(),
+            gate: b.gate,
+            factor: b.factor,
+            climb_m: b.climb_m,
+            penalty_m,
+            cost: if excluded.is_some() {
+                f32::INFINITY
+            } else {
+                v.length * b.factor + penalty_m + b.climb_m
+            },
+            excluded,
+        }
+    }
+
+    /// The cost of one arc, every step of it, through the same functions the compile uses
+    /// (membership, tables, gate, clamp, additive terms, limits). `length × factor + extra_m()` is
+    /// the compiled cost up to float rounding (the compile multiplies in another order); a test
+    /// checks that on every arc of the test graphs.
+    #[must_use]
+    #[allow(clippy::too_many_lines, reason = "the cost's steps, one after the other")]
+    pub fn breakdown(&self, g: &Graph, personal: Option<&PersonalLayer>, a: crate::ArcId) -> ArcBreakdown {
         let c = g.edge_columns();
         let e = arc_edge(a) as usize;
         let dir = usize::from(arc_is_reverse(a));
@@ -863,61 +1020,117 @@ impl CostModel {
         #[allow(clippy::cast_possible_truncation, reason = "edge ids fit u32")]
         let pe = personal.map(|p| (p, e as EdgeId));
         let asc = [c.ascent_fwd_dm[e], c.ascent_bwd_dm[e]];
-        let grd = [c.grade_fwd[e], c.grade_bwd[e]];
         let grade = [
-            tamed_grade(grd[0], asc[0], v.length, v.forest),
-            tamed_grade(grd[1], asc[1], v.length, v.forest),
+            tamed_grade(c.grade_fwd[e], asc[0], v.length, v.forest),
+            tamed_grade(c.grade_bwd[e], asc[1], v.length, v.forest),
         ];
-        let mut factors = Vec::new();
+        let level = |m: i8| f32::from(m) / 15.0;
+        let mut terms = Vec::new();
         let mut q = 1.0f32;
         let mut bonus = 1.0f32;
         for (id, t) in &self.quality {
-            let f = at(t, membership(*id, &v, surface, pe));
+            let m = membership(*id, &v, surface, pe);
+            let f = at(t, m);
             q *= f;
-            factors.push((*id, f));
+            terms.push(Term {
+                id: *id,
+                membership: level(m),
+                factor: f,
+                role: Role::Quality,
+            });
         }
         for (id, t) in &self.gated {
-            let f = at(t, membership(*id, &v, surface, pe));
+            let m = membership(*id, &v, surface, pe);
+            let f = at(t, m);
+            // as the compile: a bonus (< 1) through the gate, else into quality (1 is either)
             if f < 1.0 {
                 bonus *= f;
             } else {
                 q *= f;
             }
-            factors.push((*id, f));
+            let role = if f > 1.0 {
+                Role::GatedPenalty
+            } else {
+                Role::GatedBonus
+            };
+            terms.push(Term {
+                id: *id,
+                membership: level(m),
+                factor: f,
+                role,
+            });
         }
+        // the directional ones, as in `arc_factor`
         if let Some(t) = &self.steep {
             let up = (grade[dir] - 8.0) / 8.0;
             let down = 0.5 * (grade[1 - dir] - 8.0) / 8.0;
-            factors.push((PrefId::Steep, at(t, lv(up.max(down).clamp(0.0, 1.0)))));
+            let m = lv(up.max(down).clamp(0.0, 1.0));
+            let f = at(t, m);
+            q *= f;
+            terms.push(Term {
+                id: PrefId::Steep,
+                membership: level(m),
+                factor: f,
+                role: Role::Quality,
+            });
         }
+        let ascent_m = effective_ascent(asc[dir], v.length, v.forest);
+        let rate = ascent_m / v.length.max(1.0);
         if let Some(t) = &self.climb_bonus {
-            let rate = effective_ascent(asc[dir], v.length, v.forest) / v.length.max(1.0);
-            factors.push((PrefId::Climb, at(t, lv(rate / CLIMB_FULL_GRADE))));
+            let m = lv(rate / CLIMB_FULL_GRADE);
+            let f = at(t, m);
+            bonus *= f;
+            terms.push(Term {
+                id: PrefId::Climb,
+                membership: level(m),
+                factor: f,
+                role: Role::GatedBonus,
+            });
+        } else if self.climb_cost > 0.0 {
+            terms.push(Term {
+                id: PrefId::Climb,
+                membership: level(lv(rate / CLIMB_FULL_GRADE)),
+                factor: 1.0,
+                role: Role::Additive,
+            });
         }
-        factors.sort_by_key(|(id, _)| id.index());
-        let steep = factors
-            .iter()
-            .find(|(id, _)| *id == PrefId::Steep)
-            .map_or(1.0, |f| f.1);
-        let gate = Self::gate(q * steep);
-        let factor = self.arc_factor(v.length, v.forest, q, bonus, grade[dir], grade[1 - dir], asc[dir]);
-        let climb_m = self.climb_cost * effective_ascent(asc[dir], v.length, v.forest);
-        let penalty_m = Self::penalty_m(&v);
-        let excluded = self
-            .excluded(&v, surface, grade[0], grade[1])
-            .or_else(|| (!crate::attrs::oneway_of(c.surf[e]).allows(dir == 1)).then_some(Exclusion::Oneway));
-        ArcCost {
-            factors,
+        terms.sort_by_key(|t| t.id.index());
+        let gate = Self::gate(q);
+        let raw = q * (1.0 + (bonus - 1.0) * gate);
+        let factor = raw.clamp(self.min_factor, self.max_factor);
+        let clamp = if raw < self.min_factor {
+            Some(Clamp::Min)
+        } else if raw > self.max_factor {
+            Some(Clamp::Max)
+        } else {
+            None
+        };
+        let mut exclusions = Vec::new();
+        self.exclusions(&v, surface, grade[0], grade[1], |x| {
+            exclusions.push(x);
+            false
+        });
+        if !crate::attrs::oneway_of(c.surf[e]).allows(dir == 1) {
+            exclusions.push(Exclusion::Oneway);
+        }
+        ArcBreakdown {
+            terms,
+            quality: q,
+            bonus,
             gate,
+            raw,
             factor,
-            climb_m,
-            penalty_m,
-            cost: if excluded.is_some() {
-                f32::INFINITY
+            clamp,
+            ascent_m,
+            grade_up_pct: grade[dir],
+            grade_down_pct: grade[1 - dir],
+            climb_m: if self.climb_cost > 0.0 {
+                self.climb_cost * ascent_m
             } else {
-                v.length * factor + penalty_m + climb_m
+                0.0
             },
-            excluded,
+            penalties_m: Self::penalty_parts(&v),
+            exclusions,
         }
     }
 
@@ -1353,6 +1566,41 @@ impl CostModel {
     }
 }
 
+/// The surface class the cost uses for an edge and how sure it is.
+#[must_use]
+pub(crate) fn cost_surface(g: &Graph, e: EdgeId) -> (SurfaceClass, Confidence) {
+    let (s, conf) = View::decode(g.edge_columns(), e as usize).surface();
+    (SurfaceClass::from_code(s).unwrap_or_default(), conf)
+}
+
+/// The traffic level the cost uses for an edge, 0..=1 (`quiet` penalises it).
+#[must_use]
+pub(crate) fn traffic_level(g: &Graph, e: EdgeId) -> f32 {
+    View::decode(g.edge_columns(), e as usize).traffic()
+}
+
+impl CostModel {
+    /// The additive metres of an arc (climbing, barriers, steps, dismount, ferry), as the compile
+    /// adds them.
+    #[must_use]
+    pub(crate) fn extra_m(&self, g: &Graph, a: crate::ArcId) -> f32 {
+        let c = g.edge_columns();
+        let e = arc_edge(a) as usize;
+        let v = View::decode(c, e);
+        let climb = if self.climb_cost > 0.0 {
+            let dm = if arc_is_reverse(a) {
+                c.ascent_bwd_dm[e]
+            } else {
+                c.ascent_fwd_dm[e]
+            };
+            self.climb_cost * effective_ascent(dm, v.length, v.forest)
+        } else {
+            0.0
+        };
+        Self::penalty_m(&v) + climb
+    }
+}
+
 /// The surface class a route reports for an edge: the tag or a safe guess, else unknown.
 #[must_use]
 pub fn reported_surface(g: &Graph, e: EdgeId) -> SurfaceClass {
@@ -1448,7 +1696,7 @@ pub fn way_kind(g: &Graph, e: EdgeId) -> WayKind {
 }
 
 /// The way types of the route breakdown.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema, ts_rs::TS))]
 pub enum WayKind {
