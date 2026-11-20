@@ -102,3 +102,14 @@ export async function riddenRendered(page: Page): Promise<number> {
     return new Set(features.filter((f) => f.state?.ridden === true).map((f) => f.id)).size;
   });
 }
+
+/** The `count` in the feature state of every rendered ridden edge, by edge id. */
+export async function riddenCounts(page: Page): Promise<Map<number, number>> {
+  const entries = await page.evaluate(() => {
+    const features = window.__kompass.map.queryRenderedFeatures({ layers: ["explored-line"] });
+    return features
+      .filter((f) => f.state?.ridden === true)
+      .map((f) => [f.id as number, f.state?.count as number] as [number, number]);
+  });
+  return new Map(entries);
+}

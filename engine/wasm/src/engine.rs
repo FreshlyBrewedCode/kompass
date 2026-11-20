@@ -331,6 +331,23 @@ impl Engine {
         })
     }
 
+    /// The summed length (metres) of the given edges, each counted once however often it is listed;
+    /// ids beyond the graph are ignored. The explored map's "km of ways ridden".
+    pub fn edges_length_m(&self, edges: &[u32]) -> Result<f64, String> {
+        let g = self.graph().ok_or("the graph is still loading")?;
+        let count = g.edge_count();
+        let mut seen = vec![false; count];
+        let mut sum = 0.0;
+        for &e in edges {
+            let i = e as usize;
+            if i < count && !seen[i] {
+                seen[i] = true;
+                sum += f64::from(g.length_m(e));
+            }
+        }
+        Ok(sum)
+    }
+
     /// Heap bytes held, by part (the wasm memory itself is measured in JS).
     #[must_use]
     pub fn heap(&self) -> HeapStats {
@@ -359,9 +376,15 @@ impl Engine {
             tiles: usize,
             geometry_tiles: usize,
             missing_tiles: usize,
+            /// every edge's length, metres: what "share of the network explored" divides by
+            network_m: f64,
             heap: HeapStats,
         }
         let (nodes, edges) = self.graph().map_or((0, 0), |g| (g.node_count(), g.edge_count()));
+        let network_m = self.graph().map_or(0.0, |g| {
+            let count = u32::try_from(g.edge_count()).unwrap_or(u32::MAX);
+            (0..count).map(|e| f64::from(g.length_m(e))).sum()
+        });
         to_json(&Info {
             build_id: &self.build_id,
             nodes,
@@ -369,6 +392,7 @@ impl Engine {
             tiles: self.tiles.len(),
             geometry_tiles: (0..self.tiles.len()).filter(|&t| self.geometry_loaded(t)).count(),
             missing_tiles: self.missing_tiles().len(),
+            network_m,
             heap: self.heap(),
         })
     }
@@ -486,6 +510,15 @@ mod tests {
         let info: Value = serde_json::from_str(&e.info()).unwrap();
         assert_eq!(info["geometryTiles"].as_u64().unwrap() as usize, e.tiles().len());
         assert!(info["heap"]["graph"].as_u64().unwrap() > 0);
+        // the network's length is the sum of the edges; listing an edge twice counts it once
+        let network = info["networkM"].as_f64().unwrap();
+        let edges = info["edges"].as_u64().unwrap() as u32;
+        assert!(network > 1000.0);
+        let all: Vec<u32> = (0..edges).collect();
+        assert!((e.edges_length_m(&all).unwrap() - network).abs() < 1e-6 * network);
+        let twice: Vec<u32> = [0, 0, 1, 1, edges + 5].into();
+        assert!((e.edges_length_m(&twice).unwrap() - e.edges_length_m(&[0, 1]).unwrap()).abs() < 1e-9);
+        assert!(e.edges_length_m(&[]).unwrap().abs() < f64::EPSILON);
     }
 
     #[test]

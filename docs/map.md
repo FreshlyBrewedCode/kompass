@@ -130,7 +130,10 @@ control; `?layer=<attribute key>|explored` in the URL), and toggles the relief a
 `ExploredStore` (`history/explored-store.ts`): `setRidden(ids | Map<id, {count, lastRidden}>)`
 replaces the set, `clear()`, `subscribe()`. The ride library ([rides.md](rides.md)) fills it from its saved matches
 (`RidesState.attachExplored`); the map reads it. `ExploredLayer` mirrors it into `feature-state` (`ridden`, `count`)
-in chunks of 5000 ids, yielding to the main thread between chunks, and applies only the difference.
+in chunks of 5000 ids, yielding to the main thread between chunks, and applies only the difference (an edge
+whose count is unchanged is left alone, so a refold while rides are still being matched is cheap).
+The band has three calm steps of intensity by `count`: ridden once (opacity 0.5), 2 to 4 times (0.7), 5 or
+more (0.9). Recency (`lastRidden`) is in the store but not drawn: the routing's novelty preferences use it.
 MapLibre keeps feature state per source and applies it to tiles as they load, so ids that are not on
 screen yet are fine; a new style (theme change) drops it, hence `reapply()` after every `style.load`.
 

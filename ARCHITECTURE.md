@@ -45,9 +45,9 @@ Still to come:
   - `route` zones: via-zones and avoid-zones (the request already carries them; ignored for now).
   - `loop`: start, distance, bearing or sketched shape; a novelty prize.
   - `lookahead`: a bounded search per branch at the next junction.
-- **Personal layer storage:** the layer is arrays indexed by edge (ridden count and last ridden per
-  edge are what the cost reads now; per direction, corrections and ridden today later). Importing a
-  ride never rebuilds the base graph.
+- **Personal layer, later:** per direction, corrections and ridden today (the ridden count and last
+  ridden per edge are built: [docs/rides.md](docs/rides.md)). Importing a ride never rebuilds the base
+  graph.
 - **Raw tracks are the source of truth.** Edge IDs change on rebuilds, so per-edge history is
   always re-derived by matching the tracks again. Corrections are stored by OSM way ID plus
   position, so they survive rebuilds.

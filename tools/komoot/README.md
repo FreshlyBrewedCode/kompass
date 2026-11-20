@@ -54,6 +54,24 @@ an interrupted run (Ctrl+C) loses nothing; run it again. Requests are paced, and
 network errors are retried with exponential backoff (honouring `Retry-After`). Exit code 1 if a tour
 failed or the login did; the failed tours are retried on the next run.
 
+## Getting the download into the app
+
+The app imports the GPX files directly, and a **zip** of them, in one step:
+
+```sh
+cd data/tracks && zip -r komoot.zip komoot/*.gpx      # 185 tours: about 9 MB
+```
+
+- **On the phone:** put `komoot.zip` on it (AirDrop, or into the Files app / iCloud Drive), open the app,
+  Rides → "Add GPX or FIT files, or a zip", pick the zip. The app unpacks it as a stream (nothing
+  unpacked is kept in memory), imports, and matches the rides to the map in the background; the explored
+  map fills in as it goes.
+- **Or import on a desktop** and move the library: Rides → Export gives a `.kompassrides` backup (all
+  points, no matches: those are derived on the device), which the same picker (or Restore) takes on the
+  phone. Use this to carry rides from several sources, or to keep a backup.
+
+Nothing is uploaded either way: the files are read in the browser.
+
 ## How it talks to Komoot, and how it may break
 
 Komoot has no public API; this uses the web API that komoot.com and the Komoot apps use, as other

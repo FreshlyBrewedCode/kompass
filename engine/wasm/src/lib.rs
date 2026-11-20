@@ -245,6 +245,12 @@ impl Engine {
         self.0.match_ride(lat, lon).map(MatchOutput).map_err(js)
     }
 
+    /// The summed length in metres of the given edges (each once): the explored map's km.
+    #[wasm_bindgen(js_name = edgesLengthM)]
+    pub fn edges_length_m(&self, edges: &[u32]) -> Result<f64, JsError> {
+        self.0.edges_length_m(edges).map_err(js)
+    }
+
     /// Counts and heap bytes by part (JSON).
     #[must_use]
     pub fn info(&self) -> String {
