@@ -7,17 +7,20 @@ import type { ExploredStore } from "@/history/explored-store";
 import type { RidesLayerData } from "@/rides/protocol";
 import type { Bounds } from "@/rides/types";
 import { ExploredLayer } from "./explored-layer";
-import { type OverlayState, overlayPaint } from "./expressions";
+import { infoLayerName, type MapLayers } from "./info";
 import { type PickedEdge, pickEdge } from "./inspect";
 import type { Manifest } from "./manifest";
 import type { Theme } from "./palette";
 import { registerPmtiles } from "./protocol";
 import {
   buildStyle,
+  CONTOUR_LABEL,
+  CONTOUR_LINE,
+  EXPLORED_LINE,
+  HILLSHADE,
+  INFO_LINE,
   labelLanguage,
   NO_RIDES,
-  OVERLAY_CASING,
-  OVERLAY_LINE,
   OVERLAY_SOURCE,
   RIDES_CASING,
   RIDES_LINE,
@@ -25,6 +28,10 @@ import {
   RIDES_SOURCE,
   type RidesLayerState,
 } from "./style";
+import { WAY_PICK_LAYERS, WAY_ROUTE } from "./ways";
+
+/** The layers `setLayers` switches: their filter, colour, zoom range and visibility follow the state. */
+const SWITCHED = [HILLSHADE, CONTOUR_LINE, CONTOUR_LABEL, WAY_ROUTE, INFO_LINE, EXPLORED_LINE];
 
 // MapLibre finds its worker next to its own module, which a bundle moves: point it at the copy Vite emits.
 setWorkerUrl(workerUrl);
@@ -34,9 +41,9 @@ export type RegionMapOptions = {
   manifest: Manifest;
   dataUrl: string;
   theme: Theme;
-  overlay: OverlayState;
+  layers: MapLayers;
   store: ExploredStore;
-  /** an edge was picked (`null`: the tap hit nothing, or the overlay is hidden) */
+  /** an edge was picked (`null`: the tap hit nothing) */
   onPick: (edge: PickedEdge | null) => void;
   /** a source failed to load (not a missing glyph range) */
   onError: (message: string) => void;
@@ -55,7 +62,7 @@ export class RegionMap {
   readonly explored: ExploredLayer;
   readonly #options: RegionMapOptions;
   #theme: Theme;
-  #overlay: OverlayState;
+  #layers: MapLayers;
   #selected: number | null = null;
   #ready = false;
   #rides: RidesLayerState = NO_RIDES;
@@ -64,7 +71,7 @@ export class RegionMap {
     registerPmtiles();
     this.#options = options;
     this.#theme = options.theme;
-    this.#overlay = options.overlay;
+    this.#layers = options.layers;
     const { container, manifest } = options;
     const view = initialView(manifest);
     this.map = new MapLibreMap({
@@ -78,7 +85,7 @@ export class RegionMap {
     });
     this.explored = new ExploredLayer(this.map, options.store, manifest.overlay.layer);
     container.dataset.loaded = "false";
-    container.dataset.mode = options.overlay.mode;
+    container.dataset.layer = infoLayerName(options.layers.info);
     container.dataset.idle = "false";
 
     this.map.once("load", () => {
@@ -117,7 +124,7 @@ export class RegionMap {
       manifest,
       dataUrl,
       theme: this.#theme,
-      overlay: this.#overlay,
+      layers: this.#layers,
       rides: this.#rides,
       assetsUrl: new URL("map/", document.baseURI).href,
       lang: labelLanguage(navigator.languages ?? [navigator.language]),
@@ -158,30 +165,28 @@ export class RegionMap {
     );
   }
 
-  /** Switch the mode / attribute: only the overlay's paint changes, no tiles reload. */
-  setOverlay(overlay: OverlayState) {
-    this.#overlay = overlay;
+  /**
+   * Switches the information layer and the toggles. Only the layers that depend on them change (filter,
+   * colour, zoom range, visibility): no tiles reload, the base style stays as it is.
+   */
+  setLayers(layers: MapLayers) {
+    this.#layers = layers;
     if (!this.#ready) return;
-    this.#paintOverlay();
-    this.#options.container.dataset.mode = overlay.mode;
-    if (overlay.mode === "plain") this.select(null);
-  }
-
-  #paintOverlay() {
     const { map } = this;
-    const paint = overlayPaint(this.#overlay, this.#theme);
-    for (const id of [OVERLAY_CASING, OVERLAY_LINE]) {
-      map.setLayoutProperty(id, "visibility", paint.visible ? "visible" : "none");
+    const wanted = new Map(this.#style().layers.map((layer) => [layer.id, layer]));
+    for (const id of SWITCHED) {
+      const layer = wanted.get(id);
+      if (!layer || !map.getLayer(id)) continue;
+      map.setLayoutProperty(id, "visibility", layer.layout?.visibility ?? "visible");
+      if (id !== INFO_LINE || layer.type !== "line") continue;
+      map.setFilter(id, layer.filter ?? null);
+      map.setLayerZoomRange(id, layer.minzoom ?? 0, layer.maxzoom ?? 24);
+      map.setPaintProperty(id, "line-color", layer.paint?.["line-color"]);
     }
-    map.setPaintProperty(OVERLAY_CASING, "line-color", paint.casingColor);
-    map.setPaintProperty(OVERLAY_CASING, "line-opacity", paint.casingOpacity);
-    map.setPaintProperty(OVERLAY_CASING, "line-width", paint.casingWidth);
-    map.setPaintProperty(OVERLAY_LINE, "line-color", paint.lineColor);
-    map.setPaintProperty(OVERLAY_LINE, "line-opacity", paint.lineOpacity);
-    map.setPaintProperty(OVERLAY_LINE, "line-width", paint.lineWidth);
+    this.#options.container.dataset.layer = infoLayerName(layers.info);
   }
 
-  /** The base map's flavour and the overlay's colours follow the theme; the new style drops feature state. */
+  /** The whole style follows the theme; the new style drops feature state. */
   setTheme(theme: Theme) {
     if (theme === this.#theme) return;
     this.#theme = theme;
@@ -214,8 +219,7 @@ export class RegionMap {
   }
 
   #click(point: { x: number; y: number }) {
-    if (this.#overlay.mode === "plain") return;
-    this.select(pickEdge(this.map, point));
+    this.select(pickEdge(this.map, point, [...WAY_PICK_LAYERS, INFO_LINE]));
   }
 
   destroy() {

@@ -3,7 +3,7 @@ import type { ExploredStore } from "@/history/explored-store";
 import { useTheme } from "@/lib/theme";
 import { RegionMap } from "@/map/controller";
 import { devEnabled, fakeRiddenCount, fakeRiddenFromRendered, fakeRiddenRange } from "@/map/dev";
-import type { OverlayState } from "@/map/expressions";
+import type { MapLayers } from "@/map/info";
 import type { PickedEdge } from "@/map/inspect";
 import type { Manifest } from "@/map/manifest";
 import type { RidesLayerData } from "@/rides/protocol";
@@ -25,7 +25,7 @@ export type MapViewProps = {
   ref?: Ref<MapHandle>;
   manifest: Manifest;
   dataUrl: string;
-  overlay: OverlayState;
+  layers: MapLayers;
   store: ExploredStore;
   /** the recorded rides ("My rides"): lines and whether they show */
   rides: RidesLayerData | null;
@@ -39,7 +39,7 @@ export default function MapView({
   ref,
   manifest,
   dataUrl,
-  overlay,
+  layers,
   store,
   rides,
   ridesVisible,
@@ -50,8 +50,8 @@ export default function MapView({
   const regionMap = useRef<RegionMap | null>(null);
   const theme = useTheme();
   // the newest values, for the map created once per region
-  const latest = useRef({ overlay, theme, rides, ridesVisible, onPick, onError });
-  latest.current = { overlay, theme, rides, ridesVisible, onPick, onError };
+  const latest = useRef({ layers, theme, rides, ridesVisible, onPick, onError });
+  latest.current = { layers, theme, rides, ridesVisible, onPick, onError };
 
   useEffect(() => {
     if (!container.current) return;
@@ -60,7 +60,7 @@ export default function MapView({
       manifest,
       dataUrl,
       theme: latest.current.theme,
-      overlay: latest.current.overlay,
+      layers: latest.current.layers,
       store,
       onPick: (edge) => latest.current.onPick(edge),
       onError: (message) => latest.current.onError(message),
@@ -110,7 +110,7 @@ export default function MapView({
     [store, manifest],
   );
 
-  useEffect(() => regionMap.current?.setOverlay(overlay), [overlay]);
+  useEffect(() => regionMap.current?.setLayers(layers), [layers]);
   useEffect(() => regionMap.current?.setTheme(theme), [theme]);
   useEffect(() => {
     if (rides) regionMap.current?.setRides(rides);

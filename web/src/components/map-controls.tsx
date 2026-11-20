@@ -1,69 +1,100 @@
 // The map's chrome: deliberately minimal and replaceable (the planner design round decides the real
 // layout). Everything here is presentation; the map logic lives in src/map/.
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Layers, Mountain, Signpost } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { formatAttribute, type Legend, type MapMode } from "@/map/expressions";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Toggle } from "@/components/ui/toggle";
+import { formatAttribute, type Legend } from "@/map/info";
 import type { PickedEdge } from "@/map/inspect";
 import type { Manifest, OverlayAttribute } from "@/map/manifest";
 import { EXPLORED, type Theme } from "@/map/palette";
 
-const MODE_LABELS: Record<MapMode, string> = { plain: "Plain", attribute: "Attribute", explored: "Explored" };
+const NONE = "none";
+const EXPLORED_KEY = "explored";
 
-export function ModeSwitch({ mode, onChange }: { mode: MapMode; onChange: (mode: MapMode) => void }) {
-  return (
-    <ToggleGroup
-      type="single"
-      value={mode}
-      // a single-type group reports "" when the active item is pressed again: stay put
-      onValueChange={(value) => value && onChange(value as MapMode)}
-      variant="outline"
-      aria-label="Map mode"
-      data-testid="mode-switch"
-      className="pointer-events-auto bg-card/90 backdrop-blur"
-    >
-      {(Object.keys(MODE_LABELS) as MapMode[]).map((m) => (
-        <ToggleGroupItem
-          key={m}
-          value={m}
-          data-testid={`mode-${m}`}
-          className="px-3 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
-        >
-          {MODE_LABELS[m]}
-        </ToggleGroupItem>
-      ))}
-    </ToggleGroup>
-  );
-}
-
-export function AttributePicker({
+/**
+ * The layers control: one information layer at a time on top of the map (or none), and two toggles for
+ * parts of the map itself. `value`: `none`, `explored` or an attribute key.
+ */
+export function LayersControl({
   attributes,
   value,
   onChange,
+  terrain,
+  onTerrain,
+  routes,
+  onRoutes,
 }: {
   attributes: OverlayAttribute[];
   value: string;
-  onChange: (key: string) => void;
+  onChange: (name: string) => void;
+  /** `null`: the region has no terrain */
+  terrain: boolean | null;
+  onTerrain: (on: boolean) => void;
+  routes: boolean;
+  onRoutes: (on: boolean) => void;
 }) {
+  const toggle =
+    "bg-card/90 backdrop-blur data-[state=on]:bg-primary data-[state=on]:text-primary-foreground";
   return (
-    <Select value={value} onValueChange={onChange}>
-      <SelectTrigger
-        data-testid="attribute-picker"
-        aria-label="Attribute"
-        className="pointer-events-auto w-full bg-card/90 backdrop-blur dark:bg-card/90 md:w-60"
-      >
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {attributes.map((a) => (
-          <SelectItem key={a.key} value={a.key} data-testid={`attribute-${a.key}`}>
-            {a.label}
+    <div data-testid="layers-control" className="pointer-events-auto flex items-center gap-2">
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger
+          data-testid="info-picker"
+          aria-label="Information layer"
+          className="min-w-0 flex-1 bg-card/90 backdrop-blur dark:bg-card/90 md:w-60 md:flex-none"
+        >
+          <Layers className="size-4 shrink-0 opacity-70" aria-hidden />
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={NONE} data-testid="info-none">
+            Map only
           </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+          <SelectItem value={EXPLORED_KEY} data-testid="info-explored">
+            Explored
+          </SelectItem>
+          <SelectSeparator />
+          {attributes.map((a) => (
+            <SelectItem key={a.key} value={a.key} data-testid={`info-${a.key}`}>
+              {a.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {terrain !== null && (
+        <Toggle
+          variant="outline"
+          pressed={terrain}
+          onPressedChange={onTerrain}
+          aria-label="Relief and contour lines"
+          title="Relief and contour lines"
+          data-testid="toggle-terrain"
+          className={toggle}
+        >
+          <Mountain />
+        </Toggle>
+      )}
+      <Toggle
+        variant="outline"
+        pressed={routes}
+        onPressedChange={onRoutes}
+        aria-label="Signed cycle routes"
+        title="Signed cycle routes"
+        data-testid="toggle-routes"
+        className={toggle}
+      >
+        <Signpost />
+      </Toggle>
+    </div>
   );
 }
 
@@ -87,7 +118,7 @@ export function LegendCard({ legend }: { legend: Legend }) {
       <div className="font-semibold text-sm">{legend.title}</div>
       {legend.kind === "categories" ? (
         <ul
-          className={`grid max-h-44 gap-x-3 gap-y-1 overflow-y-auto md:max-h-64 ${legend.entries.length > 10 ? "grid-cols-2 md:grid-cols-1" : "grid-cols-1"}`}
+          className={`grid max-h-44 gap-x-3 gap-y-1 overflow-y-auto md:max-h-64 ${legend.entries.length > 3 ? "grid-cols-2" : "grid-cols-1"}`}
         >
           {legend.entries.map((e) => (
             <li key={e.label} data-testid="legend-entry" className="flex items-center gap-2">
@@ -107,12 +138,11 @@ export function LegendCard({ legend }: { legend: Legend }) {
             <span>{legend.min}</span>
             <span>{legend.max}</span>
           </div>
-          <div data-testid="legend-entry" className="flex items-center gap-2">
-            <Swatch color={legend.unknown.color} neutral />
-            <span>{legend.unknown.label}</span>
-          </div>
         </div>
       )}
+      <p data-testid="legend-note" className="text-muted-foreground">
+        {legend.note ? `${legend.note}. ` : ""}Everything else is the normal map.
+      </p>
     </Card>
   );
 }
@@ -130,7 +160,6 @@ export function ExploredCard({
   onFake: () => void;
   onClear: () => void;
 }) {
-  const colors = EXPLORED[theme];
   return (
     <Card
       data-testid="explored-legend"
@@ -139,16 +168,13 @@ export function ExploredCard({
       <div className="font-semibold text-sm">Explored</div>
       <ul className="space-y-1">
         <li className="flex items-center gap-2">
-          <Swatch color={colors.ridden} />
+          <Swatch color={EXPLORED[theme]} />
           Ridden
           <span data-testid="ridden-count" className="ml-auto tabular-nums text-muted-foreground">
             {ridden.toLocaleString("en")} edges
           </span>
         </li>
-        <li className="flex items-center gap-2">
-          <Swatch color={colors.never} />
-          Never ridden
-        </li>
+        <li className="text-muted-foreground">Never ridden: the normal map</li>
       </ul>
       {devTools && (
         <div className="flex gap-2 border-t pt-2">

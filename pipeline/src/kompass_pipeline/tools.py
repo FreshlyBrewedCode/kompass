@@ -12,6 +12,8 @@ HINTS = {
     "pmtiles": "pmtiles",
     "gdalwarp": "gdal",
     "gdalbuildvrt": "gdal",
+    "gdal_contour": "gdal",
+    "ogr2ogr": "gdal",
 }
 
 

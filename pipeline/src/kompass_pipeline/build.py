@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import clip, context, dem_glo30, elevation, finalize, graph, manifest, tiles, ways
+from . import clip, context, dem_glo30, elevation, finalize, graph, manifest, terrain, tiles, ways
 from .config import Region
 from .elevation import ElevationFn
 
@@ -72,6 +72,11 @@ def _elevation(b: Build) -> None:
 
 def _glo30(b: Build) -> ElevationFn:
     return dem_glo30.open_glo30(b.region, b.data_dir / "dem" / "glo30", b.work)
+
+
+def _terrain(b: Build) -> None:
+    source = (b.elevation_source or _glo30)(b)
+    terrain.run(b.region, source, b.work, b.out / "terrain.pmtiles", b.out / "contours.pmtiles")
 
 
 def _graph(b: Build) -> None:
@@ -148,11 +153,24 @@ STAGES: tuple[Stage, ...] = (
         lambda b: tiles.basemap(b.w("region.geojson"), b.out / "basemap.pmtiles", b.protomaps_build),
     ),
     Stage(
+        "terrain",
+        "terrain.pmtiles (raster DEM for the hillshade) and contours.pmtiles",
+        lambda b: [b.config_path],
+        lambda b: [b.out / "terrain.pmtiles", b.out / "contours.pmtiles"],
+        _terrain,
+    ),
+    Stage(
         "manifest",
         "manifest.json for the web app",
-        lambda b: [b.config_path, b.out / "edges.parquet"],
+        # the terrain is optional: the manifest lists it when it is there
+        lambda b: [
+            b.config_path,
+            b.out / "edges.parquet",
+            b.out / "terrain.pmtiles",
+            b.out / "contours.pmtiles",
+        ],
         lambda b: [b.out / "manifest.json"],
-        lambda b: manifest.run(b.region, b.out / "edges.parquet", b.out / "manifest.json"),
+        lambda b: manifest.run(b.region, b.out, b.out / "manifest.json"),
     ),
 )
 BY_NAME = {s.name: s for s in STAGES}

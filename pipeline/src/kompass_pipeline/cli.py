@@ -2,7 +2,8 @@
 
 kompass-pipeline build --region data/region.local.json --out data/build/<name>
 kompass-pipeline <stage> --region ... --out ...     one stage (clip, edges, context, elevation,
-                                                    graph, finalize, overlay, basemap, manifest)
+                                                    graph, finalize, overlay, basemap, terrain,
+                                                    manifest)
 kompass-pipeline docs [--write]                     check / regenerate docs/edges-parquet.md tables
 """
 

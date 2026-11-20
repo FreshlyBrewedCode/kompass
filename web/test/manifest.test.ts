@@ -78,6 +78,18 @@ describe("parseManifest", () => {
     expect(parseManifest(mutate(["basemap"], undefined)).basemap).toBeNull();
   });
 
+  test("the terrain is optional; with it, the contours are too", () => {
+    expect(parseManifest(valid()).terrain).toBeNull();
+    expect(parseManifest(mutate(["terrain"], null)).terrain).toBeNull();
+    const dem = { file: "terrain.pmtiles", encoding: "terrarium", tileSize: 256, minzoom: 6, maxzoom: 12 };
+    expect(parseManifest(mutate(["terrain"], dem)).terrain).toEqual({ ...dem, contours: null } as never);
+    const contours = { file: "contours.pmtiles", layer: "contours", minzoom: 10, maxzoom: 14 };
+    expect(parseManifest(mutate(["terrain"], { ...dem, contours })).terrain?.contours).toEqual(contours);
+    expect(() =>
+      parseManifest(mutate(["terrain"], { ...dem, contours: { ...contours, layer: "" } })),
+    ).toThrow("terrain.contours.layer");
+  });
+
   test("rejects what is not an object, and other schema versions", () => {
     expect(() => parseManifest(null)).toThrow(ManifestError);
     expect(() => parseManifest([])).toThrow(ManifestError);
@@ -93,6 +105,22 @@ describe("parseManifest", () => {
     [["overlay", "file"], "../overlay.pmtiles", "relative file name"],
     [["overlay", "layer"], "", "overlay.layer"],
     [["overlay", "maxzoom"], 6, "zoom range"],
+    [["terrain"], { file: "t.pmtiles", encoding: "raw", tileSize: 256, minzoom: 6, maxzoom: 12 }, "encoding"],
+    [
+      ["terrain"],
+      { file: "/t.pmtiles", encoding: "mapbox", tileSize: 256, minzoom: 6, maxzoom: 12 },
+      "relative",
+    ],
+    [
+      ["terrain"],
+      { file: "t.pmtiles", encoding: "mapbox", tileSize: 300, minzoom: 6, maxzoom: 12 },
+      "tileSize",
+    ],
+    [
+      ["terrain"],
+      { file: "t.pmtiles", encoding: "mapbox", tileSize: 256, minzoom: 9, maxzoom: 3 },
+      "zoom range",
+    ],
     [["overlay", "attributes"], "none", "overlay.attributes"],
     [["overlay", "attributes"], [{ key: "a", label: "A", kind: "colour" }], "kind"],
     [["overlay", "attributes"], [{ key: "a", label: "A", kind: "enum", values: [] }], "values"],

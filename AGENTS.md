@@ -22,7 +22,8 @@ bun run check            # the gate, must pass before every commit (also CI):
 bun run build:wasm       # kompass-wasm → web/src/engine/pkg (generated, gitignored; `--dev` for a debug build)
 bun run dev              # build:wasm, then Vite with HMR: http://127.0.0.1:7950 (HMR websocket 7951);
                          # serves a region build at /data/: KOMPASS_DATA_DIR=<dir> (default data/build/region;
-                         # without it the app shows its empty state), e.g. KOMPASS_DATA_DIR=e2e/fixtures/region
+                         # without it the app shows its empty state), e.g. KOMPASS_DATA_DIR=e2e/fixtures/region.
+                         # KOMPASS_DEV_PORT=<port> moves it (HMR takes the next port)
 bun run build            # build:wasm + the web app, into web/dist (relative base: works from any sub-path)
 bun run serve -- --port 7950 --data <dir>   # static server for the built app + a region data dir (HTTP
                          # Range, long cache for PMTiles): the way to playtest a build on a phone
@@ -30,12 +31,17 @@ bun run e2e              # build, then Playwright (phone 390×844 + desktop 1440
                          # 7959 under /kompass/ with the synthetic fixture region (KOMPASS_E2E_PORT=…)
 nix develop -c bun e2e/fixtures/build-region.ts   # rebuild the fixture region (tippecanoe, edges.parquet
                          # via the pipeline, graph via `kompass compile`) after changing it
+                         # (its relief: uv run --project pipeline python e2e/fixtures/build-terrain.py)
 bun run format           # biome --write, cargo fmt, ruff format + fix
 uv run --project pipeline kompass-pipeline build --region data/region.local.json --out data/build/<name>
-                         # the region build: edges.parquet, overlay + base map PMTiles, manifest.json (docs/pipeline.md).
+                         # the region build: edges.parquet, overlay, base map, terrain and contour PMTiles,
+                         # manifest.json (docs/pipeline.md).
                          # Resumable, stages runnable alone (`kompass-pipeline <stage>`), `--force` redoes.
                          # A heavy job: about 9 min and 5.5 GB peak for a 100 km radius, plus the
                          # downloads on a first run (extracts ~1.5 GB, DEM 0.4 GB, base map 0.5 GB). Run one at a time.
+uv run --project pipeline kompass-pipeline build --region pipeline/regions/demo.json --out data/build/demo --data-dir data
+                         # the demo region (Black Forest east of Freiburg, 15 km): about 1 min, 30 MB. The
+                         # public-safe region for screenshots: KOMPASS_DATA_DIR=data/build/demo bun run dev
 cd engine && cargo run -p kompass-cli -- --version     # the native engine: `kompass`
 cd engine && cargo run --release -p kompass-cli -- compile --build ../data/build/<name>
                          # edges.parquet → <dir>/graph/ (tiled binary graph, docs/graph-format.md) + the
@@ -77,8 +83,9 @@ uv run --project tools/komoot kompass-komoot --help    # Komoot download (run by
 
 - **Privacy (the repo is public).** Never put a home location (town, coordinates, bounding box),
   real names, tokens or hostnames (no `*.ts.net` names) into code, tests, fixtures, docs, issues,
-  PR text or screenshots. Fixtures use a synthetic area or a clearly unrelated small one (the demo
-  map shows central Zurich). The region config (`data/region.local.json`), builds and tracks live
+  PR text or screenshots. Fixtures use a synthetic area or a clearly unrelated small one. Screenshots
+  of a real map come from the **demo region** only (`pipeline/regions/demo.json`, the Black Forest
+  east of Freiburg), never from the user's region. The region config (`data/region.local.json`), builds and tracks live
   only under the gitignored `data/`; the region config is read only by the pipeline at run time, its
   contents never go into the repo.
 - TypeScript strict with `noUncheckedIndexedAccess`; Biome (2 spaces, double quotes, 110 cols).

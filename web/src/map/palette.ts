@@ -1,5 +1,6 @@
-// Colours of the overlay. They are not theme tokens on purpose: map colours must stay readable on the
-// base map (light and dark flavour) and for colour-blind users, so they are picked and checked here.
+// Colours of what the app draws on top of the map (information layers, explored, rides, selection).
+// The map's own colours are in `carto.ts`. Neither are theme tokens: they must stay readable on the map
+// in both themes and for colour-blind users, so they are picked and checked here.
 // Everything else in the app uses the theme tokens of `index.css`.
 
 export type Theme = "light" | "dark";
@@ -40,14 +41,11 @@ export function sequential(theme: Theme): string[] {
 /** Unknown / no value: a neutral grey, distinct from every hue above and from the base map's roads. */
 export const UNKNOWN: Record<Theme, string> = { light: "#a3a3a3", dark: "#8f8f98" };
 
-/** Halo around the overlay lines, so they read on any base map colour. */
+/** Halo around the information layer's and the rides' lines, so they read on any map colour. */
 export const CASING: Record<Theme, string> = { light: "#ffffff", dark: "#0a0a0a" };
 
-/** Explored map: never ridden is muted, ridden stands out. */
-export const EXPLORED: Record<Theme, { never: string; ridden: string }> = {
-  light: { never: "#8d99a8", ridden: "#e8590c" },
-  dark: { never: "#6c7686", ridden: "#ffa94d" },
-};
+/** Explored map: ridden edges get a calm teal band; never ridden stays the normal map. */
+export const EXPLORED: Record<Theme, string> = { light: "#0a8f86", dark: "#35d0c0" };
 
 /** "My rides": the raw recorded tracks. Magenta: distinct from the Okabe–Ito hues, the explored orange and the base map. */
 export const RIDES: Record<Theme, string> = { light: "#c2185b", dark: "#ff6fa5" };

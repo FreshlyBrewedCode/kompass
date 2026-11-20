@@ -7,9 +7,11 @@ is a directory per build:
 | file | what |
 |---|---|
 | `edges.parquet` | the routing graph, [the contract with the engine](edges-parquet.md) |
-| `overlay.pmtiles` | the edges as vector tiles (layer `edges`, z8..14) for the debug and explored map |
+| `overlay.pmtiles` | the edges as vector tiles (layer `edges`, z8..14): the map's roads, tracks and paths from z13 on, its information layers and the explored map |
 | `basemap.pmtiles` | the Protomaps base map cut to the region (z0..15) |
-| `manifest.json` | bounds, centre, file names and the overlay's attributes with their enum labels |
+| `terrain.pmtiles` | the DEM as raster tiles (Terrarium PNG, 256 px, z6..12) for the hillshade |
+| `contours.pmtiles` | contour lines as vector tiles (layer `contours`, `ele` in metres, z10..14) |
+| `manifest.json` | bounds, centre, file names, the overlay's attributes with their enum labels, the terrain |
 | `graph/` | not the pipeline's: the engine's graph, compiled from `edges.parquet` by `kompass compile` ([graph-format.md](graph-format.md)) |
 | `work/` | intermediates (region extract, raw edges, context, elevation), kept so stages can resume |
 
@@ -48,11 +50,25 @@ tools (osmium, tippecanoe, pmtiles, gdal) come from the nix dev shell; a missing
    z12, 311 KB at z13 and 123 KB at z14, where every class is shown and nothing is dropped.
    `pmtiles extract` cuts the base map from the latest Protomaps
    build (needs network).
-8. **manifest**: `manifest.json` with the file names, zoom ranges and the overlay attributes
-   (key, label, kind `enum`/`share`/`number`, enum values with labels), all derived from `schema.py`.
+8. **terrain**: the DEM (the same `ElevationFn` as the elevation stage, so another model replaces
+   GLO-30 here too) is sampled on the web-mercator pixel grid of z12, which is about the model's own
+   resolution. `terrain.pmtiles`: Terrarium-encoded PNG tiles, heights rounded to 0.5 m (PNG then
+   compresses well), lower zooms by 2×2 means, written as MBTiles and converted with `pmtiles`.
+   `contours.pmtiles`: `gdal_contour` every 10 m on the DEM blurred by 1.5 px (a surface model:
+   tree canopy makes raw lines ragged), closed lines under 400 m dropped, thinned by zoom with a
+   tippecanoe filter (100 m from z10, 20 m from z13, 10 m at z14). On a 100 km region: about 3 min,
+   68 MB + 40 MB, and the build's memory peak (5.8 GB, the DEM is held twice). Fine for hillshade
+   and 10–20 m contours; the lines in forest follow the canopy.
+9. **manifest**: `manifest.json` with the file names, zoom ranges and the overlay attributes
+   (key, label, kind `enum`/`share`/`number`, enum values with labels), all derived from `schema.py`,
+   and the `terrain` entry when its files exist. Rewriting it for the same edges keeps `builtAt`
+   (what is matched against the build must not see a new one).
 
 ## Where things are defined
 
 - The schema, enum labels and the overlay's attribute list: `schema.py`, nowhere else.
 - Tag to attribute mapping: `tags.py` (raw values to enum *labels*; `schema.codes()` gives the codes).
-- Colour-by attributes of the debug map: the manifest, so the app lists what the build offers.
+- The attributes the map can show as information layers: the manifest, so the app lists what the
+  build offers. How the app draws them by default: `web/src/map/info.ts` ([map.md](map.md)).
+- The demo region (`pipeline/regions/demo.json`: the Black Forest east of Freiburg, 15 km radius) is
+  the committed, public-safe config: about 1 min to build, the place for screenshots.

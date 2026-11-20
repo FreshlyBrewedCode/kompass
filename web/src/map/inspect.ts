@@ -1,7 +1,6 @@
 // Edge inspect: which edge did the user tap? A small box around the point is queried (a finger is not
 // a pixel), and the nearest edge in screen space wins.
 import type { MapGeoJSONFeature, Map as MapLibreMap, PointLike } from "maplibre-gl";
-import { OVERLAY_LINE } from "./style";
 
 /** Half the side of the query box, in CSS pixels: about a fingertip. */
 export const HIT_RADIUS = 14;
@@ -43,15 +42,23 @@ function lines(feature: MapGeoJSONFeature): [number, number][][] {
   return [];
 }
 
-/** The overlay edge nearest to a screen point, within the hit radius; `null` when there is none. */
-export function pickEdge(map: MapLibreMap, point: { x: number; y: number }): PickedEdge | null {
+/**
+ * The overlay edge nearest to a screen point, within the hit radius; `null` when there is none. `layers`:
+ * the layers that draw edges (those the style lacks are skipped).
+ */
+export function pickEdge(
+  map: MapLibreMap,
+  point: { x: number; y: number },
+  layers: readonly string[],
+): PickedEdge | null {
   const box: [PointLike, PointLike] = [
     [point.x - HIT_RADIUS, point.y - HIT_RADIUS],
     [point.x + HIT_RADIUS, point.y + HIT_RADIUS],
   ];
-  if (!map.getLayer(OVERLAY_LINE)) return null;
+  const present = layers.filter((id) => map.getLayer(id));
+  if (present.length === 0) return null;
   let best: { feature: MapGeoJSONFeature; distance: number } | null = null;
-  for (const feature of map.queryRenderedFeatures(box, { layers: [OVERLAY_LINE] })) {
+  for (const feature of map.queryRenderedFeatures(box, { layers: present })) {
     if (typeof feature.id !== "number") continue;
     for (const line of lines(feature)) {
       const projected = line.map((c) => {

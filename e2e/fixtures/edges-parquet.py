@@ -52,7 +52,12 @@ def main(src: Path, out: Path, build_id: str) -> None:
             "highway": p["highway"],
             "surface_class": p["surface_class"],
             "oneway_bike": p["oneway_bike"],
-            "forest_share": round(p["forest"] * 100),
+            "tracktype": p["tracktype"],
+            "bike_access": p["bike_access"],
+            "cycleway_kind": p["cycleway_kind"],
+            "route_level": p["route_level"],
+            "forest_share": p["forest_share"],
+            "road_near_share": p["road_near_share"],
             "max_grade_fwd_pct": grade or 0.0,
             "max_grade_bwd_pct": grade or 0.0,
             # half of it uphill each way
