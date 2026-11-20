@@ -70,16 +70,28 @@ export type ImportSummary = {
   withoutTime: number;
 };
 
-/** Per-ride matched edges: the seam for map-matching (docs/rides.md). */
+/** A ride map-matched onto the graph: the seam for map-matching (docs/rides.md, docs/matching.md). */
 export type RideMatch = {
   rideId: string;
-  /** the graph build the edge ids belong to; a match of another build is stale */
+  /** the graph build the arcs belong to; a match of another build is stale */
   graphBuild: string;
-  /** the edge ids the ride covers, in riding order (repeats allowed) */
-  edgeIds: Uint32Array;
-  /** per edge: 0 = along the edge's direction, 1 = against it (optional, same length) */
-  directions?: Uint8Array;
+  /** the arcs the ride rode (`edge << 1 | reverse`), in riding order (repeats allowed) */
+  arcs: Uint32Array;
+  /** per arc: the covered share of the edge × 255 (same length) */
+  coverage: Uint8Array;
+  /** per arc: the first track point on it (optional, same length) */
+  firstPoint?: Uint32Array;
+  /** track and matched length in metres (optional: the matched share) */
+  trackM?: number;
+  matchedM?: number;
   matchedAt: number;
 };
 
-export type MatchInput = { graphBuild: string; edgeIds: Uint32Array; directions?: Uint8Array };
+export type MatchInput = {
+  graphBuild: string;
+  arcs: Uint32Array;
+  coverage: Uint8Array;
+  firstPoint?: Uint32Array;
+  trackM?: number;
+  matchedM?: number;
+};

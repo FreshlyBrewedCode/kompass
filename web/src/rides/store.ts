@@ -15,7 +15,8 @@ import { decodePoints, toBuffer } from "./codec";
 import type { MatchInput, RideMatch, RidePoints, RideSummary } from "./types";
 
 export const DB_NAME = "kompass-rides";
-const DB_VERSION = 1;
+/** 2: matches became arcs + coverage (version 1 stored edge ids; those are dropped, rides stay). */
+const DB_VERSION = 2;
 const STORES = ["rides", "points", "lines", "hashes", "matches"] as const;
 
 function request<T>(r: IDBRequest<T>): Promise<T> {
@@ -44,13 +45,18 @@ export class RideStore {
   static open(factory: IDBFactory = indexedDB, name: string = DB_NAME): Promise<RideStore> {
     return new Promise((resolve, reject) => {
       const open = factory.open(name, DB_VERSION);
-      open.onupgradeneeded = () => {
+      open.onupgradeneeded = (event) => {
         const db = open.result;
-        db.createObjectStore("rides", { keyPath: "id" });
-        db.createObjectStore("points");
-        db.createObjectStore("lines");
-        db.createObjectStore("hashes", { keyPath: "hash" }).createIndex("rideId", "rideId");
-        db.createObjectStore("matches", { keyPath: "rideId" });
+        if (event.oldVersion < 1) {
+          db.createObjectStore("rides", { keyPath: "id" });
+          db.createObjectStore("points");
+          db.createObjectStore("lines");
+          db.createObjectStore("hashes", { keyPath: "hash" }).createIndex("rideId", "rideId");
+          db.createObjectStore("matches", { keyPath: "rideId" });
+        } else if (event.oldVersion < 2) {
+          // matches are derived: the old edge-id format is simply re-derived by the next matching
+          open.transaction?.objectStore("matches").clear();
+        }
       };
       open.onsuccess = () => resolve(new RideStore(open.result));
       open.onerror = () => reject(open.error ?? new Error("could not open the ride database"));
@@ -175,14 +181,18 @@ export class RideStore {
 
   /** Saves what map-matching found for a ride (replaces an earlier match). */
   async saveMatch(rideId: string, input: MatchInput): Promise<void> {
-    if (input.directions && input.directions.length !== input.edgeIds.length) {
-      throw new Error("directions must have one entry per edge");
+    if (input.coverage.length !== input.arcs.length) throw new Error("coverage must have one entry per arc");
+    if (input.firstPoint && input.firstPoint.length !== input.arcs.length) {
+      throw new Error("firstPoint must have one entry per arc");
     }
     const match: RideMatch = {
       rideId,
       graphBuild: input.graphBuild,
-      edgeIds: input.edgeIds,
-      ...(input.directions ? { directions: input.directions } : {}),
+      arcs: input.arcs,
+      coverage: input.coverage,
+      ...(input.firstPoint ? { firstPoint: input.firstPoint } : {}),
+      ...(input.trackM !== undefined ? { trackM: input.trackM } : {}),
+      ...(input.matchedM !== undefined ? { matchedM: input.matchedM } : {}),
       matchedAt: Date.now(),
     };
     const tx = this.#db.transaction(["rides", "matches"], "readwrite");
@@ -200,7 +210,11 @@ export class RideStore {
 
   async getMatches(): Promise<RideMatch[]> {
     const tx = this.#db.transaction("matches", "readonly");
-    return request(tx.objectStore("matches").getAll());
+    const all = (await request(tx.objectStore("matches").getAll())) as Partial<RideMatch>[];
+    // anything not in the current shape is stale (it is re-derived by matching again)
+    return all.filter(
+      (m): m is RideMatch => m.arcs instanceof Uint32Array && m.coverage instanceof Uint8Array,
+    );
   }
 
   /** Forgets every match (rides stay): the graph changed, or matching is to be redone. */
