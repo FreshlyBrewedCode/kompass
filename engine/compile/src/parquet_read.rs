@@ -55,6 +55,8 @@ const COLUMNS: &[&str] = &[
     "water_share",
     "builtup_share",
     "road_near_share",
+    "ele_from_m",
+    "ele_to_m",
     "ascent_fwd_m",
     "ascent_bwd_m",
     "max_grade_fwd_pct",
@@ -308,6 +310,7 @@ pub fn read_parquet(path: &Path, zoom: u8) -> Result<(Graph, CompileStats), Erro
             c("max_grade_fwd_pct")?,
             c("max_grade_bwd_pct")?,
         );
+        let (ele_from, ele_to) = (c("ele_from_m")?, c("ele_to_m")?);
         let geom = column(&b, "geometry")?;
         for i in 0..b.num_rows() {
             if edge_id[i] as usize != row {
@@ -332,20 +335,21 @@ pub fn read_parquet(path: &Path, zoom: u8) -> Result<(Graph, CompileStats), Erro
             stats.points += pts.len();
             let (first, last) = (pts[0], pts[pts.len() - 1]);
             // nodes by first appearance; edges sharing a node must agree on its position
-            let mut node = |id: i64, at: (i32, i32), asm: &mut Assembler, stats: &mut CompileStats| -> u32 {
-                if let Some(&v) = node_of.get(&id) {
-                    let q = asm.node_e7(v);
-                    let d = i64::from((q.0 - at.0).abs().max((q.1 - at.1).abs()));
-                    stats.node_mismatch_e7 = stats.node_mismatch_e7.max(d);
-                    v
-                } else {
-                    let v = asm.add_node(at.0, at.1);
-                    node_of.insert(id, v);
-                    v
-                }
-            };
-            let a = node(nf[i], first, &mut asm, &mut stats);
-            let z = node(nt[i], last, &mut asm, &mut stats);
+            let mut node =
+                |id: i64, at: (i32, i32), ele: f64, asm: &mut Assembler, stats: &mut CompileStats| -> u32 {
+                    if let Some(&v) = node_of.get(&id) {
+                        let q = asm.node_e7(v);
+                        let d = i64::from((q.0 - at.0).abs().max((q.1 - at.1).abs()));
+                        stats.node_mismatch_e7 = stats.node_mismatch_e7.max(d);
+                        v
+                    } else {
+                        let v = asm.add_node(at.0, at.1, (!ele.is_nan()).then_some(f(ele)));
+                        node_of.insert(id, v);
+                        v
+                    }
+                };
+            let a = node(nf[i], first, ele_from[i], &mut asm, &mut stats);
+            let z = node(nt[i], last, ele_to[i], &mut asm, &mut stats);
             let attrs = EdgeAttrs {
                 length_m: f(len[i]),
                 highway: code(highway[i], "highway", Highway::from_code)?,

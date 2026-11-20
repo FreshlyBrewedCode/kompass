@@ -1,0 +1,24 @@
+{
+  "id": "gravel_explorer",
+  "blurb": "Tracks, forest edges, something new",
+  "profile": {
+    "name": "Gravel explorer",
+    "weights": {
+      "unpaved": 85,
+      "quiet": 50,
+      "climb": 20,
+      "novel": 60,
+      "forest_edge": 50,
+      "main": -80,
+      "soft_ground": -40,
+      "sketchy": -50,
+      "built": -30,
+      "track": 40,
+      "fine_gravel": 40
+    },
+    "limits": {
+      "no_stairs": true,
+      "legal_only": true
+    }
+  }
+}

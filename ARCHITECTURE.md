@@ -34,23 +34,19 @@ Later: GitHub Pages for the app, and Cloudflare (R2) for the large data files if
 
 ## Engine (Rust)
 
-- Crates: `core` (graph, cost, queries), `wasm` (wasm-bindgen, runs in a Web Worker),
-  `cli` (native: `kompass route --profile gravel.json --from … --to …` → GeoJSON, for tests,
-  golden routes, the BRouter comparison and agent tool development).
-- **Cost:** per request, the profile is compiled into a cost per edge (a few ms for about 2M
-  edges). Cost = length × positive factors, so the search stays correct. Hard constraints
-  remove edges. A* uses the smallest factor the profile allows as its lower bound. Regional
-  scale needs none of the heavy speedups big routing engines use (contraction hierarchies).
-  Waypoints split the route into legs, and each leg searches a corridor.
+Built so far: the crates, the graph, the profile and its compiled cost, and `route` with waypoints,
+leg profiles and the route diff ([docs/profile.md](docs/profile.md), [docs/routing.md](docs/routing.md)),
+map-matching ([docs/matching.md](docs/matching.md)).
+Still to come:
+
 - **Dead ends** (bridges, pockets beyond them) are found here, not in the pipeline: they depend
   on the profile's hard constraints. The pipeline only prunes tiny disconnected components.
 - **Queries:**
-  - `route`: A→B through waypoints and zones, profile per leg.
+  - `route` zones: via-zones and avoid-zones (the request already carries them; ignored for now).
   - `loop`: start, distance, bearing or sketched shape; a novelty prize.
   - `lookahead`: a bounded search per branch at the next junction.
-  - `analyze`: surface, traffic, climb and novelty breakdown, cost explanation.
-- **Base vs. personal layer:** the base graph is static. The personal layer is arrays indexed
-  by edge: ridden count and last ridden per direction, corrections, ridden today. Importing a
+- **Personal layer storage:** the layer is arrays indexed by edge (ridden count and last ridden per
+  edge are what the cost reads now; per direction, corrections and ridden today later). Importing a
   ride never rebuilds the base graph.
 - **Raw tracks are the source of truth.** Edge IDs change on rebuilds, so per-edge history is
   always re-derived by matching the tracks again. Corrections are stored by OSM way ID plus
@@ -58,11 +54,8 @@ Later: GitHub Pages for the app, and Cloudflare (R2) for the large data files if
 
 ## Profile
 
-- One schema, defined in Rust (serde), with a JSON Schema generated from it (schemars) and
-  TypeScript types generated too (ts-rs). The same schema becomes the agent's `set_profile`
-  tool. The sliders, the LLM and the engine can't drift apart.
-- It contains hard constraints, soft weights (surface, road class, traffic, context bonuses,
-  climb, novelty mode) and personal overrides. A preset is a saved profile.
+Built ([docs/profile.md](docs/profile.md)); still to come: personal overrides (corrections) and the
+agent's `set_profile` tool on the generated schema.
 
 ## Ride mode (later)
 

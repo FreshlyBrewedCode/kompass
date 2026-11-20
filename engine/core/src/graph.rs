@@ -154,6 +154,8 @@ columns! {
         lon: i32 = b"lon_____",
         /// Latitude in 1e-7 degrees.
         lat: i32 = b"lat_____",
+        /// Elevation, packed by [`crate::attrs::pack_elevation`] (decimetres above −1000 m, 0 unknown).
+        ele_dm: u16 = b"ele_dm__",
     }
 }
 
@@ -188,9 +190,10 @@ columns! {
 }
 
 impl NodeColumns {
-    pub(crate) fn push(&mut self, lon: i32, lat: i32) {
+    pub(crate) fn push(&mut self, lon: i32, lat: i32, ele_dm: u16) {
         self.lon.push(lon);
         self.lat.push(lat);
+        self.ele_dm.push(ele_dm);
     }
 }
 
@@ -357,6 +360,13 @@ impl Graph {
     #[must_use]
     pub fn node_e7(&self, v: NodeId) -> (i32, i32) {
         (self.nodes.lon[v as usize], self.nodes.lat[v as usize])
+    }
+
+    /// A node's elevation in metres (0.1 m steps), `None` where the build had none.
+    #[inline]
+    #[must_use]
+    pub fn node_elevation_m(&self, v: NodeId) -> Option<f32> {
+        crate::attrs::unpack_elevation(self.nodes.ele_dm[v as usize])
     }
 
     #[inline]

@@ -1,0 +1,106 @@
+//! The shipped presets: base profiles the planner starts from, as JSON files in `engine/presets/`
+//! (embedded at build time, validated by the tests). A preset is a full profile plus an id and a
+//! line of text; the user's own presets have the same shape.
+
+use serde::{Deserialize, Serialize};
+
+#[cfg(feature = "schema")]
+use ts_rs::TS;
+
+use crate::profile::{Profile, ProfileError};
+
+/// A preset.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema, TS))]
+pub struct Preset {
+    /// Stable id (`profile.base` of profiles made from it).
+    pub id: String,
+    /// One line for the picker.
+    pub blurb: String,
+    /// The profile; its `name` is the preset's name.
+    pub profile: Profile,
+}
+
+/// The preset files, in picker order.
+const FILES: &[(&str, &str)] = &[
+    (
+        "gravel-explorer.json",
+        include_str!("../../presets/gravel-explorer.json"),
+    ),
+    ("paved-quiet.json", include_str!("../../presets/paved-quiet.json")),
+    (
+        "river-valley.json",
+        include_str!("../../presets/river-valley.json"),
+    ),
+    ("blank-slate.json", include_str!("../../presets/blank-slate.json")),
+];
+
+/// Parses and validates a preset.
+pub fn parse(json: &str) -> Result<Preset, ProfileError> {
+    let p: Preset = serde_json::from_str(json).map_err(|e| ProfileError(format!("preset: {e}")))?;
+    p.profile.validate()?;
+    if p.profile.name.as_deref().is_none_or(str::is_empty) {
+        return Err(ProfileError(format!("preset {}: the profile needs a name", p.id)));
+    }
+    Ok(p)
+}
+
+/// Every shipped preset.
+///
+/// # Panics
+/// Never for the shipped files (the tests parse them).
+#[must_use]
+pub fn presets() -> Vec<Preset> {
+    FILES
+        .iter()
+        .map(|(file, json)| parse(json).unwrap_or_else(|e| panic!("presets/{file}: {e}")))
+        .collect()
+}
+
+/// A preset by id or name (case-insensitive).
+#[must_use]
+pub fn preset(id_or_name: &str) -> Option<Preset> {
+    let want = id_or_name.to_lowercase();
+    presets().into_iter().find(|p| {
+        p.id == want
+            || p.id.replace('_', "-") == want
+            || p.profile
+                .name
+                .as_deref()
+                .is_some_and(|n| n.to_lowercase() == want)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::profile::{LimitId, PrefId};
+
+    #[test]
+    fn the_presets_parse_and_validate() {
+        let all = presets();
+        let ids: Vec<&str> = all.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["gravel_explorer", "paved_quiet", "river_valley", "blank_slate"]
+        );
+        for p in &all {
+            // every preset carries the core set (the UI shows it)
+            for id in crate::catalogue::catalogue().core {
+                assert!(p.profile.weights.contains_key(&id), "{}: {id}", p.id);
+            }
+            assert!(p.profile.base.is_none(), "{}: a shipped preset is a base", p.id);
+            // the file names the id
+            let file = FILES.iter().find(|f| parse(f.1).unwrap().id == p.id).unwrap().0;
+            assert_eq!(file.trim_end_matches(".json").replace('-', "_"), p.id);
+        }
+        let blank = preset("Blank slate").unwrap();
+        assert!(blank.profile.weights.values().all(|w| w.get() == 0));
+        assert!(blank.profile.limits.is_empty());
+        let paved = preset("paved-quiet").unwrap();
+        assert_eq!(paved.profile.limit(LimitId::PavedOnly), Some(None));
+        assert!(preset("gravel explorer").unwrap().profile.weight(PrefId::Unpaved) > Some(0));
+        assert!(preset("nope").is_none());
+    }
+}

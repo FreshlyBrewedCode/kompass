@@ -6,7 +6,16 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!!**/.claude", "!!docs", "!!design", "!**/*.md", "!**/dist", "!!web/src/engine/pkg"]
+    "includes": [
+      "**",
+      "!!**/.claude",
+      "!!docs",
+      "!!design",
+      "!**/*.md",
+      "!**/dist",
+      "!!web/src/engine/pkg",
+      "!!web/src/engine/generated"
+    ]
   },
   "formatter": {
     "enabled": true,

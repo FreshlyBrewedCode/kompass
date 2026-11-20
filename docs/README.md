@@ -12,6 +12,8 @@ lasting shape here and deletes the section there.
 - [rides.md](rides.md): the ride library: GPX/FIT import, on-device storage, dedup, backup, the map-matching seam
 - [graph-format.md](graph-format.md): the engine's tiled binary graph, its files and how it loads
 - [matching.md](matching.md): map-matching recorded tracks onto the graph, lazy geometry, the explored fold
+- [profile.md](profile.md): the routing profile, the catalogue, how a profile becomes a cost, presets
+- [routing.md](routing.md): the `route` query (request, snapping, search, result), the route diff
 - [adr/](adr/): architecture decision records
   - [0001](adr/0001-toolchain.md): toolchain, nix locally and setup actions in CI
 - [design/](design/): design rounds (directions, mock-ups, the chosen one)
@@ -23,6 +25,7 @@ lasting shape here and deletes the section there.
 pipeline/ (Python, offline)  ──edges.parquet──▶  engine/ (Rust)
                                                    compile ── graph/ tiles (`kompass compile`)
                                                    core ── cli  (native: `kompass`)
+                                                    │  profile → cost per arc → A* → route
                                                     └── wasm (wasm-bindgen)
                                                           │ bun run build:wasm
                                                           ▼

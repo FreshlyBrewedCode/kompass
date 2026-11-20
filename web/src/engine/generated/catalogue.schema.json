@@ -1,0 +1,390 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Catalogue",
+  "description": "The whole catalogue (`kompass profile catalogue`).",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "groups": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/GroupInfo"
+      }
+    },
+    "preferences": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Preference"
+      }
+    },
+    "limits": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Limit"
+      }
+    },
+    "core": {
+      "description": "The core set: always on screen, whatever the base.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PrefId"
+      }
+    },
+    "bounds": {
+      "$ref": "#/$defs/BoundsInfo"
+    }
+  },
+  "required": [
+    "version",
+    "groups",
+    "preferences",
+    "limits",
+    "core",
+    "bounds"
+  ],
+  "$defs": {
+    "GroupInfo": {
+      "description": "A group's text.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Group"
+        },
+        "label": {
+          "type": "string"
+        },
+        "blurb": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "blurb"
+      ]
+    },
+    "Group": {
+      "description": "A group of the picker.",
+      "type": "string",
+      "enum": [
+        "surface",
+        "ways",
+        "traffic",
+        "landscape",
+        "terrain",
+        "signs",
+        "trail",
+        "history"
+      ]
+    },
+    "Preference": {
+      "description": "A soft preference.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/PrefId"
+        },
+        "kind": {
+          "description": "Always [`Kind::Soft`].",
+          "$ref": "#/$defs/Kind"
+        },
+        "group": {
+          "$ref": "#/$defs/Group"
+        },
+        "label": {
+          "type": "string"
+        },
+        "short": {
+          "description": "For chips.",
+          "type": "string"
+        },
+        "hint": {
+          "description": "One line: what it matches.",
+          "type": "string"
+        },
+        "low_label": {
+          "description": "Words for the slider's ends, when \"avoid\" / \"seek\" don't fit.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "high_label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "default": {
+          "description": "The weight it starts with when added.",
+          "type": "integer",
+          "format": "int8",
+          "minimum": -128,
+          "maximum": 127
+        },
+        "core": {
+          "description": "Part of the core set every profile shows.",
+          "type": "boolean"
+        },
+        "max_bonus": {
+          "description": "The factor on a fully matching way at +100 (< 1: cheaper).",
+          "type": "number",
+          "format": "float"
+        },
+        "max_penalty": {
+          "description": "The factor on a fully matching way at −100 (> 1: dearer).",
+          "type": "number",
+          "format": "float"
+        },
+        "gated": {
+          "description": "Its bonus only counts on ways the rest of the profile finds acceptable (see `docs/profile.md`).",
+          "type": "boolean"
+        },
+        "personal": {
+          "description": "Reads the personal layer (no effect without one).",
+          "type": "boolean"
+        },
+        "coverage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Coverage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "group",
+        "label",
+        "short",
+        "hint",
+        "default",
+        "core",
+        "max_bonus",
+        "max_penalty",
+        "gated",
+        "personal"
+      ]
+    },
+    "PrefId": {
+      "description": "A soft preference of the catalogue (`catalogue().preferences`).",
+      "type": "string",
+      "enum": [
+        "unpaved",
+        "paved_smooth",
+        "paved_rough",
+        "fine_gravel",
+        "soft_ground",
+        "unknown_surface",
+        "tracktype",
+        "smoothness",
+        "track",
+        "path",
+        "cycleway_sep",
+        "cycleway_road",
+        "residential",
+        "service",
+        "minor",
+        "main",
+        "quiet",
+        "speed",
+        "lanes",
+        "near_road",
+        "forest",
+        "forest_edge",
+        "water",
+        "open",
+        "built",
+        "climb",
+        "steep",
+        "bike_routes",
+        "mtb_routes",
+        "access",
+        "sketchy",
+        "mtb",
+        "visibility",
+        "novel",
+        "stale",
+        "familiar"
+      ]
+    },
+    "Kind": {
+      "description": "What kind of control an entry is.",
+      "oneOf": [
+        {
+          "description": "A slider, −100 (avoid) … +100 (seek).",
+          "type": "string",
+          "const": "soft"
+        },
+        {
+          "description": "A switch that excludes ways.",
+          "type": "string",
+          "const": "limit_flag"
+        },
+        {
+          "description": "A number that excludes ways beyond it.",
+          "type": "string",
+          "const": "limit_number"
+        }
+      ]
+    },
+    "Coverage": {
+      "description": "Where a preference's data comes from, and how much of the region has it.",
+      "type": "object",
+      "properties": {
+        "attribute": {
+          "description": "The attribute the preference rests on (an `edges.parquet` column, or `personal`).",
+          "type": "string"
+        },
+        "share": {
+          "description": "Share of the region's length where it is mapped, 0..1 (only from a loaded region).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "note": {
+          "description": "What to know about the data.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "attribute",
+        "note"
+      ]
+    },
+    "Limit": {
+      "description": "A hard limit.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/LimitId"
+        },
+        "kind": {
+          "$ref": "#/$defs/Kind"
+        },
+        "group": {
+          "$ref": "#/$defs/Group"
+        },
+        "label": {
+          "type": "string"
+        },
+        "hint": {
+          "type": "string"
+        },
+        "number": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NumberRange"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "group",
+        "label",
+        "hint"
+      ]
+    },
+    "LimitId": {
+      "description": "A hard limit of the catalogue (`catalogue().limits`).",
+      "type": "string",
+      "enum": [
+        "no_main_roads",
+        "paved_only",
+        "no_unknown_surface",
+        "max_grade",
+        "max_mtb_scale",
+        "no_stairs",
+        "legal_only",
+        "no_ferries"
+      ]
+    },
+    "NumberRange": {
+      "description": "The number of a number limit.",
+      "type": "object",
+      "properties": {
+        "min": {
+          "type": "number",
+          "format": "double"
+        },
+        "max": {
+          "type": "number",
+          "format": "double"
+        },
+        "step": {
+          "type": "number",
+          "format": "double"
+        },
+        "default": {
+          "description": "When the limit is switched on.",
+          "type": "number",
+          "format": "double"
+        },
+        "unit": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "min",
+        "max",
+        "step",
+        "default",
+        "unit"
+      ]
+    },
+    "BoundsInfo": {
+      "description": "The ranges of [`Bounds`].",
+      "type": "object",
+      "properties": {
+        "min_factor": {
+          "$ref": "#/$defs/BoundRange"
+        },
+        "max_factor": {
+          "$ref": "#/$defs/BoundRange"
+        }
+      },
+      "required": [
+        "min_factor",
+        "max_factor"
+      ]
+    },
+    "BoundRange": {
+      "description": "A bound's range.",
+      "type": "object",
+      "properties": {
+        "min": {
+          "type": "number",
+          "format": "float"
+        },
+        "max": {
+          "type": "number",
+          "format": "float"
+        },
+        "default": {
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "required": [
+        "min",
+        "max",
+        "default"
+      ]
+    }
+  }
+}

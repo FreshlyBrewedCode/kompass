@@ -52,6 +52,19 @@ cd engine && cargo run --release -p kompass-cli -- match --build ../data/build/<
                          # map-match recorded tracks: aggregates only (rides, in-region share, matched share,
                          # breaks and time per 100 km); a regression check over a directory of tracks
                          # (docs/matching.md). --geojson / --explored write the user's real tracks: tmp or data/ only
+cd engine && cargo run --release -p kompass-cli -- route --build ../data/build/<name> --profile <file|preset> \
+    --from lon,lat [--via lon,lat]... --to lon,lat [--out route.geojson] [--segments]
+                         # one route as GeoJSON (summary + breakdowns in properties; segments as features)
+cd engine && cargo run -p kompass-cli -- profile schema | catalogue [--build <dir>] | presets
+                         # the profile's JSON Schema, the catalogue (coverage of a region), the presets
+cd engine && cargo run --release -p kompass-cli -- bench --build ../data/build/<name>
+                         # seeded random routes at ~10/50/100 km, both main presets: compile and route
+                         # times, settled nodes, result size (pairs never printed or stored)
+cd engine && cargo run --release -p kompass-cli -- compare --build ../data/build/<name> --profiles a,b [--out-dir /tmp/x]
+                         # route quality on seeded random 30–60 km pairs vs. the shortest way (GeoJSON
+                         # only where --out-dir points: keep it out of the repo, it shows the region)
+bun run gen:engine       # regenerate web/src/engine/generated/ (JSON Schemas + TypeScript types of the
+                         # engine API) from the Rust types; `cargo test` fails when they are stale
 uv run --project tools/komoot kompass-komoot --help    # Komoot download (run by the user, see tools/komoot/README.md)
 ```
 
@@ -68,11 +81,12 @@ uv run --project tools/komoot kompass-komoot --help    # Komoot download (run by
 
 ## Layout
 
-- `engine/`: Rust workspace. `core` (`kompass-core`: graph, cost, queries; platform-free; tiny test
-  graphs in `kompass_core::testing`), `wasm` (`kompass-wasm`: wasm-bindgen face for the browser),
+- `engine/`: Rust workspace. `core` (`kompass-core`: graph, profile, cost, route; platform-free; tiny
+  test graphs in `kompass_core::testing`), `wasm` (`kompass-wasm`: wasm-bindgen face for the browser),
   `compile` (`kompass-compile`: edges.parquet → graph files; native only, keeps parquet out of the
   wasm), `cli` (`kompass-cli`, binary `kompass`).
-  Toolchain pinned in `engine/rust-toolchain.toml`.
+  Toolchain pinned in `engine/rust-toolchain.toml`. The shipped profile presets are
+  `engine/presets/*.json` (embedded in the engine, validated by its tests).
 - `web/`: `@kompass/web`, bun + Vite + React + Tailwind v4 + shadcn/ui + MapLibre GL. The engine
   client lives in `web/src/engine/` (`protocol.ts` the messages, `client.ts` the typed wrapper,
   `worker.ts` the Web Worker that loads the wasm). Unit tests in `web/test`.
@@ -101,7 +115,9 @@ uv run --project tools/komoot kompass-komoot --help    # Komoot download (run by
 - Package scope `@kompass/*`; crates `kompass-*`; env vars `KOMPASS_*`.
 - The engine stays in Rust; the web app talks to it only through the worker client
   (`startEngine()` / `call(method, params)`). A new query: a `kompass-core` function, a
-  `kompass-wasm` export, a method in `EngineMethods`, a handler in `worker.ts`.
+  `kompass-wasm` export, a method in `EngineMethods`, a handler in `worker.ts`. API types are Rust
+  (serde + schemars + ts-rs behind core's `schema` feature, never in the wasm build); the web app
+  imports the generated ones from `web/src/engine/generated/types.ts`.
 - Web: colours only via the theme tokens in `web/src/index.css`; the theme follows the system
   setting. Add shadcn components with `bunx shadcn@4.23.0 add <name>` in `web/`. Mobile first:
   check every screen at 390×844. The app must keep working from a sub-path (relative URLs only).

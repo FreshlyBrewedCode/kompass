@@ -42,6 +42,7 @@ pub struct GraphBuilder {
     zoom: u8,
     build_id: String,
     nodes: Vec<(i32, i32)>,
+    elevations: Vec<Option<f32>>,
     edges: Vec<Edge>,
 }
 
@@ -83,6 +84,7 @@ impl GraphBuilder {
             zoom: 11,
             build_id: "test".into(),
             nodes: Vec::new(),
+            elevations: Vec::new(),
             edges: Vec::new(),
         }
     }
@@ -100,10 +102,34 @@ impl GraphBuilder {
         self
     }
 
-    /// A node at a coordinate in degrees.
+    /// A node at a coordinate in degrees (elevation unknown).
     pub fn node(&mut self, lng: f64, lat: f64) -> Handle {
         self.nodes.push(LngLat { lng, lat }.to_e7());
+        self.elevations.push(None);
         self.nodes.len() - 1
+    }
+
+    /// A node at a coordinate in degrees with an elevation in metres.
+    pub fn node_at(&mut self, lng: f64, lat: f64, ele_m: f32) -> Handle {
+        let h = self.node(lng, lat);
+        self.elevations[h] = Some(ele_m);
+        h
+    }
+
+    /// Sets a node's elevation.
+    pub fn set_elevation(&mut self, node: Handle, ele_m: Option<f32>) {
+        self.elevations[node] = ele_m;
+    }
+
+    /// Edge attributes, to change them after adding.
+    pub fn attrs_mut(&mut self, edge: Handle) -> &mut EdgeAttrs {
+        &mut self.edges[edge].attrs
+    }
+
+    /// The number of nodes and edges added so far.
+    #[must_use]
+    pub fn counts(&self) -> (usize, usize) {
+        (self.nodes.len(), self.edges.len())
     }
 
     /// An edge; a `length_m` of 0 is filled in from the points.
@@ -203,7 +229,7 @@ impl GraphBuilder {
         node_order.sort_by_key(|&v| (node_rank[v], v));
         let mut nodes = vec![0; self.nodes.len()];
         for &v in &node_order {
-            nodes[v] = asm.add_node(self.nodes[v].0, self.nodes[v].1);
+            nodes[v] = asm.add_node(self.nodes[v].0, self.nodes[v].1, self.elevations[v]);
         }
         let mut edges = vec![0; self.edges.len()];
         for &i in &order {

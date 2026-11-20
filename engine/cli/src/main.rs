@@ -4,11 +4,28 @@
 //!   in `<dir>/manifest.json`.
 //! - `kompass info --build <dir> [--snaps N]`: loads the graph, prints counts, load times, memory and
 //!   the time of N seeded random snaps (no coordinates).
+//! - `kompass route --build <dir> --profile <file|preset> --from lon,lat [--via lon,lat]… --to
+//!   lon,lat [--out file] [--segments] [--radius m]`: a route as GeoJSON.
+//! - `kompass profile schema | catalogue [--build <dir>] | presets`: the profile's JSON Schema, the
+//!   catalogue (with coverage shares of a region), the shipped presets.
+//! - `kompass schema --write <dir> | --check <dir>`: the generated JSON Schemas and TypeScript types.
+//! - `kompass bench --build <dir>`: seeded random routes at ~10/50/100 km under the main presets.
+//! - `kompass compare --build <dir> --profiles a,b`: route quality of profiles on seeded random pairs.
 //! - `kompass match --build <dir> [--geojson <dir>] [--explored <file>] <gpx files or directories>`:
 //!   map-matches recorded tracks, prints aggregate numbers (`docs/matching.md`).
 
+#![allow(
+    clippy::doc_markdown,
+    clippy::must_use_candidate,
+    clippy::many_single_char_names,
+    clippy::single_match_else,
+    reason = "a binary: command-line text in the docs, no API to misuse, short names for pairs"
+)]
+
+mod bench;
 mod gpx;
 mod matchcmd;
+mod route;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -21,10 +38,17 @@ const USAGE: &str = "usage: kompass [--version | --help]
        kompass compile --build <dir> [--zoom <z>]
        kompass info --build <dir> [--snaps <n>]
        kompass match --build <dir> [--geojson <dir>] [--explored <file>] [--no-geometry]
-                     [--radius|--candidates|--sigma|--beta|--step|--skip|--gap|--spur <v>] <gpx files or directories>";
+                     [--radius|--candidates|--sigma|--beta|--step|--skip|--gap|--spur <v>] <gpx files or directories>
+       kompass route --build <dir> --profile <file|preset> --from <lon,lat> [--via <lon,lat>]... --to <lon,lat>
+                     [--out <file>] [--segments] [--radius <m>]
+       kompass profile schema | catalogue [--build <dir>] | presets
+       kompass schema --write <dir> | --check <dir>
+       kompass bench --build <dir> [--pairs <n>] [--seed <n>] [--profiles <a,b>]
+       kompass compare --build <dir> --profiles <a,b,...> [--pairs <n>] [--km <min-max>] [--seed <n>] [--out-dir <dir>]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let rest = args.get(1..).unwrap_or(&[]);
     let result = match args.first().map(String::as_str) {
         None | Some("--version" | "-V" | "version") => {
             println!("kompass {}", kompass_core::version());
@@ -34,9 +58,14 @@ fn main() -> ExitCode {
             println!("{USAGE}");
             Ok(())
         }
-        Some("compile") => Options::parse(&args[1..]).and_then(|o| compile(&o)),
-        Some("info") => Options::parse(&args[1..]).and_then(|o| info(&o)),
-        Some("match") => matchcmd::run(&args[1..]),
+        Some("compile") => Args::parse(rest, &[]).and_then(|a| compile(&a)),
+        Some("info") => Args::parse(rest, &[]).and_then(|a| info(&a)),
+        Some("match") => matchcmd::run(rest),
+        Some("route") => Args::parse(rest, &["--segments"]).and_then(|a| route::run(&a)),
+        Some("profile") => profile(rest),
+        Some("schema") => Args::parse(rest, &[]).and_then(|a| schema(&a)),
+        Some("bench") => Args::parse(rest, &[]).and_then(|a| bench::bench(&a)),
+        Some("compare") => Args::parse(rest, &[]).and_then(|a| bench::compare(&a)),
         Some(other) => Err(Failure::Usage(format!("unknown command `{other}`"))),
     };
     match result {
@@ -52,7 +81,7 @@ fn main() -> ExitCode {
     }
 }
 
-enum Failure {
+pub(crate) enum Failure {
     Usage(String),
     Run(String),
 }
@@ -63,57 +92,103 @@ impl From<kompass_compile::Error> for Failure {
     }
 }
 
-struct Options {
-    build: PathBuf,
-    zoom: u8,
-    snaps: usize,
+impl From<std::io::Error> for Failure {
+    fn from(e: std::io::Error) -> Failure {
+        Failure::Run(e.to_string())
+    }
 }
 
-impl Options {
-    fn parse(args: &[String]) -> Result<Options, Failure> {
-        let mut o = Options {
-            build: PathBuf::new(),
-            zoom: kompass_compile::DEFAULT_TILE_ZOOM,
-            snaps: 100_000,
+/// `--flag value` pairs (repeatable) and bare switches.
+pub(crate) struct Args {
+    values: Vec<(String, String)>,
+    switches: Vec<String>,
+}
+
+impl Args {
+    fn parse(args: &[String], switches: &[&str]) -> Result<Args, Failure> {
+        let mut a = Args {
+            values: Vec::new(),
+            switches: Vec::new(),
         };
         let mut it = args.iter();
         while let Some(flag) = it.next() {
-            let mut value = || {
-                it.next()
-                    .ok_or_else(|| Failure::Usage(format!("{flag} needs a value")))
-            };
-            match flag.as_str() {
-                "--build" => o.build = PathBuf::from(value()?),
-                "--zoom" => {
-                    o.zoom = value()?
-                        .parse()
-                        .ok()
-                        .filter(|z| (8..=16).contains(z))
-                        .ok_or_else(|| Failure::Usage("--zoom must be 8..16".into()))?;
-                }
-                "--snaps" => {
-                    o.snaps = value()?
-                        .parse()
-                        .map_err(|_| Failure::Usage("--snaps must be a number".into()))?;
-                }
-                other => return Err(Failure::Usage(format!("unknown option `{other}`"))),
+            if !flag.starts_with("--") {
+                return Err(Failure::Usage(format!("unexpected argument `{flag}`")));
+            }
+            if switches.contains(&flag.as_str()) {
+                a.switches.push(flag.clone());
+                continue;
+            }
+            let v = it
+                .next()
+                .ok_or_else(|| Failure::Usage(format!("{flag} needs a value")))?;
+            a.values.push((flag.clone(), v.clone()));
+        }
+        Ok(a)
+    }
+
+    /// The last value of a flag.
+    pub(crate) fn get(&self, flag: &str) -> Option<&str> {
+        self.values
+            .iter()
+            .rev()
+            .find(|(f, _)| f == flag)
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// Every value of a repeatable flag, in order.
+    pub(crate) fn all(&self, flag: &str) -> Vec<&str> {
+        self.values
+            .iter()
+            .filter(|(f, _)| f == flag)
+            .map(|(_, v)| v.as_str())
+            .collect()
+    }
+
+    pub(crate) fn switch(&self, flag: &str) -> bool {
+        self.switches.iter().any(|s| s == flag)
+    }
+
+    /// Rejects flags outside `known`.
+    pub(crate) fn only(&self, known: &[&str]) -> Result<(), Failure> {
+        for (f, _) in &self.values {
+            if !known.contains(&f.as_str()) {
+                return Err(Failure::Usage(format!("unknown option `{f}`")));
             }
         }
-        if o.build.as_os_str().is_empty() {
-            return Err(Failure::Usage("--build <dir> is required".into()));
+        Ok(())
+    }
+
+    pub(crate) fn build(&self) -> Result<PathBuf, Failure> {
+        self.get("--build")
+            .map(PathBuf::from)
+            .ok_or_else(|| Failure::Usage("--build <dir> is required".into()))
+    }
+
+    pub(crate) fn number<T: std::str::FromStr>(&self, flag: &str, default: T) -> Result<T, Failure> {
+        match self.get(flag) {
+            None => Ok(default),
+            Some(v) => v
+                .parse()
+                .map_err(|_| Failure::Usage(format!("{flag} must be a number"))),
         }
-        Ok(o)
     }
 }
 
 #[allow(clippy::cast_precision_loss, reason = "sizes for display")]
-fn mb(bytes: u64) -> String {
+pub(crate) fn mb(bytes: u64) -> String {
     format!("{:.1} MB", bytes as f64 / 1e6)
 }
 
-fn compile(o: &Options) -> Result<(), Failure> {
+fn compile(a: &Args) -> Result<(), Failure> {
+    a.only(&["--build", "--zoom"])?;
+    let build = a.build()?;
+    let zoom: u8 = a.number("--zoom", kompass_compile::DEFAULT_TILE_ZOOM)?;
+    if !(8..=16).contains(&zoom) {
+        return Err(Failure::Usage("--zoom must be 8..16".into()));
+    }
     let t = Instant::now();
-    let (graph, stats, written) = kompass_compile::compile_build(&o.build, o.zoom)?;
+    let (graph, stats, written) = kompass_compile::compile_build(&build, zoom)?;
     let secs = t.elapsed().as_secs_f64();
     let info = graph.info();
     #[allow(clippy::cast_precision_loss, reason = "a ratio for display")]
@@ -152,7 +227,7 @@ fn compile(o: &Options) -> Result<(), Failure> {
 }
 
 /// Peak resident memory of this process (Linux), in bytes.
-fn peak_rss() -> Option<u64> {
+pub(crate) fn peak_rss() -> Option<u64> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
     let line = status.lines().find(|l| l.starts_with("VmHWM:"))?;
     line.split_whitespace()
@@ -162,11 +237,11 @@ fn peak_rss() -> Option<u64> {
         .map(|kb| kb * 1024)
 }
 
-/// A deterministic xorshift for the snap queries.
-struct Rng(u64);
+/// A deterministic xorshift (snap queries, benchmark pairs).
+pub(crate) struct Rng(pub u64);
 
 impl Rng {
-    fn next(&mut self) -> u64 {
+    pub(crate) fn next_u64(&mut self) -> u64 {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
         self.0 ^= self.0 << 17;
@@ -174,12 +249,12 @@ impl Rng {
     }
 
     #[allow(clippy::cast_precision_loss, reason = "a uniform value in -1..1")]
-    fn signed(&mut self) -> f64 {
-        (self.next() % 2_000_001) as f64 / 1e6 - 1.0
+    pub(crate) fn signed(&mut self) -> f64 {
+        (self.next_u64() % 2_000_001) as f64 / 1e6 - 1.0
     }
 }
 
-fn percentile(sorted: &[f64], p: f64) -> f64 {
+pub(crate) fn percentile(sorted: &[f64], p: f64) -> f64 {
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
@@ -191,8 +266,11 @@ fn percentile(sorted: &[f64], p: f64) -> f64 {
 }
 
 #[allow(clippy::cast_possible_truncation, reason = "node ids fit u32")]
-fn info(o: &Options) -> Result<(), Failure> {
-    let (graph, t) = kompass_compile::build::load(&o.build, true)?;
+fn info(a: &Args) -> Result<(), Failure> {
+    a.only(&["--build", "--snaps"])?;
+    let build = a.build()?;
+    let n_snaps: usize = a.number("--snaps", 100_000)?;
+    let (graph, t) = kompass_compile::build::load(&build, true)?;
     let i = graph.info();
     println!(
         "graph of build {}: format {}, {} nodes, {} edges, {} tiles at z{}",
@@ -222,8 +300,8 @@ fn info(o: &Options) -> Result<(), Failure> {
         grid.cells(),
         grid.entries()
     );
-    if o.snaps > 0 && graph.node_count() > 0 {
-        snaps(&graph, &grid, o.snaps);
+    if n_snaps > 0 && graph.node_count() > 0 {
+        snaps(&graph, &grid, n_snaps);
     }
     if let Some(rss) = peak_rss() {
         println!("peak RSS {}", mb(rss));
@@ -238,7 +316,7 @@ fn snaps(graph: &Graph, grid: &Grid, n: usize) {
     let deg = 150.0 / 111_195.0;
     let points: Vec<LngLat> = (0..n)
         .map(|_| {
-            let v = (rng.next() % graph.node_count() as u64) as u32;
+            let v = (rng.next_u64() % graph.node_count() as u64) as u32;
             let p = graph.node(v);
             let kx = p.lat.to_radians().cos();
             LngLat {
@@ -277,4 +355,77 @@ fn snaps(graph: &Graph, grid: &Grid, n: usize) {
         percentile(&five, 0.95),
         percentile(&five, 1.0)
     );
+}
+
+fn profile(rest: &[String]) -> Result<(), Failure> {
+    let json = |v: &serde_json::Value| serde_json::to_string_pretty(v).unwrap_or_default();
+    match rest.first().map(String::as_str) {
+        Some("schema") => {
+            Args::parse(&rest[1..], &[])?.only(&[])?;
+            let files = kompass_core::schema::files();
+            let schema = files
+                .iter()
+                .find(|(f, _)| *f == "profile.schema.json")
+                .map_or_else(String::new, |(_, s)| s.clone());
+            print!("{schema}");
+            Ok(())
+        }
+        Some("catalogue") => {
+            let a = Args::parse(&rest[1..], &[])?;
+            a.only(&["--build"])?;
+            let c = match a.get("--build") {
+                Some(dir) => {
+                    let (g, _) = kompass_compile::build::load(std::path::Path::new(dir), false)?;
+                    kompass_core::catalogue::catalogue_for(&g, None)
+                }
+                None => kompass_core::catalogue(),
+            };
+            println!("{}", json(&serde_json::to_value(c).unwrap_or_default()));
+            Ok(())
+        }
+        Some("presets") => {
+            Args::parse(&rest[1..], &[])?.only(&[])?;
+            println!(
+                "{}",
+                json(&serde_json::to_value(kompass_core::presets()).unwrap_or_default())
+            );
+            Ok(())
+        }
+        _ => Err(Failure::Usage(
+            "profile needs one of: schema, catalogue, presets".into(),
+        )),
+    }
+}
+
+fn schema(a: &Args) -> Result<(), Failure> {
+    a.only(&["--write", "--check"])?;
+    let files = kompass_core::schema::files();
+    if let Some(dir) = a.get("--write") {
+        let dir = PathBuf::from(dir);
+        std::fs::create_dir_all(&dir)?;
+        for (name, contents) in &files {
+            std::fs::write(dir.join(name), contents)?;
+        }
+        println!("wrote {} files to {}", files.len(), dir.display());
+        return Ok(());
+    }
+    let dir = a
+        .get("--check")
+        .map(PathBuf::from)
+        .ok_or_else(|| Failure::Usage("schema needs --write <dir> or --check <dir>".into()))?;
+    let stale: Vec<&str> = files
+        .iter()
+        .filter(|(name, contents)| std::fs::read_to_string(dir.join(name)).ok().as_ref() != Some(contents))
+        .map(|(name, _)| *name)
+        .collect();
+    if stale.is_empty() {
+        println!("{} files up to date", files.len());
+        Ok(())
+    } else {
+        Err(Failure::Run(format!(
+            "stale generated files in {}: {} (run `bun run gen:engine`)",
+            dir.display(),
+            stale.join(", ")
+        )))
+    }
 }
