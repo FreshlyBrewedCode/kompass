@@ -13,8 +13,17 @@
     <link rel="icon" href="./icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
     <script>
-      // the theme follows the system setting; set before the first paint (src/lib/theme.ts keeps it in sync)
-      document.documentElement.classList.toggle("dark", matchMedia("(prefers-color-scheme: dark)").matches);
+      // the stored choice (light / dark) or else the system setting, applied before the first paint;
+      // src/lib/theme.ts keeps it in sync (same key, same rule)
+      (() => {
+        let p = null;
+        try {
+          p = localStorage.getItem("kompass.theme");
+        } catch {}
+        const dark = p === "dark" || (p !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.classList.toggle("dark", dark);
+        document.documentElement.style.colorScheme = dark ? "dark" : "light";
+      })();
     </script>
   </head>
   <body>

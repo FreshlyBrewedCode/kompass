@@ -56,6 +56,9 @@ reroutes when the explored store changes, so "new to me" and the ridden lane fol
 
 ## Map
 
+The light/dark choice (system / light / dark) is the "Appearance" row of the Map & rides sheet: app-level
+settings live there, no extra menu (see docs/map.md, Theme).
+
 `RouteLayer` adds three GeoJSON sources (main, alt, cursor) above the map's ways and "My rides" and
 below the labels, and re-adds them after a theme change (a new style). It subscribes to the store
 itself and calls `setData` only for the source whose data changed. Waypoints are MapLibre markers
