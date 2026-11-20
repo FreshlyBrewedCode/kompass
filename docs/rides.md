@@ -107,24 +107,27 @@ trailer:        u32 0 · u32 0 · u32 ride count · u32 CRC-32 of every byte bef
 
 ## The map-matching seam
 
-The matcher is built in the engine ([matching.md](matching.md)); wiring it to the library comes next, and the
-stored match then becomes `arcs` + `coverage` (+ `firstPoint`, `unmatched`) instead of `edgeIds` + `directions`.
-The library as it stands gives it everything to plug in
+The matcher runs in the engine worker (`engine.call("matchRide", { lat, lon })`,
+[engine-web.md](engine-web.md), [matching.md](matching.md)); driving it from the library (after an import,
+after a new build, with progress) is the next task. The library gives it everything to plug in
 (`RideLibrary`, reachable through the worker as the `RideMethods` in `protocol.ts`):
 
 - `listRides()` summaries, `getPoints(rideId)` → `{ count, lat, lon, time, ele }` typed arrays (degrees, ms, m).
-- `saveMatch(rideId, { graphBuild, edgeIds: Uint32Array, directions?: Uint8Array })`: the edges a ride
-  covers in riding order (`directions[i]`: 0 along, 1 against the edge's direction), marked with the graph
-  build they belong to. `clearMatches()` forgets them all (rides stay).
-- `exploredInput(graphBuild)` → `Map<edgeId, { count, lastRidden }>` (`match.ts`, `foldMatches`): per edge
-  the number of rides (an edge passed twice in a ride counts once) and the latest ride end (0 = only untimed
-  rides). Matches of another `graphBuild` are stale and ignored.
-- **At start-up** `RidesState.attachExplored(exploredStore, graphBuild)` folds the saved matches into the
-  `ExploredStore` and refolds after every import or delete. Until matching defines a graph build id the
-  app passes the manifest's `builtAt`. With no matches at all the store is left alone (the `?fakeRidden`
-  dev hook keeps working).
-- Tested with a fake matcher (`web/test/rides-library.test.ts`) and, through `window.__kompass.ridesCall`
-  in dev builds, in the e2e (a saved match shows up in the explored map after a reload).
+- `saveMatch(rideId, { graphBuild, arcs: Uint32Array, coverage: Uint8Array, firstPoint?, trackM?, matchedM? })`:
+  what the matcher returns (the arcs in riding order, `edge << 1 | reverse`; per arc the covered share of the
+  edge × 255), marked with the graph build (the engine's build id). `clearMatches()` forgets them all (rides
+  stay). Database version 2 changed the stored format; the upgrade clears the version 1 matches (edge ids),
+  which are derived anyway.
+- `exploredInput(graphBuild)` → `Map<edgeId, { count, lastRidden }>` (`match.ts`, `foldMatches`): the
+  explored rule of [matching.md](matching.md) (an arc counts when the ride covers half of the edge, its
+  pieces summed; an edge when either arc does), per edge the number of rides (once per ride) and the latest
+  ride end (0 = only untimed rides). Matches of another `graphBuild` are stale and ignored.
+- **At start-up** `RidesState.attachExplored(exploredStore, graphBuild)` folds the saved matches of the
+  manifest's graph build into the `ExploredStore` and refolds after every import or delete. With no matches
+  at all the store is left alone (the `?fakeRidden` dev hook keeps working).
+- Tested with a fake matcher (`web/test/rides-library.test.ts`) and end to end in the e2e: a fixture ride's
+  points go through `window.__kompass.engine` to the matcher and back into the store, and the explored map
+  shows its edges after a reload.
 
 ## UI
 

@@ -23,7 +23,9 @@ bun run build:wasm       # kompass-wasm → web/src/engine/pkg (generated, gitig
 bun run dev              # build:wasm, then Vite with HMR: http://127.0.0.1:7950 (HMR websocket 7951);
                          # serves a region build at /data/: KOMPASS_DATA_DIR=<dir> (default data/build/region;
                          # without it the app shows its empty state), e.g. KOMPASS_DATA_DIR=e2e/fixtures/region.
-                         # KOMPASS_DEV_PORT=<port> moves it (HMR takes the next port)
+                         # KOMPASS_DEV_PORT=<port> moves it (HMR takes the next port).
+                         # ?bench: the engine bench page (routes, compiles, matching, heap; docs/engine-web.md);
+                         # ?lab: the temporary route lab; ?geometry=lazy: geometry tiles per route
 bun run build            # build:wasm + the web app, into web/dist (relative base: works from any sub-path)
 bun run serve -- --port 7950 --data <dir>   # static server for the built app + a region data dir (HTTP
                          # Range, long cache for PMTiles): the way to playtest a build on a phone
@@ -44,8 +46,9 @@ uv run --project pipeline kompass-pipeline build --region pipeline/regions/demo.
                          # public-safe region for screenshots: KOMPASS_DATA_DIR=data/build/demo bun run dev
 cd engine && cargo run -p kompass-cli -- --version     # the native engine: `kompass`
 cd engine && cargo run --release -p kompass-cli -- compile --build ../data/build/<name>
-                         # edges.parquet → <dir>/graph/ (tiled binary graph, docs/graph-format.md) + the
-                         # manifest's `graph` key; ~2 s and 0.3 GB for a 100 km region
+                         # edges.parquet → <dir>/graph/ (tiled binary graph, docs/graph-format.md, with a .gz
+                         # sibling per file for the web app) + the manifest's `graph` key; ~7 s and 0.3 GB
+                         # for a 100 km region
 cd engine && cargo run --release -p kompass-cli -- info --build ../data/build/<name>
                          # load the graph: counts, load times, memory, snap timings (no coordinates)
 cd engine && cargo run --release -p kompass-cli -- match --build ../data/build/<name> [--geojson <dir>] [--explored <file>] <gpx files or dirs>

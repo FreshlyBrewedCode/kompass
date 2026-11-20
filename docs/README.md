@@ -14,6 +14,8 @@ lasting shape here and deletes the section there.
 - [matching.md](matching.md): map-matching recorded tracks onto the graph, lazy geometry, the explored fold
 - [profile.md](profile.md): the routing profile, the catalogue, how a profile becomes a cost, presets
 - [routing.md](routing.md): the `route` query (request, snapping, search, result), the route diff
+- [engine-web.md](engine-web.md): the engine in the browser: wasm face, worker protocol, latest wins,
+  the graph download and device cache, states, the bench page
 - [adr/](adr/): architecture decision records
   - [0001](adr/0001-toolchain.md): toolchain, nix locally and setup actions in CI
 - [design/](design/): design rounds (directions, mock-ups, the chosen one)
@@ -37,7 +39,8 @@ web/ (static PWA)   React UI ──postMessage──▶ Web Worker (web/src/engi
   Personal data (the ride library, [rides.md](rides.md)) stays in the browser.
 - **The engine runs off the main thread.** The UI talks to it only through the typed client in
   `web/src/engine/` (`EngineMethods` lists every query with its params and result); the worker
-  loads the wasm once and answers each request with a result or an error.
+  loads the wasm once, downloads and caches the region graph, and answers each request with a
+  result or an error ([engine-web.md](engine-web.md)).
 - **One engine, two faces.** `kompass-core` is platform-free; `kompass-wasm` and `kompass-cli` are
   thin shells, so a query works the same in the browser and on the command line.
 - **Generated, not committed:** the wasm-bindgen output (`web/src/engine/pkg`) and everything under
