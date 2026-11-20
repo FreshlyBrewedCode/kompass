@@ -115,7 +115,7 @@ fn compiles_into_a_build_dir_and_loads_back() {
     assert_eq!(keys, ["schemaVersion", "buildId", "overlay", "graph"]);
     let mg = &manifest["graph"];
     assert_eq!(mg, &written.manifest_graph);
-    assert_eq!(mg["formatVersion"], 1);
+    assert_eq!(mg["formatVersion"], 2);
     assert_eq!(mg["buildId"], "build123");
     assert_eq!(mg["tileZoom"], 11);
     assert_eq!(mg["edges"], 19);

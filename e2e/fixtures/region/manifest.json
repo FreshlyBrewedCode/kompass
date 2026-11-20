@@ -322,12 +322,12 @@
     }
   },
   "graph": {
-    "formatVersion": 1,
+    "formatVersion": 2,
     "buildId": "fixture",
     "tileZoom": 11,
     "nodes": 36,
     "edges": 60,
-    "bytes": 5976,
+    "bytes": 6160,
     "index": {
       "file": "graph/index.kmpg",
       "bytes": 352
@@ -339,7 +339,7 @@
         "edges": 13,
         "graph": {
           "file": "graph/tiles/11-1023-1023.kmpg",
-          "bytes": 1024
+          "bytes": 1072
         },
         "geometry": {
           "file": "graph/geometry/11-1023-1023.kmpg",
@@ -352,7 +352,7 @@
         "edges": 15,
         "graph": {
           "file": "graph/tiles/11-1023-1024.kmpg",
-          "bytes": 1040
+          "bytes": 1088
         },
         "geometry": {
           "file": "graph/geometry/11-1023-1024.kmpg",
@@ -365,7 +365,7 @@
         "edges": 17,
         "graph": {
           "file": "graph/tiles/11-1024-1024.kmpg",
-          "bytes": 1168
+          "bytes": 1216
         },
         "geometry": {
           "file": "graph/geometry/11-1024-1024.kmpg",
@@ -378,7 +378,7 @@
         "edges": 15,
         "graph": {
           "file": "graph/tiles/11-1024-1023.kmpg",
-          "bytes": 1024
+          "bytes": 1064
         },
         "geometry": {
           "file": "graph/geometry/11-1024-1023.kmpg",

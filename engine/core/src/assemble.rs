@@ -70,11 +70,12 @@ impl Assembler {
         self.edges.from.len()
     }
 
-    /// Adds a node at 1e-7 degrees; ids are given in order.
+    /// Adds a node at 1e-7 degrees with its elevation in metres (`None` unknown); ids are given in
+    /// order.
     #[allow(clippy::cast_possible_truncation, reason = "checked: at most u32::MAX nodes")]
-    pub fn add_node(&mut self, lon: i32, lat: i32) -> NodeId {
+    pub fn add_node(&mut self, lon: i32, lat: i32, ele_m: Option<f32>) -> NodeId {
         assert!(self.node_count() < u32::MAX as usize, "too many nodes");
-        self.nodes.push(lon, lat);
+        self.nodes.push(lon, lat, crate::attrs::pack_elevation(ele_m));
         self.node_tile.push(u32::MAX);
         (self.node_count() - 1) as NodeId
     }

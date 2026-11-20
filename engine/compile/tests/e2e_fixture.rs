@@ -56,3 +56,38 @@ fn the_fixture_graph_matches_the_overlay_source() {
         }
     }
 }
+
+/// The two main presets take different ways across the fixture (the browser e2e of #19 relies on
+/// it), and a waypoint leg joins.
+#[test]
+fn the_main_presets_route_differently_on_the_fixture() {
+    use kompass_core::route::{RouteOptions, Waypoint};
+    use kompass_core::{Planner, RouteRequest, preset};
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../e2e/fixtures");
+    let (g, _) = build::load(&root.join("region"), true).unwrap();
+    // the grid's nodes: 6 × 6, 0.0045° apart, centred on 0°N 0°E (build-region.ts)
+    let node = |i: f64, j: f64| (-0.01125 + i * 0.0045, -0.01125 + j * 0.0045);
+    let mut planner = Planner::new(g);
+    let wp = |(lon, lat): (f64, f64)| Waypoint { lon, lat, name: None };
+    let route = |planner: &mut Planner, id: &str, waypoints: Vec<Waypoint>| {
+        planner
+            .route(&RouteRequest {
+                waypoints,
+                profile: preset(id).unwrap().profile,
+                leg_profiles: None,
+                options: RouteOptions::default(),
+                via_zones: None,
+                avoid_zones: None,
+                sketch: None,
+            })
+            .unwrap()
+    };
+    // 2.5 km both ways: about 60 % unpaved for the gravel preset, none for the paved one
+    let (a, b) = (wp(node(1.0, 1.0)), wp(node(3.0, 0.0)));
+    let gravel = route(&mut planner, "gravel_explorer", vec![a.clone(), b.clone()]);
+    let paved = route(&mut planner, "paved_quiet", vec![a.clone(), b.clone()]);
+    assert_ne!(gravel.arcs, paved.arcs);
+    assert!(gravel.summary.unpaved_share > paved.summary.unpaved_share);
+    let via = route(&mut planner, "gravel_explorer", vec![a, wp(node(3.0, 1.0)), b]);
+    assert_eq!(via.legs.len(), 2);
+}
