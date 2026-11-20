@@ -517,6 +517,27 @@ impl Packed {
     }
 }
 
+/// Lowest elevation the format holds: node elevations are decimetres above it.
+pub const ELEVATION_FLOOR_M: f32 = -1000.0;
+
+/// A node elevation as stored: decimetres above [`ELEVATION_FLOOR_M`], 0 for unknown (`None` or
+/// NaN); saturates at 1 and 65535 (−999.9 m … 5553.5 m).
+#[must_use]
+#[allow(clippy::cast_possible_truncation, reason = "q clamps to the u16 range")]
+pub fn pack_elevation(ele_m: Option<f32>) -> u16 {
+    match ele_m {
+        Some(v) if !v.is_nan() => q(v - ELEVATION_FLOOR_M, 10.0, 65535.0).max(1) as u16,
+        _ => 0,
+    }
+}
+
+/// The elevation of a packed value in metres, `None` for unknown.
+#[inline]
+#[must_use]
+pub fn unpack_elevation(dm: u16) -> Option<f32> {
+    (dm != 0).then(|| f32::from(dm) * 0.1 + ELEVATION_FLOOR_M)
+}
+
 /// The one-way value of a packed `surf` byte.
 #[inline]
 #[must_use]
@@ -648,6 +669,19 @@ mod tests {
         .unpack();
         assert_eq!(small.maxspeed_kmh, Some(5));
         assert_eq!(small.width_m, Some(0.5));
+    }
+
+    #[test]
+    fn elevations_pack_to_decimetres() {
+        assert_eq!(pack_elevation(None), 0);
+        assert_eq!(pack_elevation(Some(f32::NAN)), 0);
+        assert_eq!(unpack_elevation(0), None);
+        for v in [-12.3f32, 0.0, 431.7, 2962.0] {
+            let back = unpack_elevation(pack_elevation(Some(v))).expect("known");
+            assert!((back - v).abs() < 0.051, "{v} → {back}");
+        }
+        assert_eq!(pack_elevation(Some(-5000.0)), 1);
+        assert_eq!(pack_elevation(Some(9000.0)), 65535);
     }
 
     #[test]
