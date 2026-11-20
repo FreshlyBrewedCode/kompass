@@ -5,7 +5,12 @@
 //! - `kompass info --build <dir> [--snaps N]`: loads the graph, prints counts, load times, memory and
 //!   the time of N seeded random snaps (no coordinates).
 //! - `kompass route --build <dir> --profile <file|preset> --from lon,lat [--via lon,lat]… --to
-//!   lon,lat [--out file] [--segments] [--radius m]`: a route as GeoJSON.
+//!   lon,lat [--out file] [--segments] [--radius m] [--explain] [--why-not lon,lat]`: a route as
+//!   GeoJSON; `--explain` prints every segment's cost breakdown and an aggregate, `--why-not` the
+//!   route against one forced through a point, stretch by stretch (text; the GeoJSON then only to
+//!   `--out`).
+//! - `kompass explain --build <dir> --profile <file|preset> --edge <id> [--json] | --time`: one
+//!   edge's cost, every step, both directions; `--time` times the bulk edge costs.
 //! - `kompass profile schema | catalogue [--build <dir>] | presets`: the profile's JSON Schema, the
 //!   catalogue (with coverage shares of a region), the shipped presets.
 //! - `kompass schema --write <dir> | --check <dir>`: the generated JSON Schemas and TypeScript types.
@@ -23,6 +28,7 @@
 )]
 
 mod bench;
+mod explain;
 mod gpx;
 mod matchcmd;
 mod route;
@@ -40,7 +46,8 @@ const USAGE: &str = "usage: kompass [--version | --help]
        kompass match --build <dir> [--geojson <dir>] [--explored <file>] [--no-geometry]
                      [--radius|--candidates|--sigma|--beta|--step|--skip|--gap|--spur <v>] <gpx files or directories>
        kompass route --build <dir> --profile <file|preset> --from <lon,lat> [--via <lon,lat>]... --to <lon,lat>
-                     [--out <file>] [--segments] [--radius <m>]
+                     [--out <file>] [--segments] [--radius <m>] [--explain] [--why-not <lon,lat>]
+       kompass explain --build <dir> --profile <file|preset> (--edge <id> [--json] | --time)
        kompass profile schema | catalogue [--build <dir>] | presets
        kompass schema --write <dir> | --check <dir>
        kompass bench --build <dir> [--pairs <n>] [--seed <n>] [--profiles <a,b>]
@@ -61,7 +68,8 @@ fn main() -> ExitCode {
         Some("compile") => Args::parse(rest, &[]).and_then(|a| compile(&a)),
         Some("info") => Args::parse(rest, &[]).and_then(|a| info(&a)),
         Some("match") => matchcmd::run(rest),
-        Some("route") => Args::parse(rest, &["--segments"]).and_then(|a| route::run(&a)),
+        Some("route") => Args::parse(rest, &["--segments", "--explain"]).and_then(|a| route::run(&a)),
+        Some("explain") => Args::parse(rest, &["--json", "--time"]).and_then(|a| explain::run(&a)),
         Some("profile") => profile(rest),
         Some("schema") => Args::parse(rest, &[]).and_then(|a| schema(&a)),
         Some("bench") => Args::parse(rest, &[]).and_then(|a| bench::bench(&a)),
