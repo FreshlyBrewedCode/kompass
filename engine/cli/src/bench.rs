@@ -194,7 +194,7 @@ fn quality(g: &Graph, r: &RouteResult, shortest_km: f64) -> Quality {
             .iter()
             .filter(|p| p.key == k)
             .map(|p| f64::from(p.share))
-            .sum::<f64>()
+            .fold(0.0, |a, b| a + b)
     };
     let along = |f: &dyn Fn(kompass_core::EdgeId) -> f32| {
         r.arcs
