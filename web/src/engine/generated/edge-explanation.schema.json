@@ -1,0 +1,523 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EdgeExplanation",
+  "description": "`explainEdge`'s answer.",
+  "type": "object",
+  "properties": {
+    "edge": {
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "length_m": {
+      "type": "number",
+      "format": "float"
+    },
+    "way": {
+      "$ref": "#/$defs/WayKind"
+    },
+    "surface": {
+      "description": "The surface a route reports (the tag or a safe guess, else unknown).",
+      "$ref": "#/$defs/SurfaceKind"
+    },
+    "cost_surface": {
+      "description": "The surface class the cost uses, and where it comes from.",
+      "type": "string"
+    },
+    "surface_source": {
+      "$ref": "#/$defs/SurfaceSource"
+    },
+    "traffic": {
+      "description": "The traffic level, 0..=1, that `quiet` penalises.",
+      "type": "number",
+      "format": "float"
+    },
+    "attributes": {
+      "description": "Every attribute the graph keeps for the edge.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Attribute"
+      }
+    },
+    "bounds": {
+      "$ref": "#/$defs/Bounds"
+    },
+    "along": {
+      "description": "Along the geometry (`from → to`) and against it.",
+      "$ref": "#/$defs/ArcCostExplanation"
+    },
+    "against": {
+      "$ref": "#/$defs/ArcCostExplanation"
+    }
+  },
+  "required": [
+    "edge",
+    "length_m",
+    "way",
+    "surface",
+    "cost_surface",
+    "surface_source",
+    "traffic",
+    "attributes",
+    "bounds",
+    "along",
+    "against"
+  ],
+  "$defs": {
+    "WayKind": {
+      "description": "The way types of the route breakdown.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "residential",
+            "service",
+            "track",
+            "path",
+            "steps",
+            "ferry",
+            "other"
+          ]
+        },
+        {
+          "description": "Trunk, primary, secondary.",
+          "type": "string",
+          "const": "main_road"
+        },
+        {
+          "description": "Tertiary, unclassified.",
+          "type": "string",
+          "const": "country_road"
+        },
+        {
+          "description": "A separate cycle path away from motor roads.",
+          "type": "string",
+          "const": "bike_path"
+        },
+        {
+          "description": "A separate cycle path beside a motor road.",
+          "type": "string",
+          "const": "bike_path_roadside"
+        }
+      ]
+    },
+    "SurfaceKind": {
+      "description": "The surface classes of the result (the tag or a safe guess; `unknown` where neither).",
+      "type": "string",
+      "enum": [
+        "paved",
+        "paved_rough",
+        "compacted",
+        "gravel",
+        "soft",
+        "other",
+        "unknown"
+      ]
+    },
+    "SurfaceSource": {
+      "description": "How sure the surface the cost uses is.",
+      "oneOf": [
+        {
+          "description": "From the `surface` tag.",
+          "type": "string",
+          "const": "tagged"
+        },
+        {
+          "description": "Untagged, a safe guess from the way (counts like a tag).",
+          "type": "string",
+          "const": "strong_guess"
+        },
+        {
+          "description": "Untagged, a guess: counts 0.7 for the surface preferences, closed by `paved_only` and\n`no_unknown_surface`.",
+          "type": "string",
+          "const": "weak_guess"
+        }
+      ]
+    },
+    "Attribute": {
+      "description": "One attribute of the edge, named by its `edges.parquet` column (the names the catalogue's\n`coverage.attribute` uses), as the graph keeps it (quantised).",
+      "type": "object",
+      "properties": {
+        "attribute": {
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AttrValue"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "attribute"
+      ]
+    },
+    "AttrValue": {
+      "description": "An attribute's value: an enum's label, a number, a flag; `null` unknown.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "boolean"
+        }
+      ]
+    },
+    "Bounds": {
+      "description": "The clamp of the factor product (`docs/profile.md`): every arc costs between `min_factor` and\n`max_factor` times its length (plus additive terms). `min_factor` is the A* bound.",
+      "type": "object",
+      "properties": {
+        "min_factor": {
+          "description": "0.3..=1.0, default 0.5. Lower lets bonuses stack further (and searches slow down a little).",
+          "type": "number",
+          "format": "float",
+          "default": 0.5
+        },
+        "max_factor": {
+          "description": "2..=100, default 20. The most an allowed way can cost per metre.",
+          "type": "number",
+          "format": "float",
+          "default": 20.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "ArcCostExplanation": {
+      "description": "One direction of an edge, explained.",
+      "type": "object",
+      "properties": {
+        "arc": {
+          "description": "`edge << 1 | reverse`.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "preferences": {
+          "description": "Every active preference (weight ≠ 0), catalogue order, also where its factor is 1.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PrefPart"
+          }
+        },
+        "quality": {
+          "description": "The product of the quality factors, the gated penalties and the ramps.",
+          "type": "number",
+          "format": "float"
+        },
+        "bonus": {
+          "description": "The product of the gated bonuses (before the gate).",
+          "type": "number",
+          "format": "float"
+        },
+        "gate": {
+          "description": "How much of the bonus counts, 0..=1: 1 up to quality 1.3, 0 from 2.2.",
+          "type": "number",
+          "format": "float"
+        },
+        "raw_factor": {
+          "description": "`quality × (1 + (bonus − 1) × gate)`: the factor before the clamp.",
+          "type": "number",
+          "format": "float"
+        },
+        "factor": {
+          "description": "After the clamp to the profile's bounds.",
+          "type": "number",
+          "format": "float"
+        },
+        "clamp": {
+          "description": "Set when the clamp changed the factor: which bound.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Clamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ascent_m": {
+          "description": "Ascent beyond the deadband, metres; the tamed steepest grade up and down, percent.",
+          "type": "number",
+          "format": "float"
+        },
+        "grade_up_pct": {
+          "type": "number",
+          "format": "float"
+        },
+        "grade_down_pct": {
+          "type": "number",
+          "format": "float"
+        },
+        "additive": {
+          "description": "The additive terms that are not 0.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Additive"
+          }
+        },
+        "extra_m": {
+          "description": "Their sum, metres.",
+          "type": "number",
+          "format": "float"
+        },
+        "cost": {
+          "description": "The arc's cost the router uses (metres-equivalent): `length × factor + extra_m`. Absent\nwhen closed.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "cost_per_m": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "closed_by": {
+          "description": "Everything that closes this direction (empty: open), in the order the engine checks.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Closure"
+          }
+        }
+      },
+      "required": [
+        "arc",
+        "preferences",
+        "quality",
+        "bonus",
+        "gate",
+        "raw_factor",
+        "factor",
+        "ascent_m",
+        "grade_up_pct",
+        "grade_down_pct",
+        "additive",
+        "extra_m",
+        "closed_by"
+      ]
+    },
+    "PrefPart": {
+      "description": "One active preference's part in an arc's cost.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/PrefId"
+        },
+        "weight": {
+          "description": "The profile's weight, −100..=100.",
+          "type": "integer",
+          "format": "int32"
+        },
+        "membership": {
+          "description": "How much the way is what the preference names, −1..=1, quantised to fifteenths as the cost\nuses it. `climb`: the average grade beyond the deadband over 5 %.",
+          "type": "number",
+          "format": "float"
+        },
+        "factor": {
+          "description": "Its factor here (1: no effect; < 1 cheaper, > 1 dearer). A `gated_bonus` counts only\nthrough the gate; an `additive` one (avoiding climbs) has none, its metres are in `additive`.",
+          "type": "number",
+          "format": "float"
+        },
+        "role": {
+          "$ref": "#/$defs/Role"
+        }
+      },
+      "required": [
+        "id",
+        "weight",
+        "membership",
+        "factor",
+        "role"
+      ]
+    },
+    "PrefId": {
+      "description": "A soft preference of the catalogue (`catalogue().preferences`).",
+      "type": "string",
+      "enum": [
+        "unpaved",
+        "paved_smooth",
+        "paved_rough",
+        "fine_gravel",
+        "soft_ground",
+        "unknown_surface",
+        "tracktype",
+        "smoothness",
+        "track",
+        "path",
+        "cycleway_sep",
+        "cycleway_road",
+        "residential",
+        "service",
+        "minor",
+        "main",
+        "quiet",
+        "speed",
+        "lanes",
+        "near_road",
+        "forest",
+        "forest_edge",
+        "water",
+        "open",
+        "built",
+        "climb",
+        "steep",
+        "bike_routes",
+        "mtb_routes",
+        "access",
+        "sketchy",
+        "mtb",
+        "visibility",
+        "novel",
+        "stale",
+        "familiar"
+      ]
+    },
+    "Role": {
+      "description": "How a preference enters an arc's factor.",
+      "oneOf": [
+        {
+          "description": "Multiplies into the quality product.",
+          "type": "string",
+          "const": "quality"
+        },
+        {
+          "description": "A gated preference whose factor here is a penalty (> 1): it counts like quality.",
+          "type": "string",
+          "const": "gated_penalty"
+        },
+        {
+          "description": "A gated preference whose factor here is a bonus (≤ 1): it counts through the gate.",
+          "type": "string",
+          "const": "gated_bonus"
+        },
+        {
+          "description": "Avoiding climbs: no factor, metres of cost per metre of ascent (the `climb` additive term).",
+          "type": "string",
+          "const": "additive"
+        }
+      ]
+    },
+    "Clamp": {
+      "description": "Which bound the clamp applied.",
+      "oneOf": [
+        {
+          "description": "Raised to `bounds.min_factor` (the detour budget).",
+          "type": "string",
+          "const": "min"
+        },
+        {
+          "description": "Lowered to `bounds.max_factor`.",
+          "type": "string",
+          "const": "max"
+        }
+      ]
+    },
+    "Additive": {
+      "description": "An additive term: metres of cost on top of `length × factor`.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/AdditiveKind"
+        },
+        "metres": {
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "required": [
+        "kind",
+        "metres"
+      ]
+    },
+    "AdditiveKind": {
+      "description": "What an additive term is.",
+      "oneOf": [
+        {
+          "description": "Avoiding climbs: metres per metre of ascent beyond the deadband.",
+          "type": "string",
+          "const": "climb"
+        },
+        {
+          "description": "Gates, bollards, … on the edge's nodes.",
+          "type": "string",
+          "const": "barriers"
+        },
+        {
+          "description": "Carrying.",
+          "type": "string",
+          "const": "steps"
+        },
+        {
+          "description": "`bicycle=dismount`: walking.",
+          "type": "string",
+          "const": "dismount"
+        },
+        {
+          "description": "The wait.",
+          "type": "string",
+          "const": "ferry"
+        }
+      ]
+    },
+    "Closure": {
+      "description": "Something that closes an arc, with the attribute that triggers it.",
+      "type": "object",
+      "properties": {
+        "by": {
+          "$ref": "#/$defs/ClosedBy"
+        },
+        "attribute": {
+          "description": "The `edges.parquet` column (or `tamed_grade_pct`, `surface_guess`) and its value here.",
+          "type": "string"
+        },
+        "value": {
+          "$ref": "#/$defs/AttrValue"
+        }
+      },
+      "required": [
+        "by",
+        "attribute",
+        "value"
+      ]
+    },
+    "ClosedBy": {
+      "description": "What closes an arc: a limit of the profile (the catalogue's limit ids) or a rule that holds\nwhatever the profile. In typed arrays as [`ClosedBy::code`].",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "no_main_roads",
+            "paved_only",
+            "no_unknown_surface",
+            "max_grade",
+            "max_mtb_scale",
+            "no_stairs",
+            "legal_only",
+            "no_ferries"
+          ]
+        },
+        {
+          "description": "`bicycle=no` (the pipeline maps motor roads to it): never, whatever the profile.",
+          "type": "string",
+          "const": "no_bikes"
+        },
+        {
+          "description": "Against a one-way: never.",
+          "type": "string",
+          "const": "oneway"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,321 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RouteComparison",
+  "description": "`compare`'s answer.",
+  "type": "object",
+  "properties": {
+    "a": {
+      "description": "Whole routes (edges in full).",
+      "$ref": "#/$defs/StretchCost"
+    },
+    "b": {
+      "$ref": "#/$defs/StretchCost"
+    },
+    "stretches": {
+      "description": "Where they part, in the order of `a` (as `diff`).",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/StretchComparison"
+      }
+    },
+    "shared_m": {
+      "type": "number",
+      "format": "float"
+    }
+  },
+  "required": [
+    "a",
+    "b",
+    "stretches",
+    "shared_m"
+  ],
+  "$defs": {
+    "StretchCost": {
+      "description": "A stretch of one route (or a whole route), costed.",
+      "type": "object",
+      "properties": {
+        "span": {
+          "description": "`[first, end)` into that route's arcs, start and length (edges counted in full).",
+          "$ref": "#/$defs/Span"
+        },
+        "cost": {
+          "description": "Under the request's profile (closed arcs at `max_factor` per metre, as near a waypoint).",
+          "type": "number",
+          "format": "float"
+        },
+        "factor": {
+          "description": "The mean factor per metre (`Σ length × factor / Σ length`), additive terms not included.",
+          "type": "number",
+          "format": "float"
+        },
+        "extra_m": {
+          "type": "number",
+          "format": "float"
+        },
+        "clamped_min_m": {
+          "description": "Length where the clamp raised the factor to `min_factor` (the bonuses wanted it lower: more\nseeking changes nothing there) and where it lowered it to `max_factor`.",
+          "type": "number",
+          "format": "float"
+        },
+        "clamped_max_m": {
+          "type": "number",
+          "format": "float"
+        },
+        "why": {
+          "description": "The strongest preferences here (length-weighted geometric mean factor), at most 5,\nstrongest first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Reason"
+          }
+        },
+        "ways": {
+          "description": "Length per way type, longest first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Part"
+          }
+        },
+        "closed": {
+          "description": "Length on closed arcs, by what closes them.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ClosedPart"
+          }
+        }
+      },
+      "required": [
+        "span",
+        "cost",
+        "factor",
+        "extra_m",
+        "clamped_min_m",
+        "clamped_max_m",
+        "why",
+        "ways",
+        "closed"
+      ]
+    },
+    "Span": {
+      "description": "A stretch of one route.",
+      "type": "object",
+      "properties": {
+        "arcs": {
+          "description": "`[first, end)` into that route's arcs (empty: the other route detours here).",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "start_m": {
+          "description": "Metres from that route's start (edges counted in full).",
+          "type": "number",
+          "format": "float"
+        },
+        "length_m": {
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "required": [
+        "arcs",
+        "start_m",
+        "length_m"
+      ]
+    },
+    "Reason": {
+      "description": "One preference's part in a cost: its factor (< 1 made it cheaper, > 1 dearer).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/PrefId"
+        },
+        "factor": {
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "required": [
+        "id",
+        "factor"
+      ]
+    },
+    "PrefId": {
+      "description": "A soft preference of the catalogue (`catalogue().preferences`).",
+      "type": "string",
+      "enum": [
+        "unpaved",
+        "paved_smooth",
+        "paved_rough",
+        "fine_gravel",
+        "soft_ground",
+        "unknown_surface",
+        "tracktype",
+        "smoothness",
+        "track",
+        "path",
+        "cycleway_sep",
+        "cycleway_road",
+        "residential",
+        "service",
+        "minor",
+        "main",
+        "quiet",
+        "speed",
+        "lanes",
+        "near_road",
+        "forest",
+        "forest_edge",
+        "water",
+        "open",
+        "built",
+        "climb",
+        "steep",
+        "bike_routes",
+        "mtb_routes",
+        "access",
+        "sketchy",
+        "mtb",
+        "visibility",
+        "novel",
+        "stale",
+        "familiar"
+      ]
+    },
+    "Part": {
+      "description": "A length per key.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/WayKind"
+        },
+        "length_m": {
+          "type": "number",
+          "format": "float"
+        },
+        "share": {
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "required": [
+        "key",
+        "length_m",
+        "share"
+      ]
+    },
+    "WayKind": {
+      "description": "The way types of the route breakdown.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "residential",
+            "service",
+            "track",
+            "path",
+            "steps",
+            "ferry",
+            "other"
+          ]
+        },
+        {
+          "description": "Trunk, primary, secondary.",
+          "type": "string",
+          "const": "main_road"
+        },
+        {
+          "description": "Tertiary, unclassified.",
+          "type": "string",
+          "const": "country_road"
+        },
+        {
+          "description": "A separate cycle path away from motor roads.",
+          "type": "string",
+          "const": "bike_path"
+        },
+        {
+          "description": "A separate cycle path beside a motor road.",
+          "type": "string",
+          "const": "bike_path_roadside"
+        }
+      ]
+    },
+    "ClosedPart": {
+      "description": "Length on arcs the profile closes (a route through a waypoint on an excluded way, or one made\nwith another profile).",
+      "type": "object",
+      "properties": {
+        "by": {
+          "$ref": "#/$defs/ClosedBy"
+        },
+        "length_m": {
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "required": [
+        "by",
+        "length_m"
+      ]
+    },
+    "ClosedBy": {
+      "description": "What closes an arc: a limit of the profile (the catalogue's limit ids) or a rule that holds\nwhatever the profile. In typed arrays as [`ClosedBy::code`].",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "no_main_roads",
+            "paved_only",
+            "no_unknown_surface",
+            "max_grade",
+            "max_mtb_scale",
+            "no_stairs",
+            "legal_only",
+            "no_ferries"
+          ]
+        },
+        {
+          "description": "`bicycle=no` (the pipeline maps motor roads to it): never, whatever the profile.",
+          "type": "string",
+          "const": "no_bikes"
+        },
+        {
+          "description": "Against a one-way: never.",
+          "type": "string",
+          "const": "oneway"
+        }
+      ]
+    },
+    "StretchComparison": {
+      "description": "One stretch where the routes part, both sides costed.",
+      "type": "object",
+      "properties": {
+        "a": {
+          "$ref": "#/$defs/StretchCost"
+        },
+        "b": {
+          "$ref": "#/$defs/StretchCost"
+        },
+        "cost_delta": {
+          "description": "`b.cost − a.cost` (> 0: `b` is dearer here, the reason the router took `a`).",
+          "type": "number",
+          "format": "float"
+        },
+        "length_delta_m": {
+          "description": "`b.length − a.length`, metres.",
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "required": [
+        "a",
+        "b",
+        "cost_delta",
+        "length_delta_m"
+      ]
+    }
+  }
+}

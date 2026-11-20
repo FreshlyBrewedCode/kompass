@@ -4,7 +4,7 @@
 //!
 //! JSON text across the boundary for the API types (request in, result out: the generated types in
 //! `web/src/engine/generated/`), typed arrays for the big numeric payloads (graph files, track
-//! points, matched arcs, the personal layer, arc costs). The logic is in [`engine`], plain Rust
+//! points, matched arcs, the personal layer, arc costs, edge costs). The logic is in [`engine`], plain Rust
 //! tested natively; this file only maps it onto wasm-bindgen.
 
 #![allow(
@@ -53,6 +53,13 @@ pub fn presets() -> String {
 #[must_use]
 pub fn catalogue() -> String {
     engine::catalogue_json()
+}
+
+/// What the codes of `EdgeCostsOutput.closed` name, JSON (`ClosedBy[]`, `codes[code - 1]`).
+#[wasm_bindgen(js_name = closedCodes)]
+#[must_use]
+pub fn closed_codes() -> String {
+    engine::closed_codes_json()
 }
 
 #[allow(clippy::needless_pass_by_value, reason = "used as map_err(js)")]
@@ -113,6 +120,53 @@ impl MatchOutput {
     #[must_use]
     pub fn breaks(&self) -> u32 {
         self.0.breaks
+    }
+}
+
+/// Edge costs for a map layer (`docs/routing.md`): flat typed arrays.
+#[wasm_bindgen]
+pub struct EdgeCostsOutput(kompass_core::explain::EdgeCosts);
+
+#[wasm_bindgen]
+impl EdgeCostsOutput {
+    /// The edges answered for, in answer order.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn edges(&self) -> Vec<u32> {
+        self.0.edges.clone()
+    }
+    /// Two per edge (along, against): the clamped factor, 0 where that way may not be ridden.
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn factor(&self) -> Vec<f32> {
+        self.0.factor.clone()
+    }
+    /// Two per edge: the cost per metre with the additive terms, 0 where that way may not be ridden.
+    #[wasm_bindgen(getter, js_name = costPerM)]
+    #[must_use]
+    pub fn cost_per_m(&self) -> Vec<f32> {
+        self.0.cost_per_m.clone()
+    }
+    /// One per edge: 0 open, else the code of what closes it both ways (`closedCodes()`).
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn closed(&self) -> Vec<u8> {
+        self.0.closed.clone()
+    }
+    #[wasm_bindgen(getter, js_name = minFactor)]
+    #[must_use]
+    pub fn min_factor(&self) -> f32 {
+        self.0.min_factor
+    }
+    #[wasm_bindgen(getter, js_name = maxFactor)]
+    #[must_use]
+    pub fn max_factor(&self) -> f32 {
+        self.0.max_factor
+    }
+    #[wasm_bindgen(getter)]
+    #[must_use]
+    pub fn bound(&self) -> f32 {
+        self.0.bound
     }
 }
 
@@ -200,6 +254,32 @@ impl Engine {
     #[wasm_bindgen(js_name = arcCosts)]
     pub fn arc_costs(&mut self, profile: &str) -> Result<Vec<f32>, JsError> {
         self.0.arc_costs(profile).map_err(js)
+    }
+
+    /// Edge costs under a profile (JSON): the listed edges, else those in `bbox` (`[w, s, e, n]`
+    /// degrees), else every edge.
+    #[wasm_bindgen(js_name = edgeCosts)]
+    pub fn edge_costs(
+        &mut self,
+        profile: &str,
+        edges: Option<Vec<u32>>,
+        bbox: Option<Vec<f64>>,
+    ) -> Result<EdgeCostsOutput, JsError> {
+        self.0
+            .edge_costs(profile, edges, bbox)
+            .map(EdgeCostsOutput)
+            .map_err(js)
+    }
+
+    /// An `ExplainEdgeRequest` (JSON) → an `EdgeExplanation` (JSON).
+    #[wasm_bindgen(js_name = explainEdge)]
+    pub fn explain_edge(&mut self, request: &str) -> Result<String, JsError> {
+        self.0.explain_edge(request).map_err(js)
+    }
+
+    /// A `CompareRequest` (JSON) → a `RouteComparison` (JSON).
+    pub fn compare(&mut self, request: &str) -> Result<String, JsError> {
+        self.0.compare(request).map_err(js)
     }
 
     /// The catalogue with this region's coverage (JSON).

@@ -6,9 +6,14 @@ import type { GraphFiles } from "@/map/manifest";
 import type {
   ArcExplanation,
   Catalogue,
+  ClosedBy,
+  CompareRequest,
   DiffRequest,
+  EdgeExplanation,
+  ExplainEdgeRequest,
   Preset,
   Profile,
+  RouteComparison,
   RouteDiff,
   RouteError,
   RouteRequest,
@@ -97,6 +102,40 @@ export type RideMatchResult = {
   tilesLoaded: number;
 };
 
+/**
+ * `edgeCosts` (docs/routing.md, "Explaining the cost"): which edges. `edges`: these ids (the overlay
+ * tiles' feature ids; the array is transferred, so it is empty afterwards); else `bbox`
+ * (`[west, south, east, north]` degrees: the edges in it and a few just outside); else every edge of
+ * the graph (~20 bytes per edge cross the worker: 47 MB for 2.34 M edges, so not on a phone).
+ */
+export type EdgeCostsParams = {
+  profile: Profile;
+  edges?: Uint32Array;
+  bbox?: [number, number, number, number];
+};
+
+/** `edgeCosts`' answer: flat typed arrays, entry `i` belongs to `edges[i]`. */
+export type EdgeCostsResult = {
+  /** the edges answered for: the ids asked for in their order, or the box's in ascending order */
+  edges: Uint32Array;
+  /**
+   * Two per edge, `[2i]` along the geometry and `[2i + 1]` against it: the factor after the clamp
+   * (`minFactor`…`maxFactor`; < 1 the profile likes it, > 1 it does not); 0 where that direction may not
+   * be ridden (closed, or against a one-way).
+   */
+  factor: Float32Array;
+  /** two per edge: the cost per metre the router pays, additive terms included; 0 where closed */
+  costPerM: Float32Array;
+  /** one per edge: 0 when one direction at least may be ridden, else the code of what closes it */
+  closed: Uint8Array;
+  /** what the codes name: `codes[code - 1]` (a limit id of the catalogue, `no_bikes` or `oneway`) */
+  codes: ClosedBy[];
+  minFactor: number;
+  maxFactor: number;
+  /** the smallest factor the profile produced anywhere (the A* bound) */
+  bound: number;
+};
+
 export type PersonalParams = { rides: Uint16Array; lastRidden: Uint32Array; today: number };
 
 /** What the engine answers to: params in, result out. */
@@ -112,6 +151,12 @@ export interface EngineMethods {
   diff: { params: DiffRequest; result: RouteDiff };
   explain: { params: { profile: Profile; arcs: number[] }; result: ArcExplanation[] };
   arcCosts: { params: Profile; result: Float32Array };
+  /** the cost debug view's map layer: the factor per edge and direction, what closes the closed ones */
+  edgeCosts: { params: EdgeCostsParams; result: EdgeCostsResult };
+  /** the tap panel: one edge, both directions, every step of its cost */
+  explainEdge: { params: ExplainEdgeRequest; result: EdgeExplanation };
+  /** "why not this way?": two routes under one profile, stretch by stretch where they part */
+  compare: { params: CompareRequest; result: RouteComparison };
   setPersonal: { params: PersonalParams | null; result: undefined };
   /** the summed length in metres of these edges, each once (the explored map's km) */
   edgesLength: { params: { edges: Uint32Array }; result: number };
