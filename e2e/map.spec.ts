@@ -185,7 +185,7 @@ test.describe("in a dark system theme", () => {
     await page.getByRole("button", { name: "Close" }).click();
     await page.getByTestId("mode-explored").click();
     await page.evaluate(() =>
-      window.__kompass.store.setRidden(Array.from({ length: 30 }, (_, i) => i * 2 + 2)),
+      window.__kompass.store.setRidden(Array.from({ length: 30 }, (_, i) => i * 2 + 1)),
     );
     await expect.poll(() => riddenRendered(page)).toBe(30);
     await screenshot(page, testInfo, "explored");
