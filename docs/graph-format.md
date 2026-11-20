@@ -45,7 +45,7 @@ browser. The design and its numbers come from spike #4 (verdict in the issue). C
 | `….kmpg.gz` | the gzip sibling of every file (level 6): what the web app downloads ([engine-web.md](engine-web.md)) |
 
 ```json
-"graph": { "formatVersion": 2, "buildId": "…", "tileZoom": 11, "nodes": 1822503, "edges": 2340341,
+"graph": { "formatVersion": 3, "buildId": "…", "tileZoom": 11, "nodes": 1822503, "edges": 2340341,
   "bytes": 120804952, "gzipBytes": 69500000,
   "index": { "file": "graph/index.kmpg", "bytes": 9960, "gzip": 4100 },
   "tiles": [ { "x": 1, "y": 2, "edges": 7400,
@@ -64,7 +64,7 @@ Every file is one `KMPG` container, little endian:
 | bytes | field |
 |---|---|
 | 0..4 | magic `KMPG` |
-| 4..6 | u16 format version (**2**; 2 added node elevations) |
+| 4..6 | u16 format version (**3**; 2 added node elevations, 3 widened the length to u32) |
 | 6..8 | u16 kind: 1 index, 2 graph tile, 3 geometry tile |
 | 8..12 | u32 section count |
 | 12..16 | reserved, 0 |
@@ -96,7 +96,7 @@ the tile's range:
 | `lon_____`, `lat_____` | i32 | node | coordinates in 1e-7° (OSM precision) |
 | `ele_dm__` | u16 | node | elevation in decimetres above −1000 m (0 unknown; from `ele_from_m` / `ele_to_m`), for the route's elevation profile |
 | `from____`, `to______` | u32 | edge | end nodes (global ids); the geometry runs from → to |
-| `len_dm__` | u16 | edge | length in decimetres (edges over 6553.5 m are rejected; the longest real one is 5.1 km) |
+| `len_dm__` | u32 | edge | length in decimetres (up to 1000 km, saturating; long ferries exceed the 6.5 km a u16 held. Edges are never split: edge ids are the overlay's feature ids. The extra bytes are zeros and compress to nothing) |
 | `highway_` | u8 | edge | `highway` code |
 | `surf____` | u8 | edge | `surface_class` bits 0–2 · `tracktype` 3–5 · one-way 6–7 (0 both, 1 along, 2 against) |
 | `smooth__` | u8 | edge | `smoothness` 0–3 · `trail_visibility` 4–6 · `informal` 7 |
@@ -106,7 +106,7 @@ the tile's range:
 | `diff____` | u8 | edge | `mtb_scale` 0–2 · `sac_scale` 3–5 · `n_barriers` 6–7 (saturates at 3) |
 | `ctx_____` | u16 | edge | shares in fifteenths (0..15 = 0..100 %): forest 0–3 · forest edge 4–7 · water 8–11 · built-up 12–15 |
 | `ctx2____` | u8 | edge | `road_near_share` 0–3 (fifteenths) · width 4–7 (0 unknown, k × 0.5 m, 15 = 7.5 m+) |
-| `asc_fwd_`, `asc_bwd_` | u16 | edge | ascent along / against the geometry, decimetres (descent one way is ascent the other) |
+| `asc_fwd_`, `asc_bwd_` | u16 | edge | ascent along / against the geometry, decimetres, saturating at 6553.5 m (descent one way is ascent the other) |
 | `grd_fwd_`, `grd_bwd_` | u8 | edge | steepest 50 m along / against, whole percent |
 
 The enum codes are those of `edges.parquet`. The engine's enums (`attrs.rs`) are checked against

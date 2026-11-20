@@ -384,7 +384,7 @@ pub struct EdgeAttrs {
 /// `docs/graph-format.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Packed {
-    pub length_dm: u16,
+    pub length_dm: u32,
     pub highway: u8,
     pub surf: u8,
     pub smooth: u8,
@@ -407,8 +407,19 @@ pub mod bits {
     pub const ONEWAY_MASK: u8 = 3 << 6;
 }
 
-/// Longest edge the format holds (u16 decimetres).
-pub const MAX_LENGTH_M: f32 = 6553.5;
+/// Longest edge the format holds (u32 decimetres; the f32 length is exact to 0.1 m far below this).
+pub const MAX_LENGTH_M: f32 = 1_000_000.0;
+
+/// A packed length (decimetres) in metres. Exact: [`MAX_LENGTH_M`] is 1e7 dm, below f32's 2^24.
+#[inline]
+#[must_use]
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "at most 1e7, f32 holds integers to 2^24"
+)]
+pub fn length_m_of(dm: u32) -> f32 {
+    dm as f32 * 0.1
+}
 
 #[allow(
     clippy::cast_possible_truncation,
@@ -450,7 +461,7 @@ impl EdgeAttrs {
         let lanes = self.lanes.map_or(0, |v| v.clamp(1, 7));
         let width = self.width_m.map_or(0, |w| q(w, 2.0, 15.0).max(1) as u8);
         Packed {
-            length_dm: q(self.length_m, 10.0, 65535.0).max(1) as u16,
+            length_dm: q(self.length_m, 10.0, MAX_LENGTH_M * 10.0).max(1),
             highway: self.highway.code(),
             surf: self.surface.code() | (self.tracktype.code() << 3) | oneway,
             smooth: self.smoothness.code() | (self.trail_visibility.code() << 4) | (b(self.informal) << 7),
@@ -483,7 +494,7 @@ impl Packed {
         let lanes = self.speed >> 5;
         let width = self.ctx2 >> 4;
         EdgeAttrs {
-            length_m: f32::from(self.length_dm) * 0.1,
+            length_m: length_m_of(self.length_dm),
             highway: Highway::from_code(self.highway).unwrap_or_default(),
             surface: SurfaceClass::from_code(self.surf & 7).unwrap_or_default(),
             tracktype: Tracktype::from_code((self.surf >> 3) & 7).unwrap_or_default(),
@@ -648,7 +659,15 @@ mod tests {
             ..EdgeAttrs::default()
         };
         let b = a.pack().unpack();
-        assert!((b.length_m - MAX_LENGTH_M).abs() < 1e-3);
+        assert!(
+            (b.length_m - 9000.0).abs() < 1e-2,
+            "an 9 km edge (over the old u16 limit) round-trips"
+        );
+        let huge = EdgeAttrs {
+            length_m: 2.0e6,
+            ..EdgeAttrs::default()
+        };
+        assert!((huge.pack().unpack().length_m - MAX_LENGTH_M).abs() < 1.0);
         assert_eq!(b.maxspeed_kmh, Some(155));
         assert_eq!(b.lanes, Some(7));
         assert_eq!(b.barriers, 3);

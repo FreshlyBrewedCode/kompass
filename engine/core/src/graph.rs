@@ -164,7 +164,7 @@ columns! {
     EdgeColumns {
         from: u32 = b"from____",
         to: u32 = b"to______",
-        length_dm: u16 = b"len_dm__",
+        length_dm: u32 = b"len_dm__",
         highway: u8 = b"highway_",
         /// `surface_class` 0-2 · `tracktype` 3-5 · one-way 6-7
         surf: u8 = b"surf____",
@@ -558,7 +558,7 @@ impl Graph {
     #[inline]
     #[must_use]
     pub fn length_m(&self, e: EdgeId) -> f32 {
-        f32::from(self.edges.length_dm[e as usize]) * 0.1
+        crate::attrs::length_m_of(self.edges.length_dm[e as usize])
     }
 
     #[inline]

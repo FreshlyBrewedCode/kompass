@@ -9,7 +9,7 @@ pub const MAGIC: [u8; 4] = *b"KMPG";
 
 /// The graph format version. Bumped for every change a reader has to know about (layout, packing,
 /// enum codes).
-pub const FORMAT_VERSION: u16 = 2;
+pub const FORMAT_VERSION: u16 = 3;
 
 /// What a container holds (header bytes 6..8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

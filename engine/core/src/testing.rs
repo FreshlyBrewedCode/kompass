@@ -289,3 +289,25 @@ pub fn grid(nx: usize, ny: usize, step_m: f64) -> GraphBuilder {
     }
     b
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_edge_longer_than_the_old_u16_limit_survives_the_files() {
+        let mut b = GraphBuilder::new();
+        let a = b.node(0.0, 0.0);
+        let c = b.node(0.1, 0.0);
+        let e = b.edge(
+            a,
+            c,
+            EdgeAttrs {
+                length_m: 8123.4,
+                ..EdgeAttrs::default()
+            },
+        );
+        let built = b.build(); // asserts the write/load round trip
+        assert!((built.graph.length_m(built.edge(e)) - 8123.4).abs() < 0.06);
+    }
+}
