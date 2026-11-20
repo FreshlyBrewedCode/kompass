@@ -1054,6 +1054,12 @@ impl GraphLoader {
         self.graph.tile_loaded(t)
     }
 
+    /// Whether the geometry of tile `t` is loaded.
+    #[must_use]
+    pub fn geometry_loaded(&self, t: usize) -> bool {
+        self.graph.geometry_loaded(t)
+    }
+
     /// The tiles not loaded yet.
     #[must_use]
     pub fn missing_tiles(&self) -> Vec<usize> {
