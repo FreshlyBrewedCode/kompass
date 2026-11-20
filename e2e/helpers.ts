@@ -31,6 +31,8 @@ type Kompass = {
   map: {
     getLayoutProperty(layer: string, property: string): unknown;
     getPaintProperty(layer: string, property: string): unknown;
+    getFilter(layer: string): unknown;
+    getLayer(id: string): unknown;
     getSource(id: string): unknown;
     getStyle(): { sprite?: string };
     queryRenderedFeatures(options: { layers: string[] }): { id?: number; state?: Record<string, unknown> }[];
@@ -67,10 +69,18 @@ export async function edgePoint(page: Page, id: number): Promise<{ x: number; y:
   }, id);
 }
 
+/** How many edges the given layers draw on screen (distinct ids). */
+export async function drawn(page: Page, layers: string[]): Promise<number> {
+  return page.evaluate(
+    (ids) => new Set(window.__kompass.map.queryRenderedFeatures({ layers: ids }).map((f) => f.id)).size,
+    layers,
+  );
+}
+
 /** How many rendered overlay edges carry `ridden` in their feature state. */
 export async function riddenRendered(page: Page): Promise<number> {
   return page.evaluate(() => {
-    const features = window.__kompass.map.queryRenderedFeatures({ layers: ["overlay-edges"] });
+    const features = window.__kompass.map.queryRenderedFeatures({ layers: ["explored-line"] });
     return new Set(features.filter((f) => f.state?.ridden === true).map((f) => f.id)).size;
   });
 }

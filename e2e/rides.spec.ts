@@ -54,7 +54,7 @@ const mapRideIds = (page: Page) =>
 test("import GPX and FIT files: the list, the lines on the map, and a tap fits the map to a ride", async ({
   page,
 }, testInfo) => {
-  await openMap(page, "mode=plain");
+  await openMap(page);
   await expect(page.getByTestId("rides-count")).toHaveText("0");
   await openPanel(page);
   await expect(page.getByTestId("rides-empty")).toBeVisible();
@@ -108,7 +108,7 @@ test("import GPX and FIT files: the list, the lines on the map, and a tap fits t
 test("duplicates: re-importing is a no-op, a sparser copy of a stored ride is skipped and remembered", async ({
   page,
 }) => {
-  await openMap(page, "mode=plain");
+  await openMap(page);
   await openPanel(page);
   await importFiles(page, [garmin, komoot.b]);
   await expect(rows(page)).toHaveCount(2);
@@ -129,7 +129,7 @@ test("duplicates: re-importing is a no-op, a sparser copy of a stored ride is sk
 test("files that are not rides fail with a reason; tracks without timestamps are flagged", async ({
   page,
 }) => {
-  await openMap(page, "mode=plain");
+  await openMap(page);
   await openPanel(page);
   const untimed = {
     name: "no-times.gpx",
@@ -147,7 +147,7 @@ test("files that are not rides fail with a reason; tracks without timestamps are
 });
 
 test("delete one ride, then delete all after a confirmation", async ({ page }) => {
-  await openMap(page, "mode=plain");
+  await openMap(page);
   await openPanel(page);
   await importFiles(page, [komoot.a, komoot.b, komoot.c]);
   await expect(rows(page)).toHaveCount(3);
@@ -170,7 +170,7 @@ test("delete one ride, then delete all after a confirmation", async ({ page }) =
 });
 
 test("the library persists across a reload, and says how it is stored", async ({ page }, testInfo) => {
-  await openMap(page, "mode=plain");
+  await openMap(page);
   await openPanel(page);
   await importFiles(page, [komoot.a, komoot.b]);
   await expect(rows(page)).toHaveCount(2);
@@ -191,7 +191,7 @@ test("export a backup, restore it into a fresh profile, and re-restoring changes
   page,
   browser,
 }) => {
-  await openMap(page, "mode=plain");
+  await openMap(page);
   await openPanel(page);
   await importFiles(page, [komoot.a, komoot.b, komoot.c, garmin]);
   await expect(rows(page)).toHaveCount(3);
@@ -206,7 +206,7 @@ test("export a backup, restore it into a fresh profile, and re-restoring changes
   const context = await browser.newContext(test.info().project.use);
   try {
     const other = await context.newPage();
-    await openMap(other, "mode=plain");
+    await openMap(other);
     await expect(other.getByTestId("rides-count")).toHaveText("0");
     await openPanel(other);
     await other.getByTestId("rides-restore-input").setInputFiles(path);
@@ -242,7 +242,7 @@ test("privacy: during import, export and restore every request goes to the app's
   page.on("request", (request) => {
     requests.push({ url: request.url(), method: request.method(), body: request.postData() });
   });
-  await openMap(page, "mode=plain");
+  await openMap(page);
   await openPanel(page);
   await importFiles(page, [komoot.a, komoot.b, komoot.c, garmin]);
   const download = page.waitForEvent("download");
@@ -268,7 +268,7 @@ test("privacy: during import, export and restore every request goes to the app's
 test("the explored map is filled at start-up from saved matches (the seam, with a fake matcher)", async ({
   page,
 }) => {
-  await openMap(page, "mode=explored");
+  await openMap(page, "layer=explored");
   await openPanel(page);
   await importFiles(page, [komoot.a]);
   await expect(rows(page)).toHaveCount(1);
@@ -291,7 +291,7 @@ test.describe("in a dark system theme", () => {
   test.use({ colorScheme: "dark" });
 
   test("the panel and the lines read on the dark base map", async ({ page }, testInfo) => {
-    await openMap(page, "mode=plain");
+    await openMap(page);
     await openPanel(page);
     await importFiles(page, [komoot.a, komoot.b, komoot.c]);
     await expect(rows(page)).toHaveCount(3);

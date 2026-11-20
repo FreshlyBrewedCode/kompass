@@ -63,7 +63,7 @@ test.describe("in a dark system theme", () => {
   test.use({ colorScheme: "dark" });
 
   test("the app and the base map follow it", async ({ page }, testInfo) => {
-    await openMap(page, "mode=attribute");
+    await openMap(page, "layer=surface_class");
     await expect(page.locator("html")).toHaveClass(/dark/);
     expect(await page.evaluate(() => window.__kompass.map.getStyle().sprite)).toMatch(/sprites\/v4\/dark$/);
     await screenshot(page, testInfo, "app");

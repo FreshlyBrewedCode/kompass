@@ -67,7 +67,7 @@ test("bench: import, store, layer and backup of many rides", async ({ page }) =>
         const w = window as unknown as { __longTasks: number[] };
         return w.__longTasks.splice(0);
       });
-    await openMap(page, "mode=plain");
+    await openMap(page);
     await page.getByTestId("rides-button").click();
     await longTasks();
     const t0 = Date.now();
