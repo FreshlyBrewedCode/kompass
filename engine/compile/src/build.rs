@@ -172,6 +172,12 @@ fn manifest_files(dir: &Path) -> Result<(PathBuf, Vec<PathBuf>, Vec<PathBuf>), E
     Ok((index, g, geo))
 }
 
+/// The geometry tile files of a build directory, one per graph tile in tile order (index = the
+/// tile's index in `GraphInfo::tiles`): for loading geometry only where it is needed.
+pub fn geometry_paths(dir: &Path) -> Result<Vec<PathBuf>, Error> {
+    Ok(manifest_files(dir)?.2)
+}
+
 /// Loads the graph of a build directory, all tiles; with `geometry`, also every geometry tile.
 pub fn load(dir: &Path, geometry: bool) -> Result<(Graph, LoadTimes), Error> {
     let (index, tile_paths, geos) = manifest_files(dir)?;

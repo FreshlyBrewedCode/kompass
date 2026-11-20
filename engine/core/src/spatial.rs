@@ -36,6 +36,8 @@ pub struct Grid {
     /// cos(latitude) at the grid's middle: east-west cells span `cell / kx` of longitude.
     kx: f64,
     use_geometry: bool,
+    /// The area the grid covers (min lon, min lat, max lon, max lat, 1e-7 degrees).
+    bbox: [i32; 4],
     first: Vec<u32>,
     edges: Vec<EdgeId>,
 }
@@ -51,14 +53,47 @@ impl Grid {
         reason = "grid dimensions are small positive numbers"
     )]
     pub fn build(g: &Graph, cell_m: f64) -> Grid {
-        let [w, s, e, n] = g.info().bbox;
-        let (w, s, e, n) = if w > e { (0, 0, 0, 0) } else { (w, s, e, n) };
+        let use_geometry = (0..g.info().tiles.len()).any(|t| g.geometry_loaded(t));
+        let m = g.edge_count() as EdgeId;
+        Grid::build_over(g, cell_m, 0..m, g.info().bbox, use_geometry)
+    }
+
+    /// Builds the grid over the edges of one tile only: follows the tile's geometry if it is
+    /// loaded, else the straight segments (queries use the same points, so the fallback is
+    /// consistent). Valid until the tile's geometry or the graph changes: the matcher's
+    /// `TileGrids` rebuilds it then. A query near the tile finds only the edges of this tile.
+    #[must_use]
+    pub fn build_tile(g: &Graph, cell_m: f64, tile: usize) -> Grid {
+        let Some(t) = g.info().tiles.get(tile) else {
+            return Grid::build_over(g, cell_m, 0..0, [1, 1, 0, 0], false);
+        };
+        Grid::build_over(g, cell_m, t.edges.clone(), t.bbox, g.geometry_loaded(tile))
+    }
+
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss,
+        reason = "grid dimensions are small positive numbers"
+    )]
+    fn build_over(
+        g: &Graph,
+        cell_m: f64,
+        edge_range: std::ops::Range<EdgeId>,
+        bbox: [i32; 4],
+        use_geometry: bool,
+    ) -> Grid {
+        let [w, s, e, n] = bbox;
+        let (w, s, e, n) = if w > e || s > n {
+            (0, 0, 0, 0)
+        } else {
+            (w, s, e, n)
+        };
         let mid_lat = (f64::from(s) + f64::from(n)) * 0.5e-7;
         let kx = mid_lat.to_radians().cos().max(0.01);
         let cell = (cell_m / M_PER_E7).max(1.0);
         let cols = (f64::from(e - w) * kx / cell) as usize + 1;
         let rows = (f64::from(n - s) / cell) as usize + 1;
-        let use_geometry = (0..g.info().tiles.len()).any(|t| g.geometry_loaded(t));
         let mut grid = Grid {
             lon0: w,
             lat0: s,
@@ -67,15 +102,15 @@ impl Grid {
             rows,
             kx,
             use_geometry,
+            bbox: [w, s, e, n],
             first: vec![0; cols * rows + 1],
             edges: Vec::new(),
         };
         let cells = cols * rows;
         let mut last = vec![u32::MAX; cells];
-        let m = g.edge_count() as EdgeId;
         // two passes: count, then fill
         for pass in 0..2 {
-            for e in (0..m).filter(|&e| g.edge_usable(e)) {
+            for e in edge_range.clone().filter(|&e| g.edge_usable(e)) {
                 let mut pts = g.edge_points_with(e, use_geometry);
                 let Some(mut prev) = pts.next() else { continue };
                 for p in pts {
@@ -159,6 +194,12 @@ impl Grid {
         self.use_geometry
     }
 
+    /// The area the grid covers: min lon, min lat, max lon, max lat (1e-7 degrees).
+    #[must_use]
+    pub fn bbox(&self) -> [i32; 4] {
+        self.bbox
+    }
+
     /// The up to `max_results` nearest edges within `radius_m` of a point, nearest first.
     #[must_use]
     pub fn snap(&self, g: &Graph, at: LngLat, radius_m: f64, max_results: usize) -> Vec<Snap> {
@@ -168,6 +209,13 @@ impl Grid {
     }
 
     /// [`Grid::snap`] into a reused vector (cleared first): no allocation once it has capacity.
+    pub fn snap_into(&self, g: &Graph, at: LngLat, radius_m: f64, max_results: usize, out: &mut Vec<Snap>) {
+        out.clear();
+        self.snap_more(g, at, radius_m, max_results, out);
+    }
+
+    /// [`Grid::snap_into`] merged into what `out` already holds (nearest first, at most
+    /// `max_results`): the nearest edges of several grids (one per tile) are found one grid at a time.
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
@@ -175,8 +223,7 @@ impl Grid {
         clippy::cast_precision_loss,
         reason = "ring and cell indices are small"
     )]
-    pub fn snap_into(&self, g: &Graph, at: LngLat, radius_m: f64, max_results: usize, out: &mut Vec<Snap>) {
-        out.clear();
+    pub fn snap_more(&self, g: &Graph, at: LngLat, radius_m: f64, max_results: usize, out: &mut Vec<Snap>) {
         if max_results == 0 || radius_m.is_nan() || radius_m < 0.0 {
             return;
         }
