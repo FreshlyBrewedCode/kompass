@@ -271,6 +271,31 @@ area** and **avoid this area**, **draw it** (sketch routing), **make it a loop**
 waypoints), **learn from my rides** (base chooser), more attribute layers from the catalogue (layers
 panel), and the **agent bar**, which will edit the same profile and report in the diff's words.
 
+## As built (#31)
+
+The shell (`web/src/planner/`, [../planner.md](../planner.md)) follows this reference; where it
+deliberately differs:
+
+- **Real data, grouped.** Surface lanes and legends group the engine's seven classes into the four
+  colours (paved and rough paving → Paved; compacted and gravel → Gravel; soft and other → Dirt &
+  grass; unknown). The way types map to the six colours; "Forest track" reads "Track" (the engine's
+  `track` is farm tracks too).
+- **Map & rides**: the modes are Map / Information / Explored. The information chips are the
+  region's own overlay attributes (seven first, the rest behind "+N more", working, not reserved);
+  "Cost in this profile" is not built yet (needs an `arcCosts` layer). Relief, cycle routes and
+  "My rides on the map" are switches in the same panel; the ride library is mounted as it is.
+- **Inspect a way** (the design is silent): a tap adds a waypoint; inspecting is a switch in Map &
+  rides, offered with an information layer, with a "Tap a way to inspect · Done" pill while on.
+- **Stops**: the list's "+ Stop" became the hint "tap the map to add a stop" plus Reverse and
+  Clear; a tap joins the nearest leg (least detour) or extends past the destination.
+- **The error** names the limit by lifting limits one at a time (the engine says only that there is
+  no route); it does not say where the gap is.
+- **Own presets** are renamed and deleted from the profile's head while one is the untouched base.
+- **The sixth compare metric** is "New to me" with a personal layer, else "Tracks & paths".
+- **Sheets**: dragging the grabber below half the first detent closes the sheet.
+- **Engine state**: a dot on the brand mark while the graph loads; the download state replaces the
+  summary card as designed. No theme toggle: the system setting decides.
+
 ## Sandbox only
 
 The theme toggle (the real app follows the system setting), the toy engine and its fixed routes,

@@ -43,7 +43,7 @@ test("the graph downloads with progress, is cached on the device, and routes off
   const log = requestLog(page);
   // slow the graph files down a little, so the download state is visible on this tiny region
   await page.route(/\/data\/graph\//, async (r) => {
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    await new Promise((resolve) => setTimeout(resolve, 1200));
     await r.continue();
   });
   await page.goto("./?dev");

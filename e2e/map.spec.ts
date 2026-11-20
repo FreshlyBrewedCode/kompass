@@ -52,7 +52,7 @@ test("the layers control: one information layer at a time, with its legend; the 
   const shown = await drawn(page, ["info-line"]);
   expect(shown).toBeGreaterThan(0);
   expect(shown).toBeLessThan(await drawn(page, ["way-casing", "way-halo"]));
-  await expect(page.getByTestId("legend")).toContainText("Surface");
+  await expect(page.getByTestId("info-surface_class")).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("legend-entry")).toHaveCount(6);
   await expect(page.getByTestId("legend-entry").last()).toHaveText("Unknown");
   await expect(page.getByTestId("legend-note")).toContainText("Not highlighted: paved smooth");

@@ -1,7 +1,7 @@
 # The map
 
 Code: `web/src/map/` (logic, no React), `web/src/history/` (the explored store), `web/src/rides/` ([rides.md](rides.md)),
-`web/src/components/` (chrome, replaceable). Tests: `web/test`, `e2e/map.spec.ts`.
+`web/src/components/` (map view, inspect panel; the chrome is the planner shell, [planner.md](planner.md)). Tests: `web/test`, `e2e/map.spec.ts`.
 
 ## Region data
 
@@ -122,8 +122,10 @@ control; `?layer=<attribute key>|explored` in the URL), and toggles the relief a
   drawn. The legend names what is left out. A new attribute works without a rule (every value, or
   every non-zero value).
 - **Explored**: a teal band on ridden edges (`feature-state.ridden`); never ridden stays the map.
-- **Inspect**: tapping a way opens the panel with every attribute, with or without a layer (from
-  z13, where the ways are drawn; a 14 px box around the tap, the nearest edge wins).
+- **Inspect**: tapping a way opens the panel with every attribute (from z13, where the ways are
+  drawn; a 14 px box around the tap, the nearest edge wins). In the planner a tap adds a waypoint, so
+  inspecting is a mode ("Inspect a way" in Map & rides, with an information layer on);
+  `RegionMap.setPicking` switches the map's own tap handling.
 
 ## Explored map
 

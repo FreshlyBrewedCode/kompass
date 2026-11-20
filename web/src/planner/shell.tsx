@@ -184,6 +184,18 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
     };
   }, [store]);
   useEffect(() => store.setEngineReady(engineState.status === "ready"), [store, engineState.status]);
+  // the ride library hands the engine a new personal layer (ridden ways) after matching: route again
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const off = exploredStore.subscribe(() => {
+      clearTimeout(timer);
+      timer = setTimeout(() => store.refresh(), 400);
+    });
+    return () => {
+      clearTimeout(timer);
+      off();
+    };
+  }, [store]);
 
   // the engine: the region graph downloads (once per build) and loads in its worker
   const loadGraph = useCallback(() => {

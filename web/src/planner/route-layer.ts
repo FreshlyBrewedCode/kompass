@@ -164,8 +164,7 @@ export class RouteLayer {
       { id: ALT_LINE, type: "line", source: ALT, filter: isKind("compare"), layout: round, paint: {} },
       before,
     );
-    map.addLayer({ id: MAIN_CASING, type: "line", source: MAIN, layout: round, paint: {} }, before);
-    map.addLayer({ id: MAIN_LINE, type: "line", source: MAIN, layout: round, paint: {} }, before);
+    // the ghost under the plan's line: it shows only where the two routes part
     map.addLayer(
       {
         id: GHOST_LINE,
@@ -177,6 +176,8 @@ export class RouteLayer {
       },
       before,
     );
+    map.addLayer({ id: MAIN_CASING, type: "line", source: MAIN, layout: round, paint: {} }, before);
+    map.addLayer({ id: MAIN_LINE, type: "line", source: MAIN, layout: round, paint: {} }, before);
     map.addLayer({ id: CURSOR_DOT, type: "circle", source: CURSOR, paint: {} }, before);
     this.#applied = {};
     this.#paint();

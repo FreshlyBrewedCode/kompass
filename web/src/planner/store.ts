@@ -288,6 +288,12 @@ export class PlannerStore {
     if (ready) void this.#engine.catalogue().then((catalogue) => this.#set({ catalogue }));
   }
 
+  /** Something the engine routes on changed (the personal layer of ridden ways): route everything again. */
+  refresh() {
+    this.#sent.clear();
+    this.#reroute();
+  }
+
   // ---------------------------------------------------------------- waypoints
 
   addWaypointAt(lon: number, lat: number, place?: string) {
