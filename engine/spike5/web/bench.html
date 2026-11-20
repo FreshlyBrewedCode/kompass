@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>kompass spike 5</title>
+<script type="module">
+  import { run } from "./run.js";
+
+  // in a Web Worker (the real setup)
+  window.runWorker = (cfg) =>
+    new Promise((ok, fail) => {
+      const w = new Worker("./worker.js", { type: "module" });
+      w.onmessage = (m) => {
+        if (m.data.log) console.log(m.data.log);
+        else if (m.data.error) fail(new Error(m.data.error));
+        else {
+          ok(m.data.result);
+          w.terminate();
+        }
+      };
+      w.postMessage(cfg);
+    });
+  // on the main thread (for CPU throttling, which DevTools applies to the page's main thread)
+  window.runMain = (cfg) => run(cfg, (s) => console.log(s));
+  window.ready = true;
+</script>

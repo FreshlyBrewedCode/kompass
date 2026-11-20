@@ -25,6 +25,7 @@ pub mod format;
 pub mod geometry;
 pub mod graph;
 pub mod hilbert;
+pub mod matching;
 pub mod spatial;
 pub mod testing;
 

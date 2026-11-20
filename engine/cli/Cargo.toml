@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 kompass-core.workspace = true
 kompass-compile.workspace = true
+serde_json = "=1.0.145"
 
 [lints]
 workspace = true

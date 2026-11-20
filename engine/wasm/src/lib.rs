@@ -1,6 +1,8 @@
 //! The engine's browser face: `kompass-core` exposed through wasm-bindgen. Built by
 //! `bun run build:wasm` into `web/src/engine/pkg` (generated, gitignored) and loaded in a Web Worker.
 
+pub mod spike5;
+
 use kompass_core::LngLat;
 use wasm_bindgen::prelude::wasm_bindgen;
 

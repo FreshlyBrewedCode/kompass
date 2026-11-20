@@ -5,6 +5,9 @@
 //! - `kompass info --build <dir> [--snaps N]`: loads the graph, prints counts, load times, memory and
 //!   the time of N seeded random snaps (no coordinates).
 
+mod gpx;
+mod matchcmd;
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
@@ -14,7 +17,9 @@ use kompass_core::{Graph, LngLat};
 
 const USAGE: &str = "usage: kompass [--version | --help]
        kompass compile --build <dir> [--zoom <z>]
-       kompass info --build <dir> [--snaps <n>]";
+       kompass info --build <dir> [--snaps <n>]
+       kompass match --build <dir> [--out <dir>] [--svg <dir>] [--no-geometry] [--reverse] [--offset <n>]
+                     [--radius|--candidates|--sigma|--beta|--step|--skip|--gap|--detour-factor|--detour-slack|--oneway-penalty <v>] <gpx…>";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -29,6 +34,7 @@ fn main() -> ExitCode {
         }
         Some("compile") => Options::parse(&args[1..]).and_then(|o| compile(&o)),
         Some("info") => Options::parse(&args[1..]).and_then(|o| info(&o)),
+        Some("match") => matchcmd::run(&args[1..]),
         Some(other) => Err(Failure::Usage(format!("unknown command `{other}`"))),
     };
     match result {
@@ -44,9 +50,21 @@ fn main() -> ExitCode {
     }
 }
 
-enum Failure {
+pub(crate) enum Failure {
     Usage(String),
     Run(String),
+}
+
+impl From<std::io::Error> for Failure {
+    fn from(e: std::io::Error) -> Failure {
+        Failure::Run(e.to_string())
+    }
+}
+
+impl From<serde_json::Error> for Failure {
+    fn from(e: serde_json::Error) -> Failure {
+        Failure::Run(e.to_string())
+    }
 }
 
 impl From<kompass_compile::Error> for Failure {
