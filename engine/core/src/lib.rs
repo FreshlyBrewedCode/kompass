@@ -7,6 +7,7 @@
 //!   are quantised.
 //! - [`spatial`]: a uniform grid over the edges and [`spatial::Grid::snap`], the nearest edges to
 //!   a point (waypoints, map-matching candidates).
+//! - [`matching`]: map-matching recorded tracks onto the graph, and the explored fold of the matches.
 //! - [`assemble`]: building a [`Graph`] from edges in tile order (the compiler and tests use it) and
 //!   writing it as files.
 //! - [`testing`]: tiny graphs built in code, for tests here and in the other crates.
@@ -25,6 +26,7 @@ pub mod format;
 pub mod geometry;
 pub mod graph;
 pub mod hilbert;
+pub mod matching;
 pub mod spatial;
 pub mod testing;
 
