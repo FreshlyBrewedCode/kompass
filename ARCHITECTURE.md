@@ -19,7 +19,7 @@
                          │ static files
   ┌──────────────────────┴──── BROWSER (no backend) ─────────────────┐
   │ engine (Rust → WebAssembly, in a Web Worker)                     │
-  │   snap · route · loop · lookahead · analyze · match_track        │
+  │   snap · route · loop · lookahead · analyze                      │
   │ web app (bun, Vite, React, shadcn, Tailwind, MapLibre GL)        │
   │   planner · ride mode · explored map · debug map                 │
   │ personal data in IndexedDB: tracks, history, profiles,           │
@@ -49,7 +49,6 @@ Later: GitHub Pages for the app, and Cloudflare (R2) for the large data files if
   - `loop`: start, distance, bearing or sketched shape; a novelty prize.
   - `lookahead`: a bounded search per branch at the next junction.
   - `analyze`: surface, traffic, climb and novelty breakdown, cost explanation.
-  - `match_track`: map-matching with a hidden Markov model.
 - **Base vs. personal layer:** the base graph is static. The personal layer is arrays indexed
   by edge: ridden count and last ridden per direction, corrections, ridden today. Importing a
   ride never rebuilds the base graph.

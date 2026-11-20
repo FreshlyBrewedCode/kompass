@@ -4,6 +4,11 @@
 //!   in `<dir>/manifest.json`.
 //! - `kompass info --build <dir> [--snaps N]`: loads the graph, prints counts, load times, memory and
 //!   the time of N seeded random snaps (no coordinates).
+//! - `kompass match --build <dir> [--geojson <dir>] [--explored <file>] <gpx files or directories>`:
+//!   map-matches recorded tracks, prints aggregate numbers (`docs/matching.md`).
+
+mod gpx;
+mod matchcmd;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -14,7 +19,9 @@ use kompass_core::{Graph, LngLat};
 
 const USAGE: &str = "usage: kompass [--version | --help]
        kompass compile --build <dir> [--zoom <z>]
-       kompass info --build <dir> [--snaps <n>]";
+       kompass info --build <dir> [--snaps <n>]
+       kompass match --build <dir> [--geojson <dir>] [--explored <file>] [--no-geometry]
+                     [--radius|--candidates|--sigma|--beta|--step|--skip|--gap|--spur <v>] <gpx files or directories>";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -29,6 +36,7 @@ fn main() -> ExitCode {
         }
         Some("compile") => Options::parse(&args[1..]).and_then(|o| compile(&o)),
         Some("info") => Options::parse(&args[1..]).and_then(|o| info(&o)),
+        Some("match") => matchcmd::run(&args[1..]),
         Some(other) => Err(Failure::Usage(format!("unknown command `{other}`"))),
     };
     match result {

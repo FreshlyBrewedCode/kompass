@@ -48,6 +48,10 @@ cd engine && cargo run --release -p kompass-cli -- compile --build ../data/build
                          # manifest's `graph` key; ~2 s and 0.3 GB for a 100 km region
 cd engine && cargo run --release -p kompass-cli -- info --build ../data/build/<name>
                          # load the graph: counts, load times, memory, snap timings (no coordinates)
+cd engine && cargo run --release -p kompass-cli -- match --build ../data/build/<name> [--geojson <dir>] [--explored <file>] <gpx files or dirs>
+                         # map-match recorded tracks: aggregates only (rides, in-region share, matched share,
+                         # breaks and time per 100 km); a regression check over a directory of tracks
+                         # (docs/matching.md). --geojson / --explored write the user's real tracks: tmp or data/ only
 uv run --project tools/komoot kompass-komoot --help    # Komoot download (run by the user, see tools/komoot/README.md)
 ```
 
