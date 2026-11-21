@@ -143,3 +143,51 @@ describe("the planner store", () => {
     expect(store.getSnapshot().compareId).toBeNull();
   });
 });
+
+describe("why not through here", () => {
+  test("routes through the point as well, compares, and leaves the plan untouched", async () => {
+    const { engine, calls, compares } = fakeEngine(answer);
+    const store = new PlannerStore(engine, { storage: memoryStorage(), schedule, now: now(0) });
+    await store.init();
+    store.setEngineReady(true);
+    store.addWaypointAt(0, 0);
+    store.addWaypointAt(0.02, 0);
+    await settle();
+    const main = store.getSnapshot().main.result;
+    store.startWhyNot(0.01, 0.005);
+    await settle();
+    const through = calls.filter((c) => c.lane === "whynot");
+    expect(through).toHaveLength(1);
+    // the via sits between start and destination, the plan keeps two waypoints
+    expect(through[0]?.request.waypoints).toEqual([
+      { lon: 0, lat: 0 },
+      { lon: 0.01, lat: 0.005 },
+      { lon: 0.02, lat: 0 },
+    ]);
+    const s = store.getSnapshot();
+    expect(s.waypoints).toHaveLength(2);
+    expect(s.main.result).toBe(main);
+    expect(compares).toHaveLength(1);
+    expect(s.whyNot?.comparison?.stretches).toHaveLength(1);
+    // a slider move: both routes again, compared again
+    store.setWeight("unpaved", 40);
+    await settle();
+    expect(calls.filter((c) => c.lane === "whynot")).toHaveLength(2);
+    expect(compares).toHaveLength(2);
+    // back: nothing of it stays
+    store.endWhyNot();
+    expect(store.getSnapshot().whyNot).toBeNull();
+    expect(store.getSnapshot().waypoints).toHaveLength(2);
+    // "use this route" makes the point a stop
+    store.startWhyNot(0.01, 0.005);
+    await settle();
+    store.acceptWhyNot();
+    await settle();
+    expect(store.getSnapshot().whyNot).toBeNull();
+    expect(store.getSnapshot().waypoints.map((w) => [w.lon, w.lat])).toEqual([
+      [0, 0],
+      [0.01, 0.005],
+      [0.02, 0],
+    ]);
+  });
+});

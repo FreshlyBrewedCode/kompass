@@ -36,6 +36,8 @@ import type { PickedEdge } from "@/map/inspect";
 import type { Manifest } from "@/map/manifest";
 import { ridesState } from "@/rides/session";
 import type { RideSummary } from "@/rides/types";
+import { CostLegend, CostPanel, WhyNotCard } from "./cost/panel";
+import { useCostLayer, useCostStatus } from "./cost/use-cost-layer";
 import { ExploredLegend, LayersPanel, Legend } from "./layers-panel";
 import { presetName, waypointLabel } from "./model";
 import { dataVars } from "./palette";
@@ -140,6 +142,10 @@ type Slots = {
   legend: { name: string; body: ReactNode } | null;
   picked: PickedEdge | null;
   inspectCard: ReactNode;
+  /** what the inspect banner asks for (the Cost layer: a way's cost) */
+  inspectText: string;
+  /** the cost panel is open: it says what a tap does (the phone has no room for the banner too) */
+  costPicked: boolean;
   ridesCount: number;
   onRetry: () => void;
 };
@@ -228,10 +234,22 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
     void library.importFiles(files);
   });
 
-  // inspect only while asked for (a tap otherwise adds a stop); leaving the information layer ends it
+  // inspect only while asked for (a tap otherwise adds a stop); leaving the information layer ends it.
+  // The Cost layer starts with it on: a tap explains the way (its panel can still add a stop).
   useEffect(() => {
-    if (info.kind !== "attribute" && inspect) store.setInspect(false);
+    if (info.kind !== "attribute" && info.kind !== "cost" && inspect) store.setInspect(false);
   }, [info, inspect, store]);
+  useEffect(() => {
+    if (info.kind === "cost") store.setInspect(true);
+  }, [info.kind, store]);
+  const costLayer = useCostLayer(
+    map,
+    store,
+    manifest.overlay.layer,
+    info.kind === "cost",
+    engineState.status === "ready",
+  );
+  const costStatus = useCostStatus(costLayer);
   useEffect(() => {
     if (!inspect) setPicked(null);
   }, [inspect]);
@@ -309,7 +327,9 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
       ? { name: info.attribute.label, body: <Legend legend={infoSpec(info.attribute, theme).legend} /> }
       : info.kind === "explored"
         ? { name: "Explored", body: <ExploredLegend theme={theme} ridden={ridden} /> }
-        : null;
+        : info.kind === "cost"
+          ? { name: "Cost", body: <CostLegend status={costStatus} theme={theme} compact /> }
+          : null;
 
   const layersPanel = (
     <LayersPanel
@@ -327,6 +347,7 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
       devTools={DEV}
       onFakeRidden={() => mapRef.current?.fakeRidden(FAKE_COUNT)}
       onClearRidden={() => exploredStore.clear()}
+      costKey={<CostLegend status={costStatus} theme={theme} />}
       rides={
         <RidesPanel
           snapshot={rides}
@@ -379,8 +400,21 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
           ridesCount={rides.rides.length}
           onRetry={loadGraph}
           onStackHeight={setStackH}
+          inspectText={info.kind === "cost" ? "Tap a way for its cost" : "Tap a way to inspect it"}
+          costPicked={info.kind === "cost" && picked !== null}
           inspectCard={
-            picked ? (
+            picked && info.kind === "cost" ? (
+              <CostPanel
+                edge={picked}
+                theme={theme}
+                desk={mode === "desk"}
+                onClose={() => mapRef.current?.clearSelection()}
+                onWhyNot={([lon, lat]) => {
+                  mapRef.current?.clearSelection();
+                  store.startWhyNot(lon, lat);
+                }}
+              />
+            ) : picked ? (
               <InspectPanel
                 manifest={manifest}
                 edge={picked}
@@ -421,6 +455,8 @@ function Arrangement(props: Slots & { onStackHeight: (h: number) => void }) {
 
 const TOP = "top-[max(var(--gutter),env(safe-area-inset-top))]";
 const BOTTOM = "bottom-[calc(var(--gutter)+env(safe-area-inset-bottom))]";
+/** the desk's bottom-left slot (inspect, cost, why not) clears the agent bar */
+const ABOVE_AGENT = "bottom-[calc(var(--gutter)+env(safe-area-inset-bottom)+56px)]";
 
 function TopBar({ wide, ridesCount }: { wide?: boolean; ridesCount: number }) {
   const store = usePlanner();
@@ -504,10 +540,21 @@ function LegendPill({
   );
 }
 
-function InspectBanner({ className, style }: { className?: string; style?: CSSProperties }) {
+function InspectBanner({
+  text,
+  hidden,
+  className,
+  style,
+}: {
+  text: string;
+  /** a panel or card already says what a tap does */
+  hidden?: boolean;
+  className?: string;
+  style?: CSSProperties;
+}) {
   const store = usePlanner();
   const inspect = usePlan((s) => s.inspect);
-  if (!inspect) return null;
+  if (!inspect || hidden) return null;
   return (
     <div
       style={style}
@@ -518,7 +565,7 @@ function InspectBanner({ className, style }: { className?: string; style?: CSSPr
       )}
       data-testid="inspect-banner"
     >
-      <span className="font-semibold">Tap a way to inspect it</span>
+      <span className="whitespace-nowrap font-semibold">{text}</span>
       <button
         type="button"
         data-testid="inspect-done"
@@ -717,6 +764,7 @@ function SummaryCard({
   const store = usePlanner();
   const status = useStatus();
   const comparing = usePlan((s) => !!s.compareId);
+  const whyNot = usePlan((s) => !!s.whyNot);
   const chip = usePlan((s) => s.chip);
   const r = usePlan((s) => s.main.result);
   if (status) {
@@ -734,6 +782,12 @@ function SummaryCard({
       </section>
     );
   }
+  if (whyNot)
+    return (
+      <section className={cn(card, "max-h-[40dvh] overflow-y-auto p-3.5")} data-testid="summary">
+        <WhyNotCard />
+      </section>
+    );
   if (comparing)
     return (
       <section className={cn(card, "p-3.5")} data-testid="summary">
@@ -1093,12 +1147,15 @@ function Phone({
   legend,
   picked,
   inspectCard,
+  inspectText,
+  costPicked,
   ridesCount,
   onRetry,
   onStackHeight,
 }: Slots & { onStackHeight: (h: number) => void }) {
   const [stack, stackH] = useHeight();
   const [sheetH, setSheetH] = useState(0);
+  const whyNot = usePlan((s) => !!s.whyNot);
   const picker = usePlan((s) => s.picker);
   const sheet = usePlan((s) => s.sheet);
   // a phone in landscape: sheets open beside the map, not over it
@@ -1116,7 +1173,12 @@ function Phone({
         legend={legend}
         className="left-(--gutter) top-[calc(max(var(--gutter),env(safe-area-inset-top))+48px)]"
       />
-      <InspectBanner className="left-1/2 top-[calc(max(var(--gutter),env(safe-area-inset-top))+48px)] -translate-x-1/2" />
+      {/* above the bottom stack: the legend pill keeps the top */}
+      <InspectBanner
+        text={inspectText}
+        hidden={costPicked || whyNot}
+        className="bottom-[calc(var(--attrib-bottom)+4px)] left-1/2 -translate-x-1/2"
+      />
       <div
         ref={stack}
         data-testid="stack"
@@ -1191,6 +1253,7 @@ function Desk({
   legend,
   picked,
   inspectCard,
+  inspectText,
   ridesCount,
   onRetry,
   onStackHeight,
@@ -1201,6 +1264,7 @@ function Desk({
   useEffect(() => onStackHeight(stackH), [stackH, onStackHeight]);
   const picker = usePlan((s) => s.picker);
   const sheet = usePlan((s) => s.sheet);
+  const whyNot = usePlan((s) => !!s.whyNot);
   const left = desk ? 372 : 340;
   const right = 404;
   const top = "top-[calc(max(var(--gutter),env(safe-area-inset-top))+52px)]";
@@ -1208,15 +1272,32 @@ function Desk({
     <>
       <TopBar wide ridesCount={ridesCount} />
       <LegendPill legend={legend} className={top} style={{ left: `calc(${left}px + 2*var(--gutter))` }} />
-      <InspectBanner className="top-[max(var(--gutter),env(safe-area-inset-top))] left-1/2 -translate-x-1/2" />
+      <InspectBanner
+        text={inspectText}
+        className="top-[max(var(--gutter),env(safe-area-inset-top))] left-1/2 -translate-x-1/2"
+      />
       <RouteCard left={left} mode={mode} onRetry={onRetry} />
-      {picked && (
+      {picked ? (
         <div
-          className={cn("absolute z-10 w-80", BOTTOM)}
+          className={cn("absolute z-10 w-80", desk ? ABOVE_AGENT : BOTTOM)}
           style={{ left: `calc(${left}px + 2*var(--gutter))` }}
         >
           {inspectCard}
         </div>
+      ) : (
+        desk &&
+        whyNot && (
+          <section
+            className={cn(
+              card,
+              "thin-scroll absolute z-10 max-h-[64dvh] w-96 overflow-y-auto p-3.5",
+              ABOVE_AGENT,
+            )}
+            style={{ left: `calc(${left}px + 2*var(--gutter))` }}
+          >
+            <WhyNotCard />
+          </section>
+        )
       )}
       {desk ? (
         <>

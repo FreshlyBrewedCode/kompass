@@ -1,5 +1,12 @@
 // Test helpers for the planner: a small catalogue, presets, route results and a fake engine.
-import type { Catalogue, Preset, RouteRequest, RouteResult } from "@/engine/generated/types";
+import type {
+  Catalogue,
+  CompareRequest,
+  Preset,
+  RouteRequest,
+  RouteResult,
+  StretchCost,
+} from "@/engine/generated/types";
 import type { RouteOutcome } from "@/engine/protocol";
 import type { PlannerEngine } from "@/planner/store";
 
@@ -153,9 +160,31 @@ export function result(o: {
 
 export type Call = { lane: string; request: RouteRequest };
 
+/** A costed stretch for `compare` answers. */
+export function stretchCost(o: {
+  m: number;
+  cost: number;
+  factor?: number;
+  atMin?: number;
+  start?: number;
+}): StretchCost {
+  return {
+    span: { arcs: [0, 1], start_m: o.start ?? 0, length_m: o.m },
+    cost: o.cost,
+    factor: o.factor ?? o.cost / Math.max(1, o.m),
+    extra_m: 0,
+    clamped_min_m: o.atMin ?? 0,
+    clamped_max_m: 0,
+    why: [],
+    ways: [{ key: "track", length_m: o.m, share: 1 }],
+    closed: [],
+  };
+}
+
 /** A fake engine: answers routes from `answer` (synchronously resolved promises), records the calls. */
 export function fakeEngine(answer: (request: RouteRequest, lane: string) => RouteOutcome) {
   const calls: Call[] = [];
+  const compares: CompareRequest[] = [];
   const engine: PlannerEngine = {
     presets: async () => PRESETS,
     catalogue: async () => CATALOGUE,
@@ -169,9 +198,26 @@ export function fakeEngine(answer: (request: RouteRequest, lane: string) => Rout
       a_only_m: 0,
       b_only_m: 0,
     }),
+    edgeCosts: async () => {
+      throw new Error("not in the fake");
+    },
+    explainEdge: async () => {
+      throw new Error("not in the fake");
+    },
+    compare: async (request) => {
+      compares.push(request);
+      const a = stretchCost({ m: request.a.length * 100, cost: request.a.length * 80 });
+      const b = stretchCost({ m: request.b.length * 100, cost: request.b.length * 100 });
+      return {
+        a,
+        b,
+        stretches: [{ a, b, cost_delta: b.cost - a.cost, length_delta_m: b.span.length_m - a.span.length_m }],
+        shared_m: 0,
+      };
+    },
     cancel: () => undefined,
   };
-  return { engine, calls };
+  return { engine, calls, compares };
 }
 
 export function memoryStorage() {

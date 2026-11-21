@@ -11,17 +11,21 @@ import { createContext, useContext, useSyncExternalStore } from "react";
 import { isSuperseded, type Superseded } from "@/engine/client";
 import type {
   Catalogue,
+  CompareRequest,
+  EdgeExplanation,
+  ExplainEdgeRequest,
   LimitId,
   LimitValue,
   PrefId,
   Preset,
   Profile,
+  RouteComparison,
   RouteDiff,
   RouteError,
   RouteRequest,
   RouteResult,
 } from "@/engine/generated/types";
-import type { RouteOutcome } from "@/engine/protocol";
+import type { EdgeCostsParams, EdgeCostsResult, RouteOutcome } from "@/engine/protocol";
 import type { EngineStore } from "@/engine/store";
 import {
   type Change,
@@ -56,6 +60,10 @@ export interface PlannerEngine {
   catalogue(): Promise<Catalogue>;
   route(request: RouteRequest, lane: string): Promise<RouteOutcome | Superseded>;
   diff(a: number[], b: number[], lane: string): Promise<RouteDiff | Superseded>;
+  /** the cost debug view (docs/planner.md, "Cost") */
+  edgeCosts(params: EdgeCostsParams, lane: string): Promise<EdgeCostsResult | Superseded>;
+  explainEdge(request: ExplainEdgeRequest, lane: string): Promise<EdgeExplanation | Superseded>;
+  compare(request: CompareRequest, lane: string): Promise<RouteComparison | Superseded>;
   cancel(lane: string): void;
 }
 
@@ -65,6 +73,9 @@ export function engineAdapter(engine: EngineStore): PlannerEngine {
     catalogue: () => engine.call("catalogue"),
     route: (request, lane) => engine.routeLatest(request, lane),
     diff: (a, b, lane) => engine.client.latest(lane, "diff", { a, b }),
+    edgeCosts: (params, lane) => engine.client.latest(lane, "edgeCosts", params),
+    explainEdge: (request, lane) => engine.client.latest(lane, "explainEdge", request),
+    compare: (request, lane) => engine.client.latest(lane, "compare", request),
     cancel: (lane) => engine.client.cancel(lane),
   };
 }
@@ -77,6 +88,18 @@ export type SheetId = "route" | "profile" | "layers" | null;
 
 /** After a route failed: the limit that blocks it (`null`: no single one) and the route without it. */
 export type Blame = { limit: LimitId | null; result: RouteResult | null; searching: boolean };
+
+/**
+ * "Why not through here?": the plan's route against one forced through `at` (a via inserted where it
+ * detours least), under the same profile, stretch by stretch. The plan itself is untouched until
+ * "use this route".
+ */
+export type WhyNotState = {
+  at: { lon: number; lat: number };
+  /** the route through `at` */
+  line: Line;
+  comparison: RouteComparison | null;
+};
 
 export type PlanState = {
   catalogue: Catalogue | null;
@@ -105,6 +128,7 @@ export type PlanState = {
   moved: { startM: number; lengthM: number }[] | null;
   compareDiff: RouteDiff | null;
   blame: Blame | null;
+  whyNot: WhyNotState | null;
   /** the main route has been on its way for a while (a subtle "Routing…") */
   routing: boolean;
   // the shell
@@ -154,6 +178,9 @@ export class PlannerStore {
   /** the input each lane last sent (a request is not repeated) */
   readonly #sent = new Map<string, string>();
   #restored: SavedPlan | null;
+  /** a lane of "why not" whose answer is on its way: comparing now would pair stale routes */
+  #mainPending = false;
+  #throughPending = false;
 
   constructor(engine: PlannerEngine, options: StoreOptions = {}) {
     this.#engine = engine;
@@ -178,6 +205,7 @@ export class PlannerStore {
       moved: null,
       compareDiff: null,
       blame: null,
+      whyNot: null,
       routing: false,
       sheet: null,
       chip: null,
@@ -465,6 +493,57 @@ export class PlannerStore {
     this.setLimit(id, null);
   }
 
+  // ---------------------------------------------------------------- the cost debug view
+
+  /** The profile the plan routes with (the cost layer and the tap panel use the same). */
+  profile(): Profile {
+    const s = this.#state;
+    return planProfile(s.base, s.weights, s.limits);
+  }
+
+  /** One edge's cost, explained under the plan's profile (latest wins). */
+  explainEdge(edge: number): Promise<EdgeExplanation | Superseded> {
+    return this.#engine.explainEdge({ profile: this.profile(), edge }, "explain");
+  }
+
+  /** The visible edges' factors for the cost layer (latest wins, its own lane). */
+  edgeCosts(params: Omit<EdgeCostsParams, "profile"> & { profile?: Profile }) {
+    return this.#engine.edgeCosts({ profile: this.profile(), ...params }, "cost");
+  }
+
+  /** "Why not through here?": route through the point as well, and compare. */
+  startWhyNot(lon: number, lat: number) {
+    if (this.#state.waypoints.length < 2) return;
+    this.#sent.delete("whynot");
+    this.#set(
+      { whyNot: { at: { lon, lat }, line: NO_LINE, comparison: null }, chip: null, sheet: null },
+      { route: true },
+    );
+  }
+
+  /** Leaves the comparison: the plan as it was. */
+  endWhyNot() {
+    if (!this.#state.whyNot) return;
+    for (const lane of ["whynot", "whynot-compare"]) {
+      this.#engine.cancel(lane);
+      this.#sent.delete(lane);
+    }
+    this.#set({ whyNot: null });
+  }
+
+  /** "Use this route": the point becomes a stop of the plan. */
+  acceptWhyNot() {
+    const w = this.#state.whyNot;
+    if (!w) return;
+    this.endWhyNot();
+    this.addWaypointAt(w.at.lon, w.at.lat);
+  }
+
+  /** Flashes a preference's row (the profile card scrolls to it). */
+  flash(id: PrefId) {
+    this.#set({ fresh: id });
+  }
+
   // ---------------------------------------------------------------- the shell
 
   open(sheet: SheetId) {
@@ -555,12 +634,12 @@ export class PlannerStore {
     const s = this.#state;
     const can = s.engineReady && s.waypoints.length >= 2 && !!s.base;
     if (!can) {
-      for (const lane of ["route", "ghost", "compare", "probe"]) {
+      for (const lane of ["route", "ghost", "compare", "probe", "whynot", "whynot-compare"]) {
         this.#engine.cancel(lane);
         this.#sent.delete(lane);
       }
       this.#busy(false);
-      if (s.main !== NO_LINE || s.ghost !== NO_LINE || s.compare !== NO_LINE || s.blame)
+      if (s.main !== NO_LINE || s.ghost !== NO_LINE || s.compare !== NO_LINE || s.blame || s.whyNot)
         this.#set({
           main: NO_LINE,
           ghost: NO_LINE,
@@ -568,11 +647,13 @@ export class PlannerStore {
           moved: null,
           blame: null,
           compareDiff: null,
+          whyNot: s.waypoints.length >= 2 ? s.whyNot : null,
         });
       return;
     }
     const profile = planProfile(s.base, s.weights, s.limits);
     const before = this.#sent.get("route");
+    if (s.whyNot) this.#mainPending = true;
     this.#send("route", this.#request(profile), (main, key) => {
       if (key !== this.#sent.get("route") && this.#sent.get("route") !== undefined) {
         // an older answer while a newer request runs: show it (the drag stays live), no follow-ups
@@ -580,12 +661,15 @@ export class PlannerStore {
         return;
       }
       this.#busy(false);
+      this.#mainPending = false;
       this.#set({ main, blame: main.error ? { limit: null, result: null, searching: true } : null });
       if (main.error) void this.#probe(key);
       this.#diffMoved();
       this.#diffCompare();
+      this.#compareWhyNot();
     });
     if (this.#sent.get("route") !== before) this.#busy(true);
+    else this.#mainPending = false;
     // the base profile's route, while the changes route differently (not while comparing: one other line at a time)
     const base = s.base;
     const ghost =
@@ -607,6 +691,40 @@ export class PlannerStore {
       this.#diffCompare();
     });
     if (!ghost && s.moved) this.#set({ moved: null });
+    // "why not through here?": the same profile, the via inserted where it detours least
+    const at = s.whyNot?.at;
+    const through = at ? this.#request(profile) : null;
+    if (through && at) {
+      const i = insertIndex(s.waypoints, at);
+      through.waypoints.splice(i, 0, { lon: at.lon, lat: at.lat });
+    }
+    const sentThrough = this.#sent.get("whynot");
+    this.#send("whynot", through, (line) => {
+      this.#throughPending = false;
+      const w = this.#state.whyNot;
+      if (!w) return;
+      this.#set({ whyNot: { ...w, line, comparison: null } });
+      this.#compareWhyNot();
+    });
+    if (through && this.#sent.get("whynot") !== sentThrough) this.#throughPending = true;
+  }
+
+  /** Both routes of "why not through here?" are in: cost them stretch by stretch. */
+  #compareWhyNot() {
+    const { main, whyNot } = this.#state;
+    const a = main.result;
+    const b = whyNot?.line.result;
+    if (!a || !b || !whyNot || this.#mainPending || this.#throughPending) return;
+    const at = whyNot.at;
+    void this.#engine.compare({ profile: this.profile(), a: a.arcs, b: b.arcs }, "whynot-compare").then(
+      (comparison) => {
+        const w = this.#state.whyNot;
+        if (isSuperseded(comparison) || !w || w.at !== at || w.line.result !== b) return;
+        if (this.#state.main.result !== a) return;
+        this.#set({ whyNot: { ...w, comparison } });
+      },
+      () => undefined,
+    );
   }
 
   #busy(on: boolean) {
