@@ -1,9 +1,10 @@
 """Context shares against small synthetic polygons in the metric CRS."""
 
 import numpy as np
+import pandas as pd
 from conftest import box
 
-from kompass_pipeline import context, samples
+from kompass_pipeline import context, samples, schema
 from kompass_pipeline.context import ContextFeatures
 
 EMPTY = np.array([], dtype=object)
@@ -21,9 +22,11 @@ def edges(*lines):
 
 
 def shares(lines, features, roads=None):
+    """`roads`: a `Roads`, or which lines are primary roads of unknown speed limit."""
     x, y, part = edges(*lines)
-    is_road = np.array(roads if roads is not None else [False] * len(lines))
-    return context.shares(x, y, part, len(lines), is_road, features, BOUNDS, log=lambda *_: None)
+    if not isinstance(roads, context.Roads):
+        roads = context.Roads.plain(np.array(roads if roads is not None else [False] * len(lines)))
+    return context.shares(x, y, part, len(lines), roads, features, BOUNDS, log=lambda *_: None)
 
 
 def features(forest=(), builtup=(), water=(), water_line=()):
@@ -85,6 +88,72 @@ def test_builtup_and_road_near():
     assert out.road_near_share[2] == 0
     assert abs(int(out.builtup_share[0]) - 50) <= 3
     assert out.builtup_share[2] == 0
+
+
+def test_road_near_traffic_is_the_level_of_the_road_alongside():
+    # a primary road (unknown limit, outside towns: 100 km/h, level 0.9), a path 10 m beside it
+    # and one 100 m away, and a quiet residential street with a path beside it
+    out = shares(
+        [
+            [(0, 0), (600, 0)],
+            [(100, 10), (500, 10)],
+            [(100, 100), (500, 100)],
+            [(0, 250), (600, 250)],
+            [(100, 262), (500, 262)],
+        ],
+        features(),
+        roads=context.Roads(
+            np.array([True, False, False, True, False]),
+            np.array([3, 15, 15, 10, 15]),  # primary, path, path, residential, path
+            np.full(5, np.nan),
+            np.full(5, np.nan),
+            np.zeros(5, np.int64),
+        ),
+    )
+    assert out.road_near_traffic[1] == 90  # beside the primary
+    assert out.road_near_share[1] == 100
+    assert out.road_near_traffic[2] == 0 and out.road_near_share[2] == 0  # 100 m away: quiet
+    # the residential street: 0.12 * (0.4 + 0.6 * 10/70) at 40 km/h ≈ 0.06
+    assert out.road_near_traffic[4] == 6
+    assert out.road_near_traffic[0] == 90  # on a road the band holds the road itself
+
+
+def test_the_louder_road_wins_where_two_are_near():
+    # a path between a primary (5 m) and a residential street (12 m): the primary's level counts
+    out = shares(
+        [[(0, 0), (400, 0)], [(0, 17), (400, 17)], [(50, 5), (350, 5)]],
+        features(),
+        roads=context.Roads(
+            np.array([True, True, False]),
+            np.array([3, 10, 15]),
+            np.array([70.0, 30.0, np.nan]),
+            np.full(3, np.nan),
+            np.zeros(3, np.int64),
+        ),
+    )
+    # the primary at 70 km/h: 0.9 * (0.4 + 0.6 * 40/70) ≈ 0.67
+    assert out.road_near_traffic[2] == 67
+
+
+def test_road_attrs_parse_the_tags_like_finalize():
+    raw = pd.DataFrame(
+        {
+            "tag_highway": ["primary", "path", "residential", "motorway"],
+            "tag_maxspeed": ["70", None, "DE:urban", None],
+            "tag_lanes": ["4", None, None, "2"],
+            "tag_motor_vehicle": [None, None, "destination", None],
+            **{
+                k: [None] * 4
+                for k in context.ROAD_TAGS
+                if k not in ("tag_maxspeed", "tag_lanes", "tag_motor_vehicle")
+            },
+        }
+    )
+    r = context.road_attrs(raw)
+    assert r.is_road.tolist() == [True, False, True, False]
+    assert r.maxspeed_kmh[0] == 70 and r.maxspeed_kmh[2] == 50 and np.isnan(r.maxspeed_kmh[1])
+    assert r.lanes[0] == 4 and np.isnan(r.lanes[2])
+    assert r.motor_access[2] == schema.codes("motor_access")["destination"]
 
 
 def test_shares_are_uint8_percent():

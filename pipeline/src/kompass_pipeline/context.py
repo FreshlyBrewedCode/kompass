@@ -12,6 +12,14 @@ Definitions (cell = 10 m):
   water_share        sample within 100 m of a water area >= 0.5 ha (lake, river area) or a river / canal
   builtup_share      sample inside residential / commercial / industrial / ... landuse
   road_near_share    sample within 20 m of a motor road (100 on the roads themselves)
+  road_near_traffic  the traffic level (`traffic.py`, the engine's model) of the loudest motor road
+                     within 20 m, averaged over the samples within 20 m of one (0 where none is;
+                     on a road it includes the road itself)
+
+The road raster carries the level: every motor road is burnt in as 1 + level percent (louder roads
+drawn last, so a cell keeps the loudest), and a grey dilation by the same 20 m disk spreads the
+maximum. `> 0` is the old "near a motor road" mask, so `road_near_share` is unchanged, and the
+level costs no extra raster.
 """
 
 from __future__ import annotations
@@ -31,7 +39,7 @@ from pyproj import Transformer
 from rasterio.transform import from_origin
 from scipy import ndimage
 
-from . import samples, schema, tools
+from . import samples, schema, tags, tools, traffic
 
 RES = 10.0
 FOREST = {"forest", "wood"}
@@ -129,39 +137,59 @@ def _dilate(a: np.ndarray, r: int) -> np.ndarray:
     return ndimage.binary_dilation(a, structure=_octagon(r))
 
 
+@dataclass
+class Roads:
+    """The motor roads' attributes for their traffic level, per edge (codes as in the schema;
+    `maxspeed_kmh`, `lanes` NaN for unknown); only the rows of `is_road` edges are read."""
+
+    is_road: np.ndarray
+    highway: np.ndarray
+    maxspeed_kmh: np.ndarray
+    lanes: np.ndarray
+    motor_access: np.ndarray
+
+    @staticmethod
+    def plain(is_road, highway_code: int = 3) -> Roads:
+        """Roads of one class with nothing else known (tests)."""
+        n = len(is_road)
+        return Roads(
+            np.asarray(is_road, bool),
+            np.full(n, highway_code),
+            np.full(n, np.nan),
+            np.full(n, np.nan),
+            np.zeros(n, np.int64),
+        )
+
+
 def shares(
-    x, y, part, n_edges: int, is_road, features: ContextFeatures, bounds, *, res: float = RES, log=print
+    x, y, part, n_edges: int, roads: Roads, features: ContextFeatures, bounds, *, res: float = RES, log=print
 ) -> pd.DataFrame:
-    """Context shares (uint8 percent) per edge. `x, y, part` are the edges' metric vertices, `bounds`
-    (minx, miny, maxx, maxy) the raster extent (samples outside it clamp to the border)."""
+    """Context shares (uint8 percent) and `road_near_traffic` per edge. `x, y, part` are the edges'
+    metric vertices, `bounds` (minx, miny, maxx, maxy) the raster extent (samples outside it clamp
+    to the border)."""
     t0 = time.time()
     minx, miny, maxx, maxy = bounds
     w, h = int(np.ceil((maxx - minx) / res)), int(np.ceil((maxy - miny) / res))
     tf = from_origin(minx, maxy, res, res)
     log(f"  grid {w} x {h} = {w * h / 1e6:.0f} M cells")
 
-    def rast(geoms, all_touched=False) -> np.ndarray:
+    def rast(geoms, all_touched=False, values=None) -> np.ndarray:
         if len(geoms) == 0:
-            return np.zeros((h, w), bool)
-        return rasterio.features.rasterize(
-            ((g, 1) for g in geoms),
+            return np.zeros((h, w), bool if values is None else np.uint8)
+        out = rasterio.features.rasterize(
+            zip(geoms, values if values is not None else np.ones(len(geoms), np.uint8), strict=True),
             out_shape=(h, w),
             transform=tf,
             fill=0,
             dtype="uint8",
             all_touched=all_touched,
-        ).astype(bool)
+        )
+        return out.astype(bool) if values is None else out
 
     forest = rast(features.forest)
     rim = _dilate(forest, 3) & ~ndimage.binary_erosion(forest, structure=_octagon(1))
     built = rast(features.builtup)
     water = _dilate(rast(features.water_area) | rast(features.water_line, all_touched=True), 10)
-    on_road = is_road[part]
-    road_lines = []
-    if on_road.any():
-        _, line_idx = np.unique(part[on_road], return_inverse=True)  # consecutive, as shapely needs
-        road_lines = shapely.linestrings(np.column_stack([x[on_road], y[on_road]]), indices=line_idx)
-    road = _dilate(rast(road_lines, all_touched=True), 2)
     log(f"  rasters: {time.time() - t0:.0f}s")
 
     sx, sy, sedge, _, wgt, _ = samples.sample(x, y, part, n_edges, step=res)
@@ -174,19 +202,75 @@ def shares(
             "forest_edge_share": samples.weighted_share(rim[row, col], sedge, wgt, n_edges),
             "water_share": samples.weighted_share(water[row, col], sedge, wgt, n_edges),
             "builtup_share": samples.weighted_share(built[row, col], sedge, wgt, n_edges),
-            "road_near_share": samples.weighted_share(road[row, col], sedge, wgt, n_edges),
         }
     )
+    del forest, rim, water, built
+
+    # the roads, burnt in with their traffic level (needs their built-up share for the speed guess)
+    t1 = time.time()
+    is_road = roads.is_road
+    builtup_pct = (out["builtup_share"].to_numpy() * 100).round()
+    level = traffic.road_level(
+        roads.highway[is_road],
+        roads.maxspeed_kmh[is_road],
+        roads.lanes[is_road],
+        roads.motor_access[is_road],
+        builtup_pct[is_road],
+    )
+    on_road = is_road[part]
+    road_lines, burn = [], None
+    if on_road.any():
+        _, line_idx = np.unique(part[on_road], return_inverse=True)  # consecutive, as shapely needs
+        road_lines = shapely.linestrings(np.column_stack([x[on_road], y[on_road]]), indices=line_idx)
+        order = np.argsort(level, kind="stable")  # the loudest drawn last: a cell keeps the max
+        road_lines, burn = road_lines[order], (1 + np.round(level[order] * 100)).astype(np.uint8)
+    road = rast(road_lines, all_touched=True, values=burn)
+    road = ndimage.grey_dilation(road, footprint=_octagon(2))
+    log(f"  road traffic raster: {time.time() - t1:.0f}s")
+    v = road[row, col]
+    del road
+    near = v > 0
+    out["road_near_share"] = samples.weighted_share(near, sedge, wgt, n_edges)
+    loud = np.bincount(sedge, weights=wgt * np.where(near, v.astype(np.float64) - 1, 0.0), minlength=n_edges)
+    near_w = np.bincount(sedge, weights=wgt * near, minlength=n_edges)
+    out["road_near_traffic"] = np.where(near_w > 0, loud / 100 / np.maximum(near_w, 1e-9), 0.0)
     out.loc[is_road, "road_near_share"] = 1.0  # a road is on the road
     return (out * 100).round().astype(np.uint8)
 
 
+#: the raw tag columns the roads' traffic level reads (speed limit, lanes, motor access)
+ROAD_TAGS = (
+    "tag_maxspeed",
+    "tag_maxspeed_type",
+    "tag_source_maxspeed",
+    "tag_zone_traffic",
+    "tag_maxspeed_forward",
+    "tag_maxspeed_backward",
+    "tag_lanes",
+    "tag_motor_vehicle",
+    "tag_motorcar",
+)
+
+
+def road_attrs(raw: pd.DataFrame) -> Roads:
+    """The roads' traffic attributes from raw `tag_*` columns, through the same tag parsing as
+    `finalize` (`tags.py`); only the motor roads are parsed."""
+    n = len(raw)
+    hw = raw["tag_highway"].where(raw["tag_highway"].isin(schema.codes("highway")), "other")
+    is_road = hw.isin(ROAD_LABELS).to_numpy()
+    r = raw.loc[is_road]
+    kmh, lanes, motor = np.full(n, np.nan), np.full(n, np.nan), np.zeros(n, np.int64)
+    kmh[is_road] = tags.maxspeed(r)[0].astype("Float64").to_numpy(na_value=np.nan)
+    lanes[is_road] = tags.lanes(r).astype("Float64").to_numpy(na_value=np.nan)
+    motor[is_road] = tags.motor_access(r)
+    return Roads(is_road, hw.map(schema.codes("highway")).to_numpy(np.int64), kmh, lanes, motor)
+
+
 def run(raw: Path, features_path: Path, crs: str, bounds: tuple, out: Path) -> None:
-    edges = pq.read_table(raw, columns=["geometry", "tag_highway"]).to_pandas()
+    edges = pq.read_table(raw, columns=["geometry", "tag_highway", *ROAD_TAGS]).to_pandas()
     n = len(edges)
     x, y, part = samples.vertices(edges["geometry"].values, crs)
-    hw = edges["tag_highway"].where(edges["tag_highway"].isin(schema.codes("highway")), "other")
-    is_road = hw.isin(ROAD_LABELS).to_numpy()
+    roads = road_attrs(edges)
     del edges
     features = read_features(features_path, crs)
-    shares(x, y, part, n, is_road, features, bounds).to_parquet(out, compression="zstd")
+    shares(x, y, part, n, roads, features, bounds).to_parquet(out, compression="zstd")

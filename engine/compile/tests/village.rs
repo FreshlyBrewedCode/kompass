@@ -60,6 +60,9 @@ fn the_graph_carries_the_parquet_rows_by_edge_id() {
     let forest = forest.as_primitive::<UInt8Type>();
     let ascent = col("ascent_fwd_m");
     let ascent = ascent.as_primitive::<Float32Type>();
+    let traffic = col("road_near_traffic");
+    let traffic = traffic.as_primitive::<UInt8Type>();
+    assert!(stats.warnings.is_empty(), "{:?}", stats.warnings);
     for row in 0..batch.num_rows() {
         let e = u32::try_from(row).unwrap();
         assert!((g.length_m(e) - length.value(row)).abs() <= 0.05, "edge {e}");
@@ -68,7 +71,56 @@ fn the_graph_carries_the_parquet_rows_by_edge_id() {
         assert_eq!(g.way(e).unwrap().way_id, way.value(row), "edge {e}");
         assert!((g.forest_share(e) * 100.0 - f32::from(forest.value(row))).abs() <= 100.0 / 30.0);
         assert!((g.ascent_m(arc(e, false)) - ascent.value(row)).abs() <= 0.05);
+        assert!((g.road_near_traffic(e) * 100.0 - f32::from(traffic.value(row))).abs() <= 100.0 / 30.0);
     }
+    assert!((0..u32::try_from(g.edge_count()).unwrap()).any(|e| g.road_near_traffic(e) > 0.0));
+}
+
+/// An `edges.parquet` from before `road_near_traffic` still compiles: the column reads as 0, with
+/// a warning.
+#[test]
+fn an_older_file_without_road_near_traffic_compiles_with_a_warning() {
+    use parquet::arrow::ArrowWriter;
+    use parquet::file::metadata::KeyValue;
+    use parquet::file::properties::WriterProperties;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(fs::File::open(fixture()).unwrap()).unwrap();
+    let kv: Vec<KeyValue> = builder
+        .metadata()
+        .file_metadata()
+        .key_value_metadata()
+        .unwrap()
+        .iter()
+        .filter(|k| k.key != "ARROW:schema")
+        .cloned()
+        .collect();
+    let batches: Vec<_> = builder.build().unwrap().map(Result::unwrap).collect();
+    let drop = |b: &arrow_array::RecordBatch| {
+        let i = b.schema().index_of("road_near_traffic").unwrap();
+        let mut b = b.clone();
+        b.remove_column(i);
+        b
+    };
+    let old: Vec<_> = batches.iter().map(drop).collect();
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("village-old");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("edges.parquet");
+    let props = WriterProperties::builder()
+        .set_key_value_metadata(Some(kv))
+        .build();
+    let mut w = ArrowWriter::try_new(fs::File::create(&path).unwrap(), old[0].schema(), Some(props)).unwrap();
+    for b in &old {
+        w.write(b).unwrap();
+    }
+    w.close().unwrap();
+    let (g, stats) = read_parquet(&path, DEFAULT_TILE_ZOOM).unwrap();
+    assert_eq!(g.edge_count(), 19);
+    assert_eq!(stats.warnings.len(), 1);
+    assert!(
+        stats.warnings[0].contains("road_near_traffic"),
+        "{:?}",
+        stats.warnings
+    );
+    assert!((0..u32::try_from(g.edge_count()).unwrap()).all(|e| g.road_near_traffic(e) == 0.0));
 }
 
 #[test]
@@ -115,7 +167,7 @@ fn compiles_into_a_build_dir_and_loads_back() {
     assert_eq!(keys, ["schemaVersion", "buildId", "overlay", "graph"]);
     let mg = &manifest["graph"];
     assert_eq!(mg, &written.manifest_graph);
-    assert_eq!(mg["formatVersion"], 3);
+    assert_eq!(mg["formatVersion"], 4);
     assert_eq!(mg["buildId"], "build123");
     assert_eq!(mg["tileZoom"], 11);
     assert_eq!(mg["edges"], 19);
