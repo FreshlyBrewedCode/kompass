@@ -159,16 +159,32 @@ describe("buildStyle", () => {
       "way-selected",
       "info-line",
       "explored-line",
+      "cost-line",
+      "cost-closed",
+      "cost-selected",
       "way-road",
       "way-solid",
       "way-firm",
       "way-loose",
       "way-soft",
+      "cost-arrow-along",
+      "cost-arrow-against",
       "rides-casing",
       "rides-selected",
       "rides-line",
     ]);
     expect(validateStyleMin(bare as never)).toEqual([]);
+  });
+
+  test("the cost layer: bands under the ways' lines, chevrons above them, only while it is on", () => {
+    const on = buildStyle({ manifest, ...base, layers: { ...DEFAULT_LAYERS, info: { kind: "cost" } } });
+    expect(validateStyleMin(on as never)).toEqual([]);
+    for (const id of ["cost-line", "cost-closed", "cost-selected", "cost-arrow-along"])
+      expect(layer(on, id)?.layout).toMatchObject({ visibility: "visible" });
+    expect(ids(on).indexOf("cost-line")).toBeLessThan(ids(on).indexOf("way-road"));
+    expect(ids(on).indexOf("cost-arrow-along")).toBeGreaterThan(ids(on).indexOf("way-soft"));
+    const off = buildStyle({ manifest, ...base });
+    expect(layer(off, "cost-line")?.layout).toMatchObject({ visibility: "none" });
   });
 
   test("a hand-made manifest (other labels, few attributes) still gives a valid style", () => {
