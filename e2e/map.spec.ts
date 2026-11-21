@@ -20,7 +20,7 @@ const closeLayers = async (page: Page) => {
   await page.getByTestId("sheet-close").click();
   await expect(page.getByTestId("layers-panel")).toHaveCount(0);
 };
-const WAYS = ["way-band", "way-solid", "way-dash-long", "way-dash-short", "way-dots"];
+const WAYS = ["way-band", "way-solid"];
 const PICK = ["way-casing", "way-halo", "way-ferry"];
 
 test("the map opens as the readable map: the overlay draws roads, tracks and paths, nothing on top", async ({
@@ -44,28 +44,65 @@ test("the map opens as the readable map: the overlay draws roads, tracks and pat
   await screenshot(page, testInfo, "map");
 });
 
-test("the key: every line style of the map, drawn from the style's own tables", async ({
+test("the key: the tracks as a small legend, every other line style a tap away", async ({
   page,
 }, testInfo) => {
   await openMap(page);
   await page.getByTestId("map-rides").click();
   await expect(page.getByTestId("mode-none")).toHaveAttribute("aria-pressed", "true");
+  const tracks = page.getByTestId("map-key-tracks");
+  await expect(tracks).toBeVisible();
+  await expect(tracks.getByTestId("map-key-entry")).toHaveCount(5);
+  await expect(tracks).toContainText("Compacted");
   await expect(page.getByTestId("map-key")).toHaveCount(0);
   await page.getByTestId("map-key-toggle").click();
   const key = page.getByTestId("map-key");
   await expect(key).toBeVisible();
-  await expect(page.getByTestId("map-key-entry")).toHaveCount(21);
-  await expect(key).toContainText("Compacted");
-  await expect(key).toContainText("Soft ground");
+  await expect(page.getByTestId("map-key-entry")).toHaveCount(19);
+  await expect(key).toContainText("Unpaved road");
   // every sample is a drawn line, readable at the phone's width (nothing overflows the sheet)
-  expect(await key.locator("svg path").count()).toBeGreaterThan(21);
+  expect(await key.locator("svg path").count()).toBeGreaterThan(14);
   const box = (await key.boundingBox()) as { x: number; width: number };
   expect(box.x + box.width).toBeLessThanOrEqual((page.viewportSize()?.width ?? 0) + 1);
-  await key.scrollIntoViewIfNeeded();
+  await tracks.scrollIntoViewIfNeeded();
   await screenshot(page, testInfo, "map-key");
   // another mode folds it away
   await page.getByTestId("mode-explored").click();
   await expect(key).toHaveCount(0);
+  await expect(tracks).toHaveCount(0);
+});
+
+test("the map style options restyle the map in place and are remembered", async ({ page }, testInfo) => {
+  await openMap(page);
+  await page.getByTestId("map-rides").click();
+  const options = page.getByTestId("map-style");
+  await options.scrollIntoViewIfNeeded();
+  await expect(page.getByTestId("look-tracks-graded")).toHaveAttribute("data-state", "on");
+  await expect(page.getByTestId("map-style-reset")).toHaveCount(0);
+  await page.getByTestId("look-tracks-simple").click();
+  await page.getByTestId("look-weight-bold").click();
+  await page.getByTestId("look-ground-meadow").click();
+  await page.getByTestId("look-contours").click();
+  // a new style: poll until it is in (the layers are briefly missing while it loads)
+  const shows = (layer: string) => () =>
+    page.evaluate((id) => {
+      const map = window.__kompass.map;
+      return map.getLayer(id) ? (map.getLayoutProperty(id, "visibility") ?? "visible") : "loading";
+    }, layer);
+  await expect.poll(shows("contour-line")).toBe("none");
+  await waitIdle(page);
+  expect(await visibility(page, "hillshade")).toBe("visible");
+  expect(await drawn(page, ["way-band"])).toBeGreaterThan(0);
+  await screenshot(page, testInfo, "map-style-options");
+  // remembered on the device: a reload keeps the choice
+  await page.reload();
+  await waitIdle(page);
+  expect(await visibility(page, "contour-line")).toBe("none");
+  await page.getByTestId("map-rides").click();
+  await expect(page.getByTestId("look-tracks-simple")).toHaveAttribute("data-state", "on");
+  await page.getByTestId("map-style-reset").click();
+  await expect(page.getByTestId("look-tracks-graded")).toHaveAttribute("data-state", "on");
+  await expect.poll(shows("contour-line")).toBe("visible");
 });
 
 test("the layers control: one information layer at a time, with its legend; the toggles", async ({

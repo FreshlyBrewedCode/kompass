@@ -13,6 +13,7 @@ import { infoSpec } from "@/map/info";
 import type { OverlayAttribute } from "@/map/manifest";
 import { EXPLORED, type Theme } from "@/map/palette";
 import { MapKey } from "./map-key";
+import { MapStyleOptions } from "./map-style";
 import { label, pill, Switch } from "./parts";
 import { usePlan, usePlanner } from "./store";
 
@@ -198,6 +199,7 @@ export function LayersPanel(p: LayersProps) {
               onClick={() => store.setLineBy(lineBy === "surface" ? "plain" : "surface")}
             />
           </div>
+          <MapStyleOptions relief={p.terrain === true} />
         </>
       )}
 

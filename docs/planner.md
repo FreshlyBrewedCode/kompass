@@ -11,7 +11,7 @@ The screen: the region map with the planner on top, built on the consolidated de
 | `route-layer.ts` | what the planner draws on the map, and the map's taps |
 | `parts.tsx` | the components of the design's inventory (one set for every breakpoint) |
 | `shell.tsx` | the arrangement per breakpoint (phone, tablet, desk), sheets, the chip strip; wires map, engine, rides |
-| `layers-panel.tsx` | "Map & rides": map (with the key, `map-key.tsx`) / one information layer / explored / cost, toggles, inspect, the ride library |
+| `layers-panel.tsx` | "Map & rides": map (with the tracks legend and the key, `map-key.tsx`, and the map style options, `map-style.tsx`) / one information layer / explored / cost, toggles, inspect, the ride library |
 | `cost/` | the cost debug view: the words (`model.ts`), the key, tap panel and "why not" card (`panel.tsx`), the layer's wiring (`use-cost-layer.ts`) |
 | `palette.ts` | data colours (route, compare, ghost, surface, way type, ridden) as CSS variables |
 | `gpx.ts` | the GPX writer and the export (share sheet on touch devices, else a download) |

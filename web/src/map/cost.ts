@@ -122,11 +122,12 @@ const kindIs = (...kinds: Kind[]): Expr => ["in", state("ck", 0), ["literal", ki
  * Width of the band: as wide as the information band (ways.ts' `underlayWidth`), so it shows as a
  * coloured rim around the ways' own fills; edges at the clamp `atClamp` times that.
  */
-const width = (manifest: Manifest, scale: number, atClamp = scale): Expr =>
+const width = (manifest: Manifest, weight: number, scale: number, atClamp = scale): Expr =>
   underlayWidth(
     manifest.overlay.attributes,
     atClamp === scale ? scale : 1,
     atClamp === scale ? undefined : ["case", kindIs(KIND.atMin, KIND.atMax), atClamp, scale],
+    weight,
   );
 
 /** The colour by feature state: the stops spread evenly over −1 … +1. */
@@ -145,7 +146,13 @@ export function costColor(theme: Theme): Expr {
  * factor, those at the clamp wider; the closed ones dashed in ink. Without feature state an edge is
  * not drawn (it is not in the last answer yet).
  */
-export function costLayers(manifest: Manifest, theme: Theme, on: boolean): LayerSpecification[] {
+export function costLayers(
+  manifest: Manifest,
+  theme: Theme,
+  on: boolean,
+  /** the line weight (`WEIGHT_SCALE`) */
+  weight = 1,
+): LayerSpecification[] {
   const source = {
     source: SOURCE,
     "source-layer": manifest.overlay.layer,
@@ -163,7 +170,7 @@ export function costLayers(manifest: Manifest, theme: Theme, on: boolean): Layer
       paint: {
         "line-color": costColor(theme),
         "line-opacity": ["case", kindIs(KIND.open, KIND.atMin, KIND.atMax), 0.92, 0],
-        "line-width": width(manifest, 1, 1.55),
+        "line-width": width(manifest, weight, 1, 1.55),
       },
     },
     {
@@ -175,7 +182,7 @@ export function costLayers(manifest: Manifest, theme: Theme, on: boolean): Layer
       paint: {
         "line-color": COST_CLOSED[theme],
         "line-opacity": ["case", kindIs(KIND.closed), 0.85, 0],
-        "line-width": width(manifest, 0.7),
+        "line-width": width(manifest, weight, 0.7),
         "line-dasharray": [1.2, 0.9],
       },
     },
@@ -190,7 +197,7 @@ export function costLayers(manifest: Manifest, theme: Theme, on: boolean): Layer
         "line-color": SELECTED[theme],
         "line-opacity": ["case", ["boolean", ["feature-state", "selected"], false], 1, 0],
         "line-width": 2.5,
-        "line-gap-width": width(manifest, 1, 1.55),
+        "line-gap-width": width(manifest, weight, 1, 1.55),
       },
     },
   ];

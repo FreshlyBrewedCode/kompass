@@ -10,6 +10,7 @@ import { COST_ARROW_LAYERS, COST_BAND_LAYERS } from "./cost";
 import { ExploredLayer } from "./explored-layer";
 import { infoLayerName, type MapLayers } from "./info";
 import { type PickedEdge, pickEdge } from "./inspect";
+import { DEFAULT_LOOK, type MapLook, sameLook } from "./look";
 import type { Manifest } from "./manifest";
 import type { Theme } from "./palette";
 import { registerPmtiles } from "./protocol";
@@ -51,6 +52,8 @@ export type RegionMapOptions = {
   manifest: Manifest;
   dataUrl: string;
   theme: Theme;
+  /** the map style options; the defaults if absent */
+  look?: MapLook;
   layers: MapLayers;
   store: ExploredStore;
   /** an edge was picked (`null`: the tap hit nothing) */
@@ -72,6 +75,7 @@ export class RegionMap {
   readonly explored: ExploredLayer;
   readonly #options: RegionMapOptions;
   #theme: Theme;
+  #look: MapLook;
   #layers: MapLayers;
   #selected: number | null = null;
   #ready = false;
@@ -83,6 +87,7 @@ export class RegionMap {
     registerPmtiles();
     this.#options = options;
     this.#theme = options.theme;
+    this.#look = options.look ?? DEFAULT_LOOK;
     this.#layers = options.layers;
     const { container, manifest } = options;
     const view = initialView(manifest);
@@ -136,6 +141,7 @@ export class RegionMap {
       manifest,
       dataUrl,
       theme: this.#theme,
+      look: this.#look,
       layers: this.#layers,
       rides: this.#rides,
       assetsUrl: new URL("map/", document.baseURI).href,
@@ -202,6 +208,17 @@ export class RegionMap {
   setTheme(theme: Theme) {
     if (theme === this.#theme) return;
     this.#theme = theme;
+    this.#restyle();
+  }
+
+  /** The map style options: a new style too (colours and widths are everywhere). */
+  setLook(look: MapLook) {
+    if (sameLook(look, this.#look)) return;
+    this.#look = look;
+    this.#restyle();
+  }
+
+  #restyle() {
     if (!this.#ready) return;
     this.explored.suspend();
     this.map.once("style.load", () => {

@@ -16,9 +16,10 @@ import { language_script_pairs } from "@protomaps/basemaps";
 import type { ExpressionSpecification, LayerSpecification, StyleSpecification } from "maplibre-gl";
 import type { RidesLayerData } from "@/rides/protocol";
 import { type BaseLayers, baseLayers, oldOverlayTracks } from "./basemap";
-import { CARTO, type Carto } from "./carto";
+import { type Carto, cartoFor } from "./carto";
 import { costArrowLayers, costLayers } from "./cost";
 import { infoSpec, type MapLayers } from "./info";
+import { DEFAULT_LOOK, type MapLook, WEIGHT_SCALE } from "./look";
 import type { Manifest } from "./manifest";
 import { CASING, EXPLORED, RIDES, SELECTED, type Theme } from "./palette";
 import { dataFileUrl } from "./region";
@@ -55,6 +56,8 @@ export type StyleOptions = {
   dataUrl: string;
   theme: Theme;
   layers: MapLayers;
+  /** the map style options (track style, line weight, ground, relief, contours); the defaults if absent */
+  look?: MapLook;
   /** where the vendored glyphs and sprites are served (absolute URL ending in a slash): `<app>/map/` */
   assetsUrl: string;
   /** label language (a code the Protomaps basemaps know), else English */
@@ -117,6 +120,8 @@ export function terrainLayers(
   manifest: Manifest,
   c: Carto,
   visible: boolean,
+  /** the contour lines and their heights (with the relief) */
+  contours = true,
 ): { relief: LayerSpecification[]; labels: LayerSpecification[] } {
   const terrain = manifest.terrain;
   if (!terrain) return { relief: [], labels: [] };
@@ -140,12 +145,13 @@ export function terrainLayers(
   if (terrain.contours) {
     const source = { source: CONTOUR_SOURCE, "source-layer": terrain.contours.layer } as const;
     const index: Expr = ["==", ["%", ["get", "ele"], 100], 0];
+    const shown = { visibility: visibility(visible && contours) };
     relief.push({
       id: CONTOUR_LINE,
       type: "line",
       ...source,
       minzoom: 11,
-      layout: { ...layout, "line-join": "round" },
+      layout: { ...shown, "line-join": "round" },
       paint: {
         "line-color": c.contour,
         // faint at the overview zooms, where they would read as tracks
@@ -154,11 +160,11 @@ export function terrainLayers(
           ["linear"],
           ["zoom"],
           11,
-          ["case", index, 0.2, 0.1],
+          ["case", index, 0.14, 0.07],
           13,
-          ["case", index, 0.42, 0.16],
+          ["case", index, 0.3, 0.11],
           15,
-          ["case", index, 0.5, 0.3],
+          ["case", index, 0.35, 0.21],
         ],
         "line-width": [
           "interpolate",
@@ -180,7 +186,7 @@ export function terrainLayers(
       minzoom: 13,
       filter: index,
       layout: {
-        ...layout,
+        ...shown,
         "symbol-placement": "line",
         "symbol-spacing": 320,
         "text-field": ["to-string", ["get", "ele"]],
@@ -211,7 +217,13 @@ export function infoFilter(manifest: Manifest, filter: Expr): Expr {
  * The information layer: a coloured band under the edges an attribute's defaults pick (`info.ts`). The
  * map's line styles stay readable on it: a gravel track is still a dashed line, now on orange.
  */
-export function infoLayers(manifest: Manifest, theme: Theme, layers: MapLayers): LayerSpecification[] {
+export function infoLayers(
+  manifest: Manifest,
+  theme: Theme,
+  layers: MapLayers,
+  /** the line weight (`WEIGHT_SCALE`) */
+  weight = 1,
+): LayerSpecification[] {
   const { info } = layers;
   const spec = info.kind === "attribute" ? infoSpec(info.attribute, theme) : null;
   return [
@@ -226,7 +238,7 @@ export function infoLayers(manifest: Manifest, theme: Theme, layers: MapLayers):
       paint: {
         "line-color": spec?.color ?? CASING[theme],
         "line-opacity": ["interpolate", ["linear"], ["zoom"], 12, 0.95, 14, 0.82],
-        "line-width": underlayWidth(manifest.overlay.attributes),
+        "line-width": underlayWidth(manifest.overlay.attributes, 1, undefined, weight),
       },
     },
   ];
@@ -236,7 +248,12 @@ export function infoLayers(manifest: Manifest, theme: Theme, layers: MapLayers):
  * The explored band: a highlighter over the ridden edges; the rest of the map stays as it is. Edges
  * ridden more often are a little stronger (the `count` of their feature state, explored-layer.ts).
  */
-export function exploredLayer(manifest: Manifest, theme: Theme, layers: MapLayers): LayerSpecification {
+export function exploredLayer(
+  manifest: Manifest,
+  theme: Theme,
+  layers: MapLayers,
+  weight = 1,
+): LayerSpecification {
   return {
     id: EXPLORED_LINE,
     type: "line",
@@ -259,7 +276,7 @@ export function exploredLayer(manifest: Manifest, theme: Theme, layers: MapLayer
         ["step", ["to-number", ["feature-state", "count"], 1], 0.5, 2, 0.7, 5, 0.9],
         0,
       ],
-      "line-width": underlayWidth(manifest.overlay.attributes, 1.1),
+      "line-width": underlayWidth(manifest.overlay.attributes, 1.1, undefined, weight),
     },
   };
 }
@@ -268,7 +285,9 @@ const NO_BASE: BaseLayers = { ground: [], water: [], features: [], top: [], labe
 
 export function buildStyle(options: StyleOptions): StyleSpecification {
   const { manifest, dataUrl, theme, assetsUrl, layers } = options;
-  const c = CARTO[theme];
+  const look = options.look ?? DEFAULT_LOOK;
+  const c = cartoFor(theme, look);
+  const weight = WEIGHT_SCALE[look.weight];
   const rides = options.rides ?? NO_RIDES;
   const pmtiles = (file: string) => `pmtiles://${dataFileUrl(dataUrl, file)}`;
   const sources: StyleSpecification["sources"] = {
@@ -315,12 +334,13 @@ export function buildStyle(options: StyleOptions): StyleSpecification {
       };
     }
   }
-  const terrain = terrainLayers(manifest, c, layers.terrain);
+  const terrain = terrainLayers(manifest, c, layers.terrain, look.contours);
   const way = {
     source: OVERLAY_SOURCE,
     sourceLayer: manifest.overlay.layer,
     colors: c,
     routes: layers.routes,
+    weight,
   };
   const attributes = manifest.overlay.attributes;
   const ways = wayLayers(attributes, way);
@@ -342,9 +362,9 @@ export function buildStyle(options: StyleOptions): StyleSpecification {
         : []),
       // halo and casing, then the bands, then the ways' own lines and fills on top of them
       ...ways.under,
-      ...infoLayers(manifest, theme, layers),
-      exploredLayer(manifest, theme, layers),
-      ...costLayers(manifest, theme, layers.info.kind === "cost"),
+      ...infoLayers(manifest, theme, layers, weight),
+      exploredLayer(manifest, theme, layers, weight),
+      ...costLayers(manifest, theme, layers.info.kind === "cost", weight),
       ...ways.over,
       ...costArrowLayers(manifest, theme, layers.info.kind === "cost"),
       ...base.top,

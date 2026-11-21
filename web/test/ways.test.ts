@@ -13,12 +13,10 @@ import {
   TIER,
   WAY_BAND,
   WAY_CASING,
-  WAY_DOTS,
+  WAY_CASING_DASHED,
   WAY_FERRY,
   WAY_HALO,
-  WAY_LONG,
   WAY_PICK_LAYERS,
-  WAY_SHORT,
   WAY_SOLID,
   wayClasses,
   wayLayers,
@@ -57,7 +55,7 @@ const layers = wayLayers(attributes, {
 });
 const all = [...layers.under, ...layers.over];
 const byId = new Map(all.map((l) => [l.id, l as LayerSpecification & { filter?: unknown }]));
-const DRAWING = [WAY_SOLID, WAY_LONG, WAY_SHORT, WAY_DOTS, WAY_BAND, WAY_FERRY];
+const DRAWING = [WAY_SOLID, WAY_BAND, WAY_FERRY];
 const drawnBy = (properties: Record<string, number>, ids: readonly string[], zoom = 14) =>
   ids.filter((id) => evaluate(byId.get(id)?.filter ?? true, properties, zoom) === true);
 
@@ -115,17 +113,17 @@ describe("the classes: tier, grade, look", () => {
     expect(lookOf({ highway: "track", tracktype: "grade1" })).toBe("lane");
     expect(lookOf({ highway: "track", tracktype: "grade2" })).toBe("compacted");
     expect(lookOf({ highway: "track", surface_class: "gravel" })).toBe("gravel");
-    expect(lookOf({ highway: "track", tracktype: "grade4" })).toBe("rough");
+    expect(lookOf({ highway: "track", tracktype: "grade4" })).toBe("soft");
     expect(lookOf({ highway: "track" })).toBe("unknown");
     expect(lookOf({ highway: "cycleway", surface_class: "gravel" })).toBe("cycle");
     expect(lookOf({ highway: "footway" })).toBe("pathPaved");
     expect(lookOf({ highway: "path", surface_class: "compacted" })).toBe("path");
-    expect(lookOf({ highway: "path", tracktype: "grade5" })).toBe("pathSoft");
+    expect(lookOf({ highway: "path", tracktype: "grade5" })).toBe("path");
     expect(lookOf({ highway: "bridleway" })).toBe("pathUnknown");
     expect(lookOf({ highway: "ferry" })).toBe("ferry");
   });
 
-  test("bands are road-like (light to ochre), soft ground and paths are lines, the ferry its own", () => {
+  test("every track is a band (unpaved: a dashed rim), paths are lines, the ferry its own", () => {
     const table = looks(CARTO.light);
     const bands = (Object.keys(table) as LookId[]).filter((id) => table[id].shape === "band");
     expect(bands).toEqual([
@@ -137,16 +135,17 @@ describe("the classes: tier, grade, look", () => {
       "compacted",
       "gravel",
       "unknown",
+      "soft",
     ]);
-    expect(table.rough.pattern).toBe("short");
-    expect(table.soft.pattern).toBe("dots");
+    const dashed = (Object.keys(table) as LookId[]).filter((id) => table[id].rim === "dashed");
+    expect(dashed).toEqual(["compacted", "gravel", "unknown", "soft"]);
     expect(table.ferry.shape).toBe("ferry");
-    // the ramp of the gravel bands darkens with roughness (lightness, so it survives grey scale)
+    // the ramp of the graded fills: white, then cream, then ochre (lightness, so it survives grey scale)
     const light = (hex: string) =>
       [1, 3, 5].reduce((sum, o) => sum + Number.parseInt(hex.slice(o, o + 2), 16), 0) / 3;
     expect(light(table.lane.fill)).toBeGreaterThan(light(table.compacted.fill));
     expect(light(table.compacted.fill)).toBeGreaterThan(light(table.gravel.fill));
-    expect(light(table.gravel.fill)).toBeGreaterThan(light(table.rough.fill));
+    expect(light(table.soft.fill)).toBeGreaterThan(light(table.gravel.fill));
   });
 });
 
@@ -157,12 +156,13 @@ describe("the layers", () => {
       [edge({ highway: "track", tracktype: "grade1" }), WAY_BAND],
       [edge({ highway: "track", tracktype: "grade3" }), WAY_BAND],
       [edge({ highway: "track" }), WAY_BAND],
-      [edge({ highway: "track", tracktype: "grade4" }), WAY_SHORT],
-      [edge({ highway: "track", tracktype: "grade5" }), WAY_DOTS],
+      [edge({ highway: "track", tracktype: "grade4" }), WAY_BAND],
+      [edge({ highway: "track", tracktype: "grade5" }), WAY_BAND],
+      [edge({ highway: "unclassified", tracktype: "grade5" }), WAY_BAND],
       [edge({ highway: "cycleway", surface_class: "paved_smooth" }), WAY_SOLID],
-      [edge({ highway: "path", surface_class: "gravel" }), WAY_LONG],
-      [edge({ highway: "path", surface_class: "soft" }), WAY_SHORT],
-      [edge({ highway: "path" }), WAY_LONG],
+      [edge({ highway: "path", surface_class: "gravel" }), WAY_SOLID],
+      [edge({ highway: "path", surface_class: "soft" }), WAY_SOLID],
+      [edge({ highway: "path" }), WAY_SOLID],
       [edge({ highway: "ferry" }), WAY_FERRY],
     ];
     for (const [properties, layer] of cases) {
@@ -175,6 +175,39 @@ describe("the layers", () => {
     ]);
     expect(drawnBy(edge({ highway: "path" }), [WAY_CASING, WAY_HALO])).toEqual([WAY_HALO]);
     expect(drawnBy(edge({ highway: "ferry" }), [WAY_CASING, WAY_HALO, WAY_BAND])).toEqual([]);
+    // the dashed rim: every unpaved or unknown band, never a paved one
+    const rim = (labels: Record<string, string>) => drawnBy(edge(labels), [WAY_CASING_DASHED], 15);
+    expect(rim({ highway: "track", tracktype: "grade2" })).toEqual([WAY_CASING_DASHED]);
+    expect(rim({ highway: "track" })).toEqual([WAY_CASING_DASHED]);
+    expect(rim({ highway: "unclassified", surface_class: "gravel" })).toEqual([WAY_CASING_DASHED]);
+    expect(rim({ highway: "track", tracktype: "grade1" })).toEqual([]);
+    expect(rim({ highway: "residential" })).toEqual([]);
+    expect(rim({ highway: "path", surface_class: "gravel" })).toEqual([]);
+  });
+
+  test("below z15 an unpaved band's rim is plain; from z15 the casing is its fill under the dashes", () => {
+    const casing = byId.get(WAY_CASING) as { paint: Record<string, unknown> };
+    const colour = (labels: Record<string, string>, zoom: number) =>
+      value(casing.paint["line-color"], edge(labels), zoom);
+    const c = CARTO.light;
+    expect(colour({ highway: "track", tracktype: "grade3" }, 14)).toBe(c.trackRimUnpaved);
+    expect(colour({ highway: "track", tracktype: "grade3" }, 15)).toBe(c.gravel);
+    expect(colour({ highway: "track", tracktype: "grade1" }, 15)).toBe(c.trackCasing);
+  });
+
+  test("the line weight widens every way and what lies under it alike", () => {
+    const bold = wayLayers(attributes, {
+      source: "overlay",
+      sourceLayer: "edges",
+      colors: CARTO.light,
+      routes: true,
+      weight: 1.25,
+    });
+    const band = (l: { under: LayerSpecification[]; over: LayerSpecification[] }) =>
+      [...l.under, ...l.over].find((x) => x.id === WAY_BAND) as { paint: Record<string, unknown> };
+    const props = edge({ highway: "track", tracktype: "grade3" });
+    const normal = value(band(layers).paint["line-width"], props, 15) as number;
+    expect(value(band(bold).paint["line-width"], props, 15) as number).toBeCloseTo(normal * 1.25, 1);
   });
 
   test("pavements show from z15, driveways from z14, car-park aisles from z15", () => {
@@ -251,18 +284,18 @@ describe("the key", () => {
     for (const id of Object.keys(LOOK) as LookId[]) expect([id, shown.has(id)]).toEqual([id, true]);
   });
 
-  test("the strokes are the map's: casing then fill for a band, halo then dashed line for a soft track", () => {
+  test("the strokes are the map's: rim then fill for a band (dashed when unpaved), one line for a path", () => {
     const c = CARTO.light;
     const at = (row: string) => KEY_ROWS.find((r) => r.label === row) as (typeof KEY_ROWS)[number];
     const gravel = keyStrokes(at("Gravel"), c);
-    expect(gravel.map((s) => s.color)).toEqual([c.trackCasing, c.gravel]);
+    expect(gravel.map((s) => s.color)).toEqual([c.gravel, c.trackRimUnpaved, c.gravel]);
+    expect(gravel[1]?.dash).toBeDefined();
     const band = byId.get(WAY_BAND) as { paint: Record<string, unknown> };
     const mapWidth = value(band.paint["line-width"], edge(at("Gravel").sample), KEY_ZOOM);
-    expect(gravel[1]?.width).toBeCloseTo(mapWidth as number, 1);
-    const soft = keyStrokes(at("Mostly soft"), c);
-    expect(soft.map((s) => s.color)).toEqual([c.wayHalo, c.soft]);
-    expect(soft[1]?.dash).toBeDefined();
-    expect(keyStrokes(at("No bike access"), c)[1]?.opacity).toBeLessThan(0.5);
+    expect(gravel[2]?.width).toBeCloseTo(mapWidth as number, 1);
+    expect(keyStrokes(at("Paved"), c).map((s) => s.color)).toEqual([c.trackCasing, c.lane]);
+    expect(keyStrokes(at("Unpaved"), c).map((s) => s.color)).toEqual([c.path]);
+    expect(keyStrokes(at("No bike access"), c)[2]?.opacity).toBeLessThan(0.5);
     expect(keyStrokes(at("Cycle route"), c)[0]?.color).toBe(c.cycleRoute);
   });
 

@@ -1,5 +1,6 @@
 import { type Ref, useEffect, useImperativeHandle, useRef } from "react";
 import type { ExploredStore } from "@/history/explored-store";
+import { useMapLook } from "@/lib/map-look";
 import { useTheme } from "@/lib/theme";
 import { RegionMap } from "@/map/controller";
 import { devEnabled, fakeRiddenCount, fakeRiddenFromRendered, fakeRiddenRange } from "@/map/dev";
@@ -55,9 +56,10 @@ export default function MapView({
   const container = useRef<HTMLDivElement>(null);
   const regionMap = useRef<RegionMap | null>(null);
   const theme = useTheme();
+  const [look] = useMapLook();
   // the newest values, for the map created once per region
-  const latest = useRef({ layers, theme, rides, ridesVisible, picking, onPick, onError, onMap });
-  latest.current = { layers, theme, rides, ridesVisible, picking, onPick, onError, onMap };
+  const latest = useRef({ layers, theme, look, rides, ridesVisible, picking, onPick, onError, onMap });
+  latest.current = { layers, theme, look, rides, ridesVisible, picking, onPick, onError, onMap };
 
   useEffect(() => {
     if (!container.current) return;
@@ -66,6 +68,7 @@ export default function MapView({
       manifest,
       dataUrl,
       theme: latest.current.theme,
+      look: latest.current.look,
       layers: latest.current.layers,
       store,
       onPick: (edge) => latest.current.onPick(edge),
@@ -121,6 +124,7 @@ export default function MapView({
 
   useEffect(() => regionMap.current?.setLayers(layers), [layers]);
   useEffect(() => regionMap.current?.setTheme(theme), [theme]);
+  useEffect(() => regionMap.current?.setLook(look), [look]);
   useEffect(() => {
     if (rides) regionMap.current?.setRides(rides);
   }, [rides]);

@@ -2,6 +2,7 @@
 // Needs a dev server on the demo region (never another region: the pictures are meant to be public):
 //   KOMPASS_DATA_DIR=data/build/demo KOMPASS_DEV_PORT=7960 bun run dev
 //   nix develop -c bun scripts/map-shots.ts [--out /tmp/kompass-map] [--only z13,route] [--port 7960]
+//     [--look '{"tracks":"simple","ground":"meadow"}'] (the map style options, src/map/look.ts) [--dpr 3]
 // Each shot is the map alone (the chrome hidden), except `key`: the Map & rides sheet with the key.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -13,6 +14,9 @@ const arg = (name: string, fallback: string) => {
 };
 const PORT = arg("port", process.env.KOMPASS_DEV_PORT ?? "7960");
 const OUT = arg("out", "/tmp/kompass-map");
+/** the map style options as stored (`kompass.mapLook`); empty: the defaults */
+const LOOK = arg("look", "");
+const DPR = Number(arg("dpr", "2"));
 const only = arg("only", "")
   .split(",")
   .filter((s) => s !== "");
@@ -69,7 +73,7 @@ const SHOTS: Shot[] = [
 ];
 
 const SIZES = {
-  phone: { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true },
+  phone: { viewport: { width: 390, height: 844 }, deviceScaleFactor: DPR, isMobile: true, hasTouch: true },
   desktop: { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 },
 } as const;
 
@@ -125,6 +129,7 @@ for (const shot of SHOTS) {
   if (only.length > 0 && !only.some((o) => shot.name.includes(o))) continue;
   const context = await browser.newContext({ ...SIZES[shot.viewport], colorScheme: shot.theme });
   const page = await context.newPage();
+  if (LOOK) await page.addInitScript((look) => localStorage.setItem("kompass.mapLook", look), LOOK);
   page.on("console", (m) => {
     if (m.type() === "error" && !/glyph|fonts|404/.test(m.text()))
       console.log("  console:", m.text().slice(0, 300));
