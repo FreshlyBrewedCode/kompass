@@ -242,7 +242,9 @@ export function exploredLayer(manifest: Manifest, theme: Theme, layers: MapLayer
     type: "line",
     source: OVERLAY_SOURCE,
     "source-layer": manifest.overlay.layer,
-    filter: wayClasses(manifest.overlay.attributes).shown,
+    // every ridden way but a ferry (a band would draw a ring on the lake); what you rode shows even
+    // where the map leaves the way out at this zoom (a driveway, a pavement)
+    filter: ["!", wayClasses(manifest.overlay.attributes).ferry],
     layout: {
       "line-cap": "round",
       "line-join": "round",

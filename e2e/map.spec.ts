@@ -75,7 +75,7 @@ test("the layers control: one information layer at a time, with its legend; the 
   // an enum with defaults: the surface layer leaves smooth asphalt alone
   await pick(page, "surface_class");
   expect(await visibility(page, "info-line")).toBe("visible");
-  expect(await filter(page, "info-line")).toContain("surface_class");
+  expect(await filter(page, "info-line")).toContain('"in",["get","surface_class"]');
   const shown = await drawn(page, ["info-line"]);
   expect(shown).toBeGreaterThan(0);
   expect(shown).toBeLessThan(await drawn(page, PICK));
@@ -88,7 +88,8 @@ test("the layers control: one information layer at a time, with its legend; the 
   // a share: only from its threshold on, as a ramp
   await pick(page, "forest_share");
   expect(await filter(page, "info-line")).toContain("forest_share");
-  expect(await filter(page, "info-line")).not.toContain("surface_class");
+  // the attribute's own clause is gone (the ways' zoom gates mention the surface too)
+  expect(await filter(page, "info-line")).not.toContain('"in",["get","surface_class"]');
   await expect(page.getByTestId("legend-ramp")).toBeVisible();
   await expect(page.getByTestId("legend")).toContainText("50%");
   await expect(page.getByTestId("legend-note")).toContainText("Only from 50% on");

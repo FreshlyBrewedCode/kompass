@@ -157,8 +157,9 @@ a line's halo adds 0.8 / 1.2 / 1.6 / 1.9 / 2.2 / 2.6):
 - **Faint:** private or no bicycle access (45 % opacity).
 - **What lies on top** (information band, explored band, cost layer): between the ways' casings and
   their fills, wider than the casing by 1.6 to 4 px (`underlayWidth`, per tier), so it shows as a
-  coloured rim around the way's own fill. It covers only what the ways draw at that zoom (`shown`):
-  never a ferry (no rings on the lakes), no aisle or pavement before its way shows.
+  coloured rim around the way's own fill. None of them draws a ferry (no rings on the lakes); the
+  information band and the cost layer cover only what the ways draw at that zoom (`shown`: no aisle
+  or pavement before its way shows), the explored band every way ridden.
 - **The key** ("Map & rides", the Map tab, folded) draws `KEY_ROWS` with `keyStrokes`: the same
   colours, widths and dashes as the layers, at z14, on land and on forest. Its tests check that each
   row's sample edge is classified as the row says and that every look is in the key.
