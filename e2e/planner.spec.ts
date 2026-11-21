@@ -222,6 +222,107 @@ test("a slider reroutes live with the base as a ghost; a preference from the pic
   await expect(page.getByTestId("pref-water")).toHaveCount(0);
 });
 
+test("the route toggle hides the route lines (button and H), the stops stay", async ({ page }, testInfo) => {
+  await fresh(page);
+  await expect(page.getByTestId("route-toggle")).toHaveCount(0); // no route yet
+  await tapAt(page, node(1, 1));
+  await tapAt(page, node(4, 3));
+  await expect(page.getByTestId("stat-km").first()).toHaveText(/\d/);
+  const visibility = () =>
+    page.evaluate(() => {
+      const map = window.__kompass.map as unknown as { getLayoutProperty(id: string, p: string): unknown };
+      return ["planner-main-line", "planner-main-casing", "planner-alt-line", "planner-ghost-line"].map(
+        (id) => map.getLayoutProperty(id, "visibility") ?? "visible",
+      );
+    });
+  const toggle = page.getByTestId("route-toggle");
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  if (!phone(page)) await expect(toggle).toHaveAttribute("title", "Hide the route (H)");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(visibility).toEqual(["none", "none", "none", "none"]);
+  await expect(page.getByTestId("waypoint-marker")).toHaveCount(2);
+  expect((await plan(page)).waypoints).toBe(2);
+  await screenshot(page, testInfo, "planner-route-hidden");
+  // the key brings it back, and hides it again
+  await page.locator("body").press("h");
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await expect.poll(visibility).toEqual(["visible", "visible", "visible", "visible"]);
+  await page.keyboard.press("H");
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  // typing an "h" into a field leaves it alone
+  if (phone(page)) await page.getByTestId("strip-add").click();
+  else await page.getByTestId("add-preference").click();
+  await page.getByTestId("picker-search").fill("");
+  await page.getByTestId("picker-search").press("h");
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+});
+
+test("a slider moves only from its knob: a tap on the track changes nothing", async ({ page }) => {
+  await fresh(page);
+  await tapAt(page, node(1, 1));
+  await tapAt(page, node(3, 0));
+  await expect(page.getByTestId("stat-km").first()).toHaveText(/\d/);
+  const weight = () =>
+    page.evaluate(() => {
+      const s = (
+        window as unknown as {
+          __kompass: { planner: { getSnapshot(): { weights: Record<string, number> } } };
+        }
+      ).__kompass.planner.getSnapshot();
+      return s.weights.quiet ?? 0;
+    });
+  if (phone(page)) await page.getByTestId("chip-quiet").click();
+  const dial = page.getByRole("slider", { name: "Low traffic" });
+  await dial.scrollIntoViewIfNeeded();
+  const before = await weight();
+  const box = (await dial.boundingBox()) as { x: number; y: number; width: number; height: number };
+  // a tap and a press-and-drag on the track, well away from the knob
+  const y = box.y + box.height / 2;
+  const far = before > 0 ? box.x + 16 : box.x + box.width - 16;
+  await page.mouse.click(far, y);
+  if (phone(page)) await page.touchscreen.tap(far, y);
+  await page.mouse.move(far, y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, y, { steps: 5 });
+  await page.mouse.up();
+  expect(await weight()).toBe(before);
+  // a mostly vertical move from the knob does not move it either
+  const knob = (await page.getByTestId("dial-Low traffic-knob").boundingBox()) as {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  const kx = knob.x + knob.width / 2;
+  const ky = knob.y + knob.height / 2;
+  await page.mouse.move(kx, ky);
+  await page.mouse.down();
+  await page.mouse.move(kx + 3, ky + 30, { steps: 4 });
+  await page.mouse.up();
+  expect(await weight()).toBe(before);
+  // dragging the knob does
+  await page.mouse.move(kx, ky);
+  await page.mouse.down();
+  await page.mouse.move(kx - box.width / 3, ky, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(weight).toBeLessThan(before - 30);
+  // the keyboard still works
+  const dragged = await weight();
+  await dial.focus();
+  await dial.press("ArrowRight");
+  await expect.poll(weight).toBe(Math.min(100, dragged + 5));
+  // the detours slider likewise
+  await openProfile(page);
+  const detours = page.getByTestId("detours-slider");
+  await detours.scrollIntoViewIfNeeded();
+  const word = await page.getByTestId("detours-word").textContent();
+  const d = (await detours.boundingBox()) as { x: number; y: number; width: number; height: number };
+  await page.mouse.click(d.x + d.width - 14, d.y + d.height / 2);
+  await expect(page.getByTestId("detours-word")).toHaveText(word ?? "");
+  await expect(detours).toHaveAttribute("aria-valuenow", "10");
+});
+
 test("a limit that leaves no way is named, and lifting it brings the route back", async ({
   page,
 }, testInfo) => {
