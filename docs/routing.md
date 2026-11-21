@@ -134,7 +134,8 @@ Native: every edge of the demo region (51 k) in 1.3 ms, 25 k listed in 0.5 ms, a
 included, `?bench`).
 
 **`explainEdge`: the tap panel.** `{ profile, edge }` → `EdgeExplanation`: the way type, the reported
-surface and the one the cost uses (`tagged`, `strong_guess`, `weak_guess`), the traffic level, every
+surface and the one the cost uses (`tagged`, `strong_guess`, `weak_guess`), the traffic level `quiet`
+penalises and where it comes from (`traffic_from`: `way`, or `alongside` for the roads beside it), every
 attribute by its `edges.parquet` column (shares in percent), the bounds, and per direction (`along`,
 `against`) an `ArcCostExplanation`: every active preference (weight ≠ 0, also where it does not
 apply) with its weight, membership (−1…1, fifteenths), factor and role (`quality`, `gated_penalty`,

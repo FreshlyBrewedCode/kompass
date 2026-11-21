@@ -35,7 +35,12 @@ tools (osmium, tippecanoe, pmtiles, gdal) come from the nix dev shell; a missing
    physically use, legal doubt only marks), split at junctions and at ends (closed ways get an extra
    split), and given their geometry, metric length, barrier count and route relation membership.
 3. **context**: landuse is rasterised to a 10 m grid and every edge sampled every 10 m: shares in
-   forest, along a forest edge, near water, built-up, near a motor road.
+   forest, along a forest edge, near water, built-up, near a motor road, and how loud the roads
+   near it are (`road_near_traffic`). The motor roads are burnt into one byte raster as 1 + their
+   traffic level in percent (the engine's model, `traffic.py` reading `traffic.json`; the speed guess
+   uses the road's built-up share, so it runs after that), louder roads last, and a grey dilation by
+   the 20 m disk spreads the loudest; `> 0` is the near-a-road mask as before. No extra raster, same
+   time and memory (demo: 5 s, 2.0 GB peak either way; the dilation costs what the binary one did).
 4. **elevation**: every edge sampled every 10 m on a DEM, smoothed over 50 m, giving the elevation
    at both ends, the ascent per direction and the steepest 50 m per direction. The DEM is an
    `ElevationFn` (metric x, y in, metres out); Copernicus GLO-30 is the default. It is a surface
@@ -63,7 +68,8 @@ tools (osmium, tippecanoe, pmtiles, gdal) come from the nix dev shell; a missing
    | 14 | 33 / 1861 | 33 / 1880 | 33 / 1880 | 33 / 1880 |
    | file | 3.84 MB | 4.42 MB | 4.88 MB | 4.70 MB |
 
-   The new properties cost about 1 % (+0.04 MB). On a 100 km region tiles are about 4 times the demo's
+   The new properties cost about 1 % (+0.04 MB); the information layer `road_near_traffic` another
+   2 % (4.70 → 4.79 MB, largest z11 tile 93 → 95 KB). On a 100 km region tiles are about 4 times the demo's
    at the same zoom (it was 190 KB against 45 KB at z12), so the chosen setting is expected near
    350 KB at z11 and z12: check it after a build and raise `GOOD_TRACK_MINZOOM` / `TRACK_MINZOOM` by one
    if a tile goes over 500 KB.
@@ -86,6 +92,9 @@ tools (osmium, tippecanoe, pmtiles, gdal) come from the nix dev shell; a missing
 ## Where things are defined
 
 - The schema, enum labels and the overlay's attribute list: `schema.py`, nowhere else.
+- The traffic model (`road_near_traffic`): the engine's `engine/core/src/traffic.rs`; the pipeline
+  reads the generated `traffic.json` (`bun run gen:engine`) and its tests check it against the
+  engine's examples.
 - Tag to attribute mapping: `tags.py` (raw values to enum *labels*; `schema.codes()` gives the codes).
 - The attributes the map can show as information layers: the manifest, so the app lists what the
   build offers. How the app draws them by default: `web/src/map/info.ts` ([map.md](map.md)).
