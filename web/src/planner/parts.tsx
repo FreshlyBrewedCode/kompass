@@ -155,9 +155,142 @@ export function Mark({ size = 20, className }: { size?: number; className?: stri
 
 // ------------------------------------------------------------------ sliders, limits
 
+/** How far (px) a press on the knob has to travel sideways before it moves the value. */
+const DRAG_SLOP = 4;
+
 /**
- * The slider: neutral in the middle, left avoids, right seeks. Direction is told by position and by
- * the word beside the label, never by colour: the fill is ink. The ring is the base profile's value.
+ * A slider that moves only from its knob (playtest 1): a press on the track does nothing, so a tap
+ * beside the knob or a vertical scroll that starts on the row never changes the value. The knob's
+ * target is 44 px; a drag keeps the knob where it was grabbed (no jump to the finger) and moves the
+ * value only once the press travels sideways more than it does up or down, so a sheet still scrolls.
+ * The keyboard works as on a native range. `children` draws the track's marks (positions in 0 … 1).
+ */
+export function KnobSlider({
+  value,
+  min,
+  max,
+  step,
+  keyStep = step,
+  bigStep,
+  onChange,
+  onGrab,
+  onRelease,
+  name,
+  valueText,
+  testid,
+  fill,
+  children,
+}: {
+  value: number;
+  min: number;
+  max: number;
+  /** what a drag snaps to */
+  step: number;
+  /** an arrow key's step (default: `step`); Shift and Page Up/Down take `bigStep` */
+  keyStep?: number;
+  bigStep: number;
+  onChange: (v: number) => void;
+  onGrab?: (() => void) | undefined;
+  onRelease?: (() => void) | undefined;
+  name: string;
+  valueText: string;
+  testid?: string;
+  /** the ink fill, as fractions of the track */
+  fill: [number, number];
+  children?: ReactNode;
+}) {
+  const track = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ id: number; x0: number; y0: number; f0: number; live: boolean } | null>(null);
+  const frac = (value - min) / (max - min);
+  const clamp = (v: number) => Math.max(min, Math.min(max, v));
+  const snap = (f: number) => clamp(min + Math.round((f * (max - min)) / step) * step);
+  const end = () => {
+    if (!drag.current) return;
+    drag.current = null;
+    onRelease?.();
+  };
+  return (
+    <div
+      role="slider"
+      tabIndex={0}
+      aria-label={name}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      aria-valuenow={value}
+      aria-valuetext={valueText}
+      aria-orientation="horizontal"
+      data-testid={testid}
+      className="relative h-7 w-full touch-pan-y select-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      onKeyDown={(e) => {
+        const d = e.shiftKey ? bigStep : keyStep;
+        if (e.key === "ArrowLeft" || e.key === "ArrowDown") onChange(clamp(value - d));
+        else if (e.key === "ArrowRight" || e.key === "ArrowUp") onChange(clamp(value + d));
+        else if (e.key === "PageDown") onChange(clamp(value - bigStep));
+        else if (e.key === "PageUp") onChange(clamp(value + bigStep));
+        else if (e.key === "Home") onChange(min);
+        else if (e.key === "End") onChange(max);
+        else return;
+        e.preventDefault();
+      }}
+      onPointerDown={(e) => {
+        // only the knob takes a press; the track ignores it (and the page scrolls as usual)
+        if (!(e.target as Element).closest("[data-knob]") || (e.pointerType === "mouse" && e.button !== 0))
+          return;
+        e.currentTarget.setPointerCapture(e.pointerId);
+        drag.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, f0: frac, live: false };
+        onGrab?.();
+      }}
+      onPointerMove={(e) => {
+        const d = drag.current;
+        if (!d || d.id !== e.pointerId || !track.current) return;
+        const dx = e.clientX - d.x0;
+        if (!d.live) {
+          if (Math.abs(dx) < DRAG_SLOP || Math.abs(dx) < Math.abs(e.clientY - d.y0)) return;
+          d.live = true;
+        }
+        const w = track.current.getBoundingClientRect().width;
+        const next = snap(d.f0 + dx / w);
+        if (next !== value) onChange(next);
+      }}
+      onPointerUp={end}
+      onPointerCancel={end}
+      onLostPointerCapture={end}
+    >
+      <div ref={track} className="absolute inset-x-3 top-1/2 h-1 -translate-y-1/2 rounded-full bg-track">
+        <i
+          className="absolute inset-y-0 rounded-full bg-foreground"
+          style={{ left: `${fill[0] * 100}%`, width: `${Math.max(0, fill[1] - fill[0]) * 100}%` }}
+        />
+        {children}
+        {/* the knob: 22 px to see, 44 px to grab */}
+        <span
+          data-knob
+          data-testid={testid ? `${testid}-knob` : undefined}
+          className="absolute top-1/2 grid size-11 -translate-x-1/2 -translate-y-1/2 cursor-grab touch-pan-y place-items-center active:cursor-grabbing"
+          style={{ left: `${frac * 100}%` }}
+        >
+          <i className="size-[22px] rounded-full border-2 border-foreground bg-card shadow-[0_1px_4px_rgb(0_0_0/0.25)]" />
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** A mark on a `KnobSlider`'s track: the base profile's value. */
+function BaseRing({ at }: { at: number }) {
+  return (
+    <i
+      title="The base profile's value"
+      className="absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-[1.5px] border-muted-foreground bg-card"
+      style={{ left: `${at * 100}%` }}
+    />
+  );
+}
+
+/**
+ * The preference slider: neutral in the middle, left avoids, right seeks. Direction is told by
+ * position and by the word beside the label, never by colour: the fill is ink. The ring is the base
+ * profile's value.
  */
 export function Dial({
   value,
@@ -176,73 +309,26 @@ export function Dial({
   name: string;
   word: string;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const held = useRef(false);
-  const PAD = 12;
-  const at = (x: number) => {
-    const r = (ref.current as HTMLDivElement).getBoundingClientRect();
-    const f = Math.max(0, Math.min(1, (x - r.left - PAD) / (r.width - 2 * PAD)));
-    return f * 200 - 100;
-  };
-  const drop = () => {
-    if (!held.current) return;
-    held.current = false;
-    onRelease?.();
-  };
+  const f = (v: number) => (v + 100) / 200;
   return (
-    <div
-      ref={ref}
-      role="slider"
-      tabIndex={0}
-      aria-label={name}
-      aria-valuemin={-100}
-      aria-valuemax={100}
-      aria-valuenow={value}
-      aria-valuetext={`${signed(value)}, ${word}`}
-      data-testid={`dial-${name}`}
-      className="relative h-7 w-full cursor-pointer touch-pan-y select-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      onKeyDown={(e) => {
-        const step = e.shiftKey ? 25 : 5;
-        if (e.key === "ArrowLeft" || e.key === "ArrowDown") onChange(Math.max(-100, value - step));
-        else if (e.key === "ArrowRight" || e.key === "ArrowUp") onChange(Math.min(100, value + step));
-        else if (e.key === "Home") onChange(-100);
-        else if (e.key === "End") onChange(100);
-        else return;
-        e.preventDefault();
-      }}
-      onPointerDown={(e) => {
-        e.currentTarget.setPointerCapture(e.pointerId);
-        held.current = true;
-        onGrab?.();
-        onChange(at(e.clientX));
-      }}
-      onPointerMove={(e) => held.current && onChange(at(e.clientX))}
-      onPointerUp={drop}
-      onPointerCancel={drop}
-      onLostPointerCapture={drop}
+    <KnobSlider
+      name={name}
+      testid={`dial-${name}`}
+      value={value}
+      min={-100}
+      max={100}
+      step={1}
+      keyStep={5}
+      bigStep={25}
+      valueText={`${signed(value)}, ${word}`}
+      onChange={onChange}
+      onGrab={onGrab}
+      onRelease={onRelease}
+      fill={[f(Math.min(value, 0)), f(Math.max(value, 0))]}
     >
-      <div
-        className="absolute top-1/2 h-1 -translate-y-1/2 rounded-full bg-track"
-        style={{ left: PAD, right: PAD }}
-      >
-        <i
-          className="absolute inset-y-0 rounded-full bg-foreground"
-          style={{ left: `${(Math.min(value, 0) + 100) / 2}%`, width: `${Math.abs(value) / 2}%` }}
-        />
-        <i className="absolute top-1/2 left-1/2 h-2.5 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground/40" />
-        {base !== undefined && base !== value && (
-          <i
-            title="The base profile's value"
-            className="absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-[1.5px] border-muted-foreground bg-card"
-            style={{ left: `${(base + 100) / 2}%` }}
-          />
-        )}
-        <i
-          className="absolute top-1/2 size-[22px] -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-foreground bg-card shadow-[0_1px_4px_rgb(0_0_0/0.25)]"
-          style={{ left: `${(value + 100) / 2}%` }}
-        />
-      </div>
-    </div>
+      <i className="absolute top-1/2 left-1/2 h-2.5 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground/40" />
+      {base !== undefined && base !== value && <BaseRing at={f(base)} />}
+    </KnobSlider>
   );
 }
 
@@ -482,27 +568,20 @@ export function DetoursRow() {
           {word}
         </span>
       </div>
-      <div className="relative">
-        <input
-          type="range"
-          aria-label="Detours"
-          data-testid="detours-slider"
-          min={0}
-          max={steps}
-          step={1}
-          value={pos}
-          aria-valuetext={`${word}. ${detourHint(v)}`}
-          onChange={(e) => store.setDetours(max - Number(e.target.value) * step)}
-          className="block h-7 w-full cursor-pointer touch-pan-y rounded-full accent-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        />
-        {changed && (
-          <i
-            title="The base profile's value"
-            className="pointer-events-none absolute top-0.5 size-2 -translate-x-1/2 rounded-full border-[1.5px] border-muted-foreground bg-card"
-            style={{ left: `calc(8px + (100% - 16px) * ${basePos / 100})` }}
-          />
-        )}
-      </div>
+      <KnobSlider
+        name="Detours"
+        testid="detours-slider"
+        value={pos}
+        min={0}
+        max={steps}
+        step={1}
+        bigStep={3}
+        valueText={`${word}. ${detourHint(v)}`}
+        onChange={(p) => store.setDetours(max - p * step)}
+        fill={[0, pos / steps]}
+      >
+        {changed && <BaseRing at={basePos / 100} />}
+      </KnobSlider>
       <div className="flex justify-between font-semibold text-2xs text-muted-foreground uppercase tracking-wider">
         <span>Direct</span>
         <span>Go far for good ways</span>
