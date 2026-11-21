@@ -8,6 +8,8 @@ export const HIT_RADIUS = 14;
 export type PickedEdge = {
   id: number;
   properties: Record<string, unknown>;
+  /** where the tap was, `[lon, lat]` */
+  at?: [number, number];
 };
 
 /** Distance from point p to the segment a–b (all in px). */
@@ -70,5 +72,6 @@ export function pickEdge(
     }
   }
   if (!best || best.distance > HIT_RADIUS) return null;
-  return { id: best.feature.id as number, properties: { ...best.feature.properties } };
+  const at = map.unproject([point.x, point.y]);
+  return { id: best.feature.id as number, properties: { ...best.feature.properties }, at: [at.lng, at.lat] };
 }

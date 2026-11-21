@@ -4,13 +4,16 @@
 // - the base profile's route as a dashed ink ghost while the changes move the route, or after an
 //   error the route without the blocking limit; a compared preset's route in blue;
 // - the waypoints as draggable markers (dragging reroutes live), the timeline's cursor, a few
-//   "why this way" notes.
+//   "why this way" notes;
+// - "why not through here?" (the cost debug view): the route through the tapped point in the compared
+//   route's blue, with a ring at the point; the ghost and a compared preset step aside meanwhile.
 // It subscribes to the planner store itself and only touches the source whose data changed: a
 // slider step costs one `setData` of the main line.
 import { type GeoJSONSource, type LngLatLike, type Map as MapLibreMap, Marker } from "maplibre-gl";
 import type { RouteResult } from "@/engine/generated/types";
 import type { Theme } from "@/map/palette";
 import { RIDES_LINE } from "@/map/style";
+import { partedBounds } from "./cost/model";
 import { markerText, routeNotes, SURFACE_GROUP, vertexAt, waypointLabel } from "./model";
 import { GHOST, ROUTE, ROUTE_ALT, ROUTE_CASING, surfaceColor } from "./palette";
 import type { PlannerStore, PlanState } from "./store";
@@ -105,6 +108,9 @@ export class RouteLayer {
   #applied: Partial<Record<"main" | "alt" | "cursor" | "notes", unknown>> = {};
   #markers = new Map<string, { marker: Marker; el: HTMLButtonElement }>();
   #notes: Marker[] = [];
+  #via: Marker | null = null;
+  /** the "why not" point the map was last fitted to */
+  #fittedAt: unknown = null;
   #dragging: string | null = null;
   #fitSeq: number;
   readonly #unsubscribe: () => void;
@@ -225,7 +231,8 @@ export class RouteLayer {
     const map = this.map;
     const ready = !!map.getSource(MAIN);
     const error = !!s.main.error;
-    const comparing = !!s.compareId;
+    const whyNot = s.whyNot;
+    const comparing = !!s.compareId && !whyNot;
     const bySurface = s.lineBy === "surface" && this.#view.plain && !comparing;
     // main
     const mainKey = [s.main.result, bySurface, error, s.waypoints.length >= 2];
@@ -242,9 +249,20 @@ export class RouteLayer {
         map.setPaintProperty(MAIN_LINE, "line-opacity", opacity);
     }
     // ghost / compare / the route without the blocking limit
-    const ghostResult = error ? (s.blame?.result ?? null) : s.changed && !comparing ? s.ghost.result : null;
-    const showGhost = error || (s.moved !== null && s.moved.length > 0);
-    const altKey = [ghostResult, showGhost, comparing ? s.compare.result : null, s.waypoints.length >= 2];
+    const ghostResult = error
+      ? (s.blame?.result ?? null)
+      : s.changed && !comparing && !whyNot
+        ? s.ghost.result
+        : null;
+    const showGhost = error || (!whyNot && s.moved !== null && s.moved.length > 0);
+    const through = whyNot?.line.result ?? null;
+    const altKey = [
+      ghostResult,
+      showGhost,
+      comparing ? s.compare.result : null,
+      through,
+      s.waypoints.length >= 2,
+    ];
     if (ready && changed(this.#applied.alt, altKey)) {
       this.#applied.alt = altKey;
       const features =
@@ -253,6 +271,7 @@ export class RouteLayer {
           : [
               ...(showGhost ? line(ghostResult, "ghost") : []),
               ...(comparing ? line(s.compare.result, "compare") : []),
+              ...line(through, "compare"),
             ];
       (map.getSource(ALT) as GeoJSONSource).setData(collection(features));
     }
@@ -270,8 +289,17 @@ export class RouteLayer {
     }
     this.#syncMarkers(s);
     this.#syncNotes(s);
+    this.#syncVia(s);
     // fit once the lines are there (and the chrome has laid out around them)
     const lines = (s.main.result || s.blame?.result) && (!s.compareId || s.compare.result || s.compare.error);
+    // "why not through here?": once the comparison is in, show where the two routes part
+    const w = s.whyNot;
+    if (w?.comparison && s.main.result && w.line.result && this.#fittedAt !== w.at) {
+      this.#fittedAt = w.at;
+      const box = partedBounds(w.comparison, s.main.result, w.line.result);
+      // after the card has laid out (the padding follows its height)
+      if (box) setTimeout(() => this.#fitBox(box, this.map.getZoom()), 120);
+    }
     if (s.fitSeq !== this.#fitSeq && lines) {
       this.#fitSeq = s.fitSeq;
       requestAnimationFrame(() => requestAnimationFrame(() => this.fit()));
@@ -293,13 +321,17 @@ export class RouteLayer {
       so = Math.min(so, y);
       n = Math.max(n, y);
     }
+    this.#fitBox([w, so, e, n], 16);
+  }
+
+  #fitBox([w, s, e, n]: [number, number, number, number], maxZoom: number) {
     const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
     this.map.fitBounds(
       [
-        [w, so],
+        [w, s],
         [e, n],
       ],
-      { padding: this.#view.padding(), maxZoom: 16, duration: reduce ? 0 : 600 },
+      { padding: this.#view.padding(), maxZoom, duration: reduce ? 0 : 600 },
     );
   }
 
@@ -353,7 +385,8 @@ export class RouteLayer {
   }
 
   #syncNotes(s: PlanState) {
-    const show = this.#view.notes > 0 && this.#view.plain && !s.compareId && !s.main.error && !s.routing;
+    const show =
+      this.#view.notes > 0 && this.#view.plain && !s.compareId && !s.whyNot && !s.main.error && !s.routing;
     const r = show ? s.main.result : null;
     const key = [r, s.catalogue, this.#view.notes];
     if (!changed(this.#applied.notes, key)) return;
@@ -381,8 +414,25 @@ export class RouteLayer {
     }
   }
 
+  /** The ring at the point of "why not through here?". */
+  #syncVia(s: PlanState) {
+    const at = s.whyNot?.at;
+    if (!at) {
+      this.#via?.remove();
+      this.#via = null;
+      return;
+    }
+    if (!this.#via) {
+      const el = document.createElement("div");
+      el.className = "kp-via";
+      el.dataset.testid = "whynot-via";
+      this.#via = new Marker({ element: el }).setLngLat([at.lon, at.lat]).addTo(this.map);
+    } else this.#via.setLngLat([at.lon, at.lat]);
+  }
+
   destroy() {
     this.#unsubscribe();
+    this.#via?.remove();
     this.map.off("styledata", this.#onStyle);
     this.map.off("idle", this.#onStyle);
     this.map.off("click", this.#onClick);

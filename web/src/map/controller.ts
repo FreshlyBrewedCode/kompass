@@ -6,6 +6,7 @@ import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import type { ExploredStore } from "@/history/explored-store";
 import type { RidesLayerData } from "@/rides/protocol";
 import type { Bounds } from "@/rides/types";
+import { COST_ARROW_LAYERS, COST_BAND_LAYERS } from "./cost";
 import { ExploredLayer } from "./explored-layer";
 import { infoLayerName, type MapLayers } from "./info";
 import { type PickedEdge, pickEdge } from "./inspect";
@@ -31,7 +32,16 @@ import {
 import { WAY_PICK_LAYERS, WAY_ROUTE } from "./ways";
 
 /** The layers `setLayers` switches: their filter, colour, zoom range and visibility follow the state. */
-const SWITCHED = [HILLSHADE, CONTOUR_LINE, CONTOUR_LABEL, WAY_ROUTE, INFO_LINE, EXPLORED_LINE];
+const SWITCHED = [
+  HILLSHADE,
+  CONTOUR_LINE,
+  CONTOUR_LABEL,
+  WAY_ROUTE,
+  INFO_LINE,
+  EXPLORED_LINE,
+  ...COST_BAND_LAYERS,
+  ...COST_ARROW_LAYERS,
+];
 
 // MapLibre finds its worker next to its own module, which a bundle moves: point it at the copy Vite emits.
 setWorkerUrl(workerUrl);

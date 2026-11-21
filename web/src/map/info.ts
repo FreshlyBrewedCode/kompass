@@ -13,6 +13,8 @@ export type InfoLayer =
   | { kind: "none" }
   /** ridden edges highlighted (the explored map) */
   | { kind: "explored" }
+  /** every visible edge coloured by the profile's cost factor (cost.ts) */
+  | { kind: "cost" }
   | { kind: "attribute"; attribute: OverlayAttribute };
 
 export type MapLayers = {
@@ -182,13 +184,14 @@ export function formatAttribute(attribute: OverlayAttribute, raw: unknown): stri
   }
 }
 
-/** The query-string name of a layer (`?layer=`): `none`, `explored` or an attribute key. */
+/** The query-string name of a layer (`?layer=`): `none`, `explored`, `cost` or an attribute key. */
 export function infoLayerName(info: InfoLayer): string {
   return info.kind === "attribute" ? info.attribute.key : info.kind;
 }
 
 export function infoLayerFromName(name: string | null, attributes: readonly OverlayAttribute[]): InfoLayer {
   if (name === "explored") return { kind: "explored" };
+  if (name === "cost") return { kind: "cost" };
   const attribute = attributes.find((a) => a.key === name);
   return attribute ? { kind: "attribute", attribute } : { kind: "none" };
 }

@@ -17,6 +17,7 @@ import type { ExpressionSpecification, LayerSpecification, StyleSpecification } 
 import type { RidesLayerData } from "@/rides/protocol";
 import { type BaseLayers, baseLayers } from "./basemap";
 import { CARTO, type Carto } from "./carto";
+import { costArrowLayers, costLayers } from "./cost";
 import { infoSpec, type MapLayers } from "./info";
 import type { Manifest } from "./manifest";
 import { CASING, EXPLORED, RIDES, SELECTED, type Theme } from "./palette";
@@ -341,7 +342,9 @@ export function buildStyle(options: StyleOptions): StyleSpecification {
       ...ways.slice(0, WAY_UNDERLAY),
       ...infoLayers(manifest, theme, layers),
       exploredLayer(manifest, theme, layers),
+      ...costLayers(manifest, theme, layers.info.kind === "cost"),
       ...ways.slice(WAY_UNDERLAY),
+      ...costArrowLayers(manifest, theme, layers.info.kind === "cost"),
       ...base.top,
       ...ridesLayers(theme, rides),
       ...terrain.labels,

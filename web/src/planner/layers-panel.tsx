@@ -1,5 +1,5 @@
 // "Map & rides" (docs/design/planner.md, `LayersPanel`): exactly one of the plain map, one information
-// layer (with its legend) or the explored map; the relief and cycle-route toggles; "colour the route by
+// layer (with its legend), the explored map or the cost debug view (its key, tap for the breakdown); the relief and cycle-route toggles; "colour the route by
 // surface"; inspecting a way; and the ride library, because it feeds the explored map. The map logic
 // stays in src/map/ and the ride library's in src/rides/ (its panel is mounted here as it is).
 
@@ -44,6 +44,8 @@ export type LayersProps = {
   onClearRidden: () => void;
   /** the ride library's panel (src/components/rides-panel.tsx) */
   rides: React.ReactNode;
+  /** the Cost layer's key (src/planner/cost/panel.tsx) */
+  costKey: React.ReactNode;
 };
 
 const LineKey = ({ color, neutral }: { color: string; neutral?: boolean | undefined }) => (
@@ -116,7 +118,7 @@ export function ExploredLegend({
   );
 }
 
-type Mode = "none" | "attribute" | "explored";
+type Mode = "none" | "attribute" | "explored" | "cost";
 
 export function LayersPanel(p: LayersProps) {
   const store = usePlanner();
@@ -143,13 +145,14 @@ export function LayersPanel(p: LayersProps) {
   const setMode = (m: Mode) => {
     if (m === "none") p.onInfo({ kind: "none" });
     else if (m === "explored") p.onInfo({ kind: "explored" });
+    else if (m === "cost") p.onInfo({ kind: "cost" });
     else if (lastAttr) pick(lastAttr);
-    if (m !== "attribute" && inspect) store.setInspect(false);
+    if (m !== "attribute" && m !== "cost" && inspect) store.setInspect(false);
   };
   return (
     <div className="space-y-3.5" data-testid="layers-panel">
       <div
-        className="grid grid-cols-3 rounded-full bg-foreground/8 p-1 font-semibold text-xs"
+        className="grid grid-cols-[auto_1fr_auto_auto] rounded-full bg-foreground/8 p-1 font-semibold text-xs"
         role="radiogroup"
         aria-label="What the map shows"
       >
@@ -158,6 +161,7 @@ export function LayersPanel(p: LayersProps) {
             ["none", "Map"],
             ["attribute", "Information"],
             ["explored", "Explored"],
+            ["cost", "Cost"],
           ] as const
         ).map(([key, name]) => (
           <button
@@ -166,7 +170,10 @@ export function LayersPanel(p: LayersProps) {
             key={key}
             data-testid={`mode-${key}`}
             onClick={() => setMode(key)}
-            className={cn("h-9 rounded-full", mode === key ? "bg-card shadow-sm" : "text-muted-foreground")}
+            className={cn(
+              "h-9 rounded-full px-3",
+              mode === key ? "bg-card shadow-sm" : "text-muted-foreground",
+            )}
           >
             {name}
           </button>
@@ -237,6 +244,27 @@ export function LayersPanel(p: LayersProps) {
             <Switch
               on={inspect}
               name="Inspect a way"
+              testid="inspect-toggle"
+              onClick={() => store.setInspect(!inspect)}
+            />
+          </div>
+        </>
+      )}
+
+      {mode === "cost" && (
+        <>
+          {p.costKey}
+          <div className="flex items-center gap-3">
+            <Crosshair className="size-4 shrink-0" />
+            <span className="min-w-0 flex-1">
+              <span className="block font-semibold text-sm">Tap a way for its cost</span>
+              <span className="block text-muted-foreground text-xs">
+                Why the router likes or avoids it, slider by slider. Off: a tap adds a stop.
+              </span>
+            </span>
+            <Switch
+              on={inspect}
+              name="Tap a way for its cost"
               testid="inspect-toggle"
               onClick={() => store.setInspect(!inspect)}
             />

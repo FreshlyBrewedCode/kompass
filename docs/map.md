@@ -145,10 +145,33 @@ control; `?layer=<attribute key>|explored` in the URL), and toggles the relief a
   drawn. The legend names what is left out. A new attribute works without a rule (every value, or
   every non-zero value).
 - **Explored**: a teal band on ridden edges (`feature-state.ridden`); never ridden stays the map.
+- **Cost**: every visible edge coloured by the current profile's factor (below).
 - **Inspect**: tapping a way opens the panel with every attribute (from z13, where the ways are
   drawn; a 14 px box around the tap, the nearest edge wins). In the planner a tap adds a waypoint, so
   inspecting is a mode ("Inspect a way" in Map & rides, with an information layer on);
   `RegionMap.setPicking` switches the map's own tap handling.
+
+### Cost layer
+
+The cost debug view's map part (`cost.ts`: the scale and layers, pure; `cost-layer.ts`: the runtime;
+the planner wires it, [planner.md](planner.md#cost-the-debug-view)).
+
+- **Per viewport**: `edgeCosts` by the view's box grown by a quarter on each side, then `feature-state`
+  on the overlay (`ct` position on the scale, `ck` kind, `cd` chevron) in chunks of 4000, only what
+  changed. A pan with the same profile keeps what it already coloured; a new profile hides the edges the
+  new answer does not cover. From z13 (`COST_MINZOOM`: below, the overlay lacks edges): the key says
+  to zoom in. A new style re-applies the last answer.
+- **The scale** diverges at factor 1 and is logarithmic on each side, scaled to the profile's
+  `min_factor` (−1) and `max_factor` (+1): green preferred, grey neutral, magenta avoided
+  (`COST_STOPS` in `palette.ts`, per theme). Per edge the better direction counts. Edges at the clamp
+  are drawn 1.55× wider (there a stronger slider changes nothing); closed ones (both directions) are a
+  dashed ink line; from z15 a chevron (`›` / `‹`) points along the cheaper or only direction where the
+  two differ by more than 10 %. The tapped edge gets an ink outline. Like the information band it lies
+  under the ways' lines (the chevrons above them).
+- **Cost**: on the demo region (headless Chromium, SwiftShader, dev server), from a profile change to
+  the colours written: z13, 390×844, 1.5 k edges: query 0.8 ms + apply 0.8 ms; z13, 1440×900, 10 k
+  edges: 1.4 + 3.1 ms; z15: under 1 ms. A pan at z15 writes nothing new. A 60 ms debounce on profile
+  changes (a slider drag) comes on top; the GPU repaint is not in these numbers.
 
 ## Explored map
 

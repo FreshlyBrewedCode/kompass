@@ -11,7 +11,8 @@ The screen: the region map with the planner on top, built on the consolidated de
 | `route-layer.ts` | what the planner draws on the map, and the map's taps |
 | `parts.tsx` | the components of the design's inventory (one set for every breakpoint) |
 | `shell.tsx` | the arrangement per breakpoint (phone, tablet, desk), sheets, the chip strip; wires map, engine, rides |
-| `layers-panel.tsx` | "Map & rides": map / one information layer / explored, toggles, inspect, the ride library |
+| `layers-panel.tsx` | "Map & rides": map / one information layer / explored / cost, toggles, inspect, the ride library |
+| `cost/` | the cost debug view: the words (`model.ts`), the key, tap panel and "why not" card (`panel.tsx`), the layer's wiring (`use-cost-layer.ts`) |
 | `palette.ts` | data colours (route, compare, ghost, surface, way type, ridden) as CSS variables |
 | `gpx.ts` | the GPX writer and the export (share sheet on touch devices, else a download) |
 
@@ -68,6 +69,34 @@ markers. `fitSeq` in the store asks for a fit (a restored plan, a new comparison
 **Taps**: a tap adds a waypoint, or closes the open sheet. Inspecting a way (the region map's
 `pickEdge`, `docs/map.md`) is on only while asked for: "Inspect a way" in Map & rides, available
 with an information layer; `RegionMap.setPicking` turns the map's own tap handling on and off.
+
+## Cost (the debug view)
+
+Why the router goes where it goes, for a rider. Three parts on the engine's cost queries
+([routing.md](routing.md#explaining-the-cost)); nothing of it is on the default screen.
+
+- **The Cost layer**: one more entry in "Map & rides" (`?layer=cost`). The visible edges coloured by
+  the plan's profile ([map.md](map.md#cost-layer)), recoloured on every map move and profile change
+  (lane `cost`, latest wins). Its key names the scale, the clamp and what closes the closed ways in view.
+- **Tap for the breakdown**: with the layer on, a tap explains the way (inspect is on by default;
+  off, a tap adds a stop as usual). `explainEdge` on lane `explain`, again on every profile change: the
+  verdict in words first (`edgeVerdict`: "Preferred ×0.50, held by the detour limit", "Closed: legal
+  access only (access=agricultural)", "Neutral ×1.0: nothing in this profile applies"), notes on the
+  gate, additive terms and the other direction; then each active preference, strongest first (a tap
+  opens its slider right there, and flashes its row in the desk's profile card); quality × bonus → raw
+  → clamped → what the router counts, per direction when they differ; the way's data, folded.
+- **"Why not through here?"** (the panel's button, with a route planned): `whyNot` in the store. The
+  plan's route and one through the tapped point (inserted where it detours least, lane `whynot`), then
+  `compare` (lane `whynot-compare`); both follow every slider move. The second line is drawn in the
+  compared route's blue with a ring at the point, and the map fits where they part. The card
+  (`whyNot()` in `cost/model.ts`): a verdict on top, the diagnosis (closed parts; "no slider can
+  change this" when the way through here would cost more even if all of it sat at `min_factor`; both
+  sides at the clamp; a neutral planned stretch), then the stretches side by side (length, what it
+  counts as, mean factor, main way type, top reasons, share at the clamp, closed length). "Back to the
+  plan" leaves nothing behind; "Use this route" adds the point as a stop.
+
+Where: the panel and the card take the summary card's place on the phone, the bottom-left slot (above
+the agent bar) on the desk.
 
 ## Persistence
 

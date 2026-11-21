@@ -70,3 +70,18 @@ export function categoryColor(index: number): string {
   if (round === 0) return base;
   return round % 2 === 1 ? mix(base, 255, 0.4) : mix(base, 0, 0.35);
 }
+
+/**
+ * The cost layer (cost.ts): a diverging scale centred on factor 1, preferred (green) ← neutral (grey)
+ * → avoided (magenta), 7 stops from the profile's `minFactor` to its `maxFactor` on a log scale. Green
+ * and magenta stay apart for the common colour-blindnesses (ColorBrewer's PiYG family), and neither is
+ * the route's vermilion, the compared route's blue or the map's violet cycle paths. On light the strong
+ * ends are dark, on dark they are bright: the strong values always stand out most from the ground.
+ */
+export const COST_STOPS: Record<Theme, readonly string[]> = {
+  light: ["#17643a", "#3f9a52", "#93c47d", "#c4bfb5", "#e49ac6", "#c2408f", "#7d1561"],
+  dark: ["#8be3a8", "#55c07c", "#3f8a5a", "#76726c", "#a05a8a", "#e06bb6", "#ffa6da"],
+};
+
+/** Closed ways on the cost layer: dashed ink, the colour of "no". */
+export const COST_CLOSED: Record<Theme, string> = { light: "#2b2b2b", dark: "#e6e6e6" };
