@@ -1,4 +1,4 @@
-// "Map & rides" (docs/design/planner.md, `LayersPanel`): exactly one of the plain map, one information
+// "Map & rides" (docs/design/planner.md, `LayersPanel`): exactly one of the plain map (with its key), one information
 // layer (with its legend), the explored map or the cost debug view (its key, tap for the breakdown); the relief and cycle-route toggles; "colour the route by
 // surface"; inspecting a way; and the ride library, because it feeds the explored map. The map logic
 // stays in src/map/ and the ride library's in src/rides/ (its panel is mounted here as it is).
@@ -12,6 +12,7 @@ import type { InfoLayer, Legend as LegendSpec } from "@/map/info";
 import { infoSpec } from "@/map/info";
 import type { OverlayAttribute } from "@/map/manifest";
 import { EXPLORED, type Theme } from "@/map/palette";
+import { MapKey } from "./map-key";
 import { label, pill, Switch } from "./parts";
 import { usePlan, usePlanner } from "./store";
 
@@ -181,20 +182,23 @@ export function LayersPanel(p: LayersProps) {
       </div>
 
       {mode === "none" && (
-        <div className="flex items-center gap-3">
-          <span className="min-w-0 flex-1">
-            <span className="block font-semibold text-sm">Colour the route by surface</span>
-            <span className="block text-muted-foreground text-xs">
-              Off: one line in the route colour. The timeline shows surface either way.
+        <>
+          <MapKey theme={p.theme} />
+          <div className="flex items-center gap-3">
+            <span className="min-w-0 flex-1">
+              <span className="block font-semibold text-sm">Colour the route by surface</span>
+              <span className="block text-muted-foreground text-xs">
+                Off: one line in the route colour. The timeline shows surface either way.
+              </span>
             </span>
-          </span>
-          <Switch
-            on={lineBy === "surface"}
-            name="Colour the route by surface"
-            testid="line-by-surface"
-            onClick={() => store.setLineBy(lineBy === "surface" ? "plain" : "surface")}
-          />
-        </div>
+            <Switch
+              on={lineBy === "surface"}
+              name="Colour the route by surface"
+              testid="line-by-surface"
+              onClick={() => store.setLineBy(lineBy === "surface" ? "plain" : "surface")}
+            />
+          </div>
+        </>
       )}
 
       {mode === "attribute" && active && (
