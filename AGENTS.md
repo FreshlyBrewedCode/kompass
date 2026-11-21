@@ -66,6 +66,12 @@ cd engine && cargo run --release -p kompass-cli -- bench --build ../data/build/<
 cd engine && cargo run --release -p kompass-cli -- compare --build ../data/build/<name> --profiles a,b [--grade 10] [--out-dir /tmp/x]
                          # route quality on seeded random 30–60 km pairs vs. the shortest way (GeoJSON
                          # only where --out-dir points: keep it out of the repo, it shows the region)
+cd engine && cargo run --release -p kompass-cli -- replay --build ../data/build/<name> --profiles a,b [--ref name=<dir>]... \
+    [--leg-km 14] [--min-straight 0.55] [--leg ride<k>-leg<j>] [--out-dir <dir>] <gpx files or dirs>
+                         # route quality against the rider's own rides: each ride matched and cut into A→B
+                         # legs, routed per profile; --ref adds another router's GPX per leg (matched too);
+                         # overlap with the ridden line, surfaces, roads, closures, turns (docs/routing.md).
+                         # Aggregates and leg indices only; --out-dir (real rides): data/ or tmp only
 bun run gen:engine       # regenerate web/src/engine/generated/ (JSON Schemas + TypeScript types of the
                          # engine API) from the Rust types; `cargo test` fails when they are stale
 uv run --project tools/komoot kompass-komoot --help    # Komoot download (run by the user, see tools/komoot/README.md)

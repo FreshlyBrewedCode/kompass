@@ -98,7 +98,7 @@ fn io(e: &std::io::Error, what: &Path) -> Failure {
 }
 
 /// The `.gpx` files among the inputs: files as given, directories scanned (sorted).
-fn gpx_files(inputs: &[PathBuf]) -> Result<Vec<PathBuf>, Failure> {
+pub(crate) fn gpx_files(inputs: &[PathBuf]) -> Result<Vec<PathBuf>, Failure> {
     let mut files = Vec::new();
     for p in inputs {
         if p.is_dir() {
