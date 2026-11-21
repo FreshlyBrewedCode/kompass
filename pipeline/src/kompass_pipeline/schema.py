@@ -232,6 +232,7 @@ COLUMNS: tuple[Column, ...] = (
     _c("informal", pa.bool_(), "`informal=yes` (a desire path)."),
     _c("on_bridge", pa.bool_(), "On a bridge."),
     _c("in_tunnel", pa.bool_(), "In a tunnel."),
+    _c("layer", i8, "OSM `layer` (vertical order of crossing ways), -5..5, 0 if absent."),
     _c("lit", u8, "Street lighting.", enum=_enum("unknown", "yes", "no")),
     _c("n_barriers", u8, "Gates, bollards, stiles, ... on the edge's nodes."),
     _c("name", pa.string(), "`name`, for display.", nullable=True, dictionary=True),
@@ -343,6 +344,20 @@ OVERLAY: tuple[OverlayAttr, ...] = (
         max=25,
     ),
 )
+
+
+#: Service roads told apart for drawing (car parks thin out): code -> label of the `service_kind`
+#: overlay property (0 is a plain service road or no service road and is not written).
+SERVICE_KINDS: tuple[tuple[int, str], ...] = _enum("other", "parking_aisle", "driveway")
+SERVICE_KIND_OF = {"parking_aisle": 1, "driveway": 2}
+
+#: Overlay properties that are for drawing only (not information layers, not in the manifest's
+#: `attributes`): the manifest lists their keys under `overlay.drawing`. All are written only when
+#: they differ from the default (0), so an absent property means 0.
+#:   bridge, tunnel: 1 if the edge is on a bridge / in a tunnel
+#:   layer:          OSM layer, -5..5
+#:   service_kind:   SERVICE_KINDS, only on service roads
+OVERLAY_DRAWING: tuple[str, ...] = ("bridge", "tunnel", "layer", "service_kind")
 
 
 def overlay_manifest() -> list[dict]:

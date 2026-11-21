@@ -125,6 +125,11 @@ keyed.forEach(({ way, coordinates }, id) => {
     way_id: way,
     oneway_bike: seed % 17 === 3 ? 1 : seed % 19 === 10 ? -1 : 0,
   };
+  // the overlay's drawing properties (pipeline schema.OVERLAY_DRAWING), written only when not 0; drawing
+  // only: edges.parquet keeps the neutral values, so routes in the e2e do not change
+  if (seed % 23 === 5) Object.assign(properties, { bridge: 1, layer: 1 });
+  if (seed % 29 === 7) Object.assign(properties, { tunnel: 1, layer: -1 });
+  if (seed % 10 === 4) properties.service_kind = 1 + (seed % 20 === 4 ? 0 : 1); // parking_aisle, driveway
   // every seventh edge has no grade: "no value" is information too
   if (seed % 7 !== 0) properties.grade_max = (seed * 5) % 26;
   edges.push({ type: "Feature", id, properties, geometry: { type: "LineString", coordinates } });
@@ -213,6 +218,7 @@ const manifest = {
     layer: "edges",
     minzoom: 8,
     maxzoom: 14,
+    drawing: ["bridge", "tunnel", "layer", "service_kind"],
     attributes: [
       enumAttribute("highway", "Road class"),
       enumAttribute("surface_class", "Surface"),

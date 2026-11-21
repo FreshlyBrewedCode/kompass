@@ -26,6 +26,10 @@ drift.
 - Nothing is derived that the engine can compute from these columns, with one exception: elevation
   and the context shares need the DEM and landuse polygons, so they are precomputed.
 
+A column added later (`layer`) does not bump the schema version: the engine's compile reads the
+columns it knows by name and ignores others, so it keeps reading older and newer files. The version
+changes only for what the engine must know about.
+
 ## Key-value metadata
 
 | key | value |
@@ -74,6 +78,7 @@ drift.
 | `informal` | bool | `informal=yes` (a desire path). |
 | `on_bridge` | bool | On a bridge. |
 | `in_tunnel` | bool | In a tunnel. |
+| `layer` | int8 | OSM `layer` (vertical order of crossing ways), -5..5, 0 if absent. |
 | `lit` | uint8 | Street lighting. |
 | `n_barriers` | uint8 | Gates, bollards, stiles, ... on the edge's nodes. |
 | `name` | string, nullable, dictionary-encoded | `name`, for display. |

@@ -18,6 +18,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
+import pyarrow as pa
 import pyarrow.parquet as pq
 import shapely
 
@@ -28,6 +29,13 @@ OVERLAY_MINZOOM = 8
 OVERLAY_MAXZOOM = 14
 BASEMAP_MAXZOOM = 15
 
+#: first zoom of tracks: the style draws them graded (tier, grade, surface), so they come earlier than
+#: paths; good tracks (grade 1 to 3, the ones a gravel ride is made of) one zoom before the rest. Sizes
+#: per zoom for the choice: docs/pipeline.md.
+TRACK_MINZOOM = 12
+GOOD_TRACK_MINZOOM = 11
+GOOD_TRACK_GRADES = (1, 2, 3)
+
 #: first zoom a highway class appears at; everything not listed is z13, so nothing is hidden at z13 and
 #: z14. Residential streets and tracks (most of the km) join late; tile sizes per zoom are checked after a
 #: build (docs/pipeline.md).
@@ -37,7 +45,7 @@ MINZOOM = {
     "trunk_link": 10, "primary_link": 10,
     "tertiary": 11, "secondary_link": 11, "cycleway": 11,
     "unclassified": 12, "residential": 12, "tertiary_link": 12, "living_street": 12,
-    "track": 13, "path": 13, "footway": 13, "bridleway": 13,
+    "track": TRACK_MINZOOM, "path": 13, "footway": 13, "bridleway": 13,
 }  # fmt: skip
 DEFAULT_MINZOOM = 13
 #: bicycle routes (by `route_level`: lcn, rcn, ncn, icn) show earlier than their road class
@@ -48,34 +56,56 @@ PROTOMAPS_URL = "https://build.protomaps.com/{key}.pmtiles"
 BATCH = 100_000
 
 
-def minzooms(highway: np.ndarray, route_level: np.ndarray) -> np.ndarray:
-    """Per-edge first zoom for highway class codes and route levels."""
+def minzooms(highway: np.ndarray, route_level: np.ndarray, tracktype: np.ndarray | None = None) -> np.ndarray:
+    """Per-edge first zoom for highway class codes, route levels and (for tracks) track grades."""
     table = np.array([MINZOOM.get(label, DEFAULT_MINZOOM) for _, label in schema.BY_NAME["highway"].enum])
     mz = table[highway]
+    if tracktype is not None:
+        good = (highway == schema.codes("highway")["track"]) & np.isin(tracktype, GOOD_TRACK_GRADES)
+        mz = np.where(good, GOOD_TRACK_MINZOOM, mz)
     route = np.array([DEFAULT_MINZOOM, *(ROUTE_MINZOOM[k] for k in sorted(ROUTE_MINZOOM))])[route_level]
     return np.minimum(mz, route)
 
 
 def overlay_columns() -> list[str]:
-    cols = {c for a in schema.OVERLAY for c in a.source} | {"edge_id", "geometry", "highway", "route_level"}
+    cols = {c for a in schema.OVERLAY for c in a.source}
+    cols |= {"edge_id", "geometry", "highway", "route_level", "tracktype"}
+    cols |= {"on_bridge", "in_tunnel", "layer", "service"}
     return sorted(cols)
+
+
+def service_kinds(service: np.ndarray, highway: np.ndarray) -> np.ndarray:
+    """`service_kind` per edge: 1 parking_aisle, 2 driveway on service roads, 0 otherwise."""
+    kinds = np.array([schema.SERVICE_KIND_OF.get(v, 0) if isinstance(v, str) else 0 for v in service])
+    return np.where(highway == schema.codes("highway")["service"], kinds, 0)
+
+
+def drawing_properties(batch: dict[str, np.ndarray]) -> list[tuple[str, np.ndarray]]:
+    """The drawing-only properties (`schema.OVERLAY_DRAWING`) as arrays; 0 means "not written"."""
+    return [
+        ("bridge", batch["on_bridge"].astype(int)),
+        ("tunnel", batch["in_tunnel"].astype(int)),
+        ("layer", np.nan_to_num(batch["layer"]).astype(int)),
+        ("service_kind", service_kinds(batch["service"], batch["highway"])),
+    ]
 
 
 def feature_lines(batch: dict[str, np.ndarray]) -> Iterator[str]:
     """GeoJSON-sequence lines (feature id = edge_id, per-feature minzoom, overlay attributes)."""
     geo = shapely.to_geojson(shapely.set_precision(shapely.from_wkb(batch["geometry"]), 1e-6))
-    mz = minzooms(batch["highway"], batch["route_level"])
+    mz = minzooms(batch["highway"], batch["route_level"], batch["tracktype"])
     props = []
     for a in schema.OVERLAY:
         arr = batch[a.source[0]]
         for extra in a.source[1:]:
             arr = np.maximum(arr, batch[extra])
         props.append((a.key, arr))
+    props += drawing_properties(batch)
     for i in range(len(geo)):
         p = {}
         for key, arr in props:
             v = arr[i]
-            if v == v:  # skip NaN / null
+            if v == v and (key not in schema.OVERLAY_DRAWING or v != 0):  # skip NaN / null, default drawing
                 p[key] = int(v) if float(v).is_integer() else round(float(v), 1)
         yield (
             f'{{"type":"Feature","id":{int(batch["edge_id"][i])},"tippecanoe":{{"minzoom":{int(mz[i])}}},'
@@ -91,11 +121,12 @@ def export_geojsonseq(edges: Path, out: Path) -> int:
             batch = {}
             for name in rb.schema.names:
                 col = rb.column(name)
-                # nullable columns become float with NaN; the others keep their integer dtype
+                # nullable numbers become float with NaN; the others keep their dtype (service: strings)
+                numeric = pa.types.is_integer(col.type) or pa.types.is_floating(col.type)
                 batch[name] = (
-                    col.to_numpy(zero_copy_only=False)
-                    if col.null_count == 0
-                    else col.to_pandas().to_numpy(dtype="float64", na_value=np.nan)
+                    col.to_pandas().to_numpy(dtype="float64", na_value=np.nan)
+                    if col.null_count and numeric
+                    else col.to_numpy(zero_copy_only=False)
                 )
             f.writelines(feature_lines(batch))
             n += len(rb)

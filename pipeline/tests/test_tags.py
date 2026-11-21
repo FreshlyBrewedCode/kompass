@@ -130,3 +130,11 @@ def test_every_code_is_in_its_enum_table(village):
         if column in derived_frame and schema.BY_NAME[column].enum:
             allowed = set(schema.enum_table(column))
             assert set(derived_frame[column].astype(int)) <= allowed, column
+
+
+def test_layer_is_a_small_signed_number():
+    assert derived(highway="path", bridge="yes", layer="1").layer == 1
+    assert derived(highway="path", tunnel="yes", layer="-1").layer == -1
+    assert derived(highway="path", layer="+1").layer == 0  # not a plain integer: ignored
+    assert derived(highway="path", layer="-12").layer == -5  # clipped
+    assert derived(highway="path").layer == 0

@@ -66,3 +66,7 @@ def test_overlay_attributes_come_from_the_schema():
     for a in attrs.values():
         assert a["kind"] in ("enum", "share", "number")
         assert re.fullmatch(r"[a-z_]+", a["key"])
+
+
+def test_manifest_lists_the_drawing_properties():
+    assert manifest.build(REGION, None)["overlay"]["drawing"] == ["bridge", "tunnel", "layer", "service_kind"]

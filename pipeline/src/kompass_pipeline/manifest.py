@@ -58,6 +58,7 @@ def build(
             "minzoom": tiles.OVERLAY_MINZOOM,
             "maxzoom": tiles.OVERLAY_MAXZOOM,
             "attributes": schema.overlay_manifest(),
+            "drawing": list(schema.OVERLAY_DRAWING),
         },
         "terrain": terrain_entry(has_contours) if has_terrain else None,
     }
