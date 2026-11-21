@@ -128,8 +128,8 @@ export function limitRows(base: Limits, limits: Limits): LimitId[] {
 }
 
 export type Change = {
-  id: PrefId | LimitId;
-  kind: "pref" | "limit";
+  id: PrefId | LimitId | typeof DETOURS_ID;
+  kind: "pref" | "limit" | "detours";
   /** not part of the base at all */
   added: boolean;
   removed: boolean;
@@ -196,12 +196,53 @@ export function limitNumber(limit: Limit | undefined, n: number): string {
   return unit === "%" ? `${n} %` : `${n} ${unit}`.trim();
 }
 
+// ---------------------------------------------------------------- detours
+
+/** The id of the detours row among the changes. */
+export const DETOURS_ID = "detours";
+/** `bounds.min_factor` as the engine allows it (docs/profile.md): 1.0 only avoids, 0.3 goes far for good ways. */
+export const MIN_FACTOR_RANGE = { min: 0.3, max: 1.0, step: 0.05, default: 0.5 } as const;
+
+/** A min_factor on the slider's grid, within the engine's range (0.05 steps, no float dust). */
+export function snapMinFactor(v: number): number {
+  const { min, max, step } = MIN_FACTOR_RANGE;
+  const c = Math.max(min, Math.min(max, v));
+  return Number((Math.round(c / step) * step).toFixed(2));
+}
+
+/** The base preset's `min_factor` (the engine's default where it says nothing). */
+export function baseMinFactor(base: PlanPreset | undefined): number {
+  return base?.profile.bounds?.min_factor ?? MIN_FACTOR_RANGE.default;
+}
+
+/** How much longer a ride may get for a way you like: 1 / min_factor, as "2×" or "1.7×". */
+export function detourTimes(minFactor: number): string {
+  const x = Math.round((1 / minFactor) * 10) / 10;
+  return `${Number.isInteger(x) ? x : x.toFixed(1)}×`;
+}
+
+/** The word beside the detours slider. */
+export function detourWord(minFactor: number): string {
+  if (minFactor >= 0.99) return "Direct";
+  if (minFactor >= 0.8) return "A little off the way";
+  if (minFactor >= 0.6) return "Some detours";
+  if (minFactor >= 0.45) return "Detours for good ways";
+  return "Go far for good ways";
+}
+
+/** What the current value means, in a sentence. */
+export function detourHint(minFactor: number): string {
+  if (minFactor >= 0.99) return "Preferences only avoid; they never pull the route out of its way.";
+  return `Up to ${detourTimes(minFactor)} longer for a way you like.`;
+}
+
 /** What this plan changed against its base, in words. Core preferences absent from a profile count as 0. */
 export function changes(
   base: { weights: Weights; limits: Limits },
   weights: Weights,
   limits: Limits,
   catalogue: Catalogue | null,
+  minFactors?: { base: number; plan: number },
 ): Change[] {
   const core = catalogue?.core ?? [];
   const out: Change[] = [];
@@ -246,6 +287,15 @@ export function changes(
       text: c === null ? `${never} allowed again` : `never ${never}${n}`,
     });
   }
+  if (minFactors && Math.abs(minFactors.base - minFactors.plan) > 1e-6) {
+    out.push({
+      id: DETOURS_ID,
+      kind: "detours",
+      added: false,
+      removed: false,
+      text: minFactors.plan > minFactors.base ? "fewer detours" : "more detours",
+    });
+  }
   return out;
 }
 
@@ -272,17 +322,30 @@ export function weightWord(
 }
 
 /** The plan's profile, as the engine takes it. */
-export function planProfile(base: PlanPreset | undefined, weights: Weights, limits: Limits): Profile {
+export function planProfile(
+  base: PlanPreset | undefined,
+  weights: Weights,
+  limits: Limits,
+  minFactor?: number,
+): Profile {
+  const bounds =
+    minFactor !== undefined && Math.abs(minFactor - baseMinFactor(base)) > 1e-6
+      ? { ...(base?.profile.bounds ?? { max_factor: 20 }), min_factor: minFactor }
+      : base?.profile.bounds;
   return {
     ...(base?.profile.name ? { name: base.profile.name } : {}),
     ...(base ? { base: base.id } : {}),
     weights: { ...weights },
     limits: { ...limits },
+    ...(bounds ? { bounds } : {}),
   };
 }
 
 /** Whether two profiles route the same (name and base aside). */
-export function sameCost(a: { weights: Weights; limits: Limits }, b: { weights: Weights; limits: Limits }) {
+export function sameCost(
+  a: { weights: Weights; limits: Limits; minFactor?: number },
+  b: { weights: Weights; limits: Limits; minFactor?: number },
+) {
   const norm = (w: Weights) =>
     JSON.stringify(
       Object.entries(w)
@@ -295,7 +358,11 @@ export function sameCost(a: { weights: Weights; limits: Limits }, b: { weights: 
         .filter(([, v]) => v !== false)
         .sort(),
     );
-  return norm(a.weights) === norm(b.weights) && normL(a.limits) === normL(b.limits);
+  return (
+    norm(a.weights) === norm(b.weights) &&
+    normL(a.limits) === normL(b.limits) &&
+    Math.abs((a.minFactor ?? 0) - (b.minFactor ?? 0)) < 1e-6
+  );
 }
 
 // ---------------------------------------------------------------- route read-outs
@@ -546,6 +613,8 @@ export type SavedPlan = {
   baseId: string;
   weights: Weights;
   limits: Limits;
+  /** the detours value when it differs from the base's */
+  detours?: number;
   compareId: string | null;
   lineBy: LineBy;
 };
@@ -584,6 +653,7 @@ export function parsePlan(
       baseId: raw.baseId,
       weights,
       limits,
+      ...(num(raw.detours) ? { detours: snapMinFactor(raw.detours) } : {}),
       compareId: typeof raw.compareId === "string" ? raw.compareId : null,
       lineBy: raw.lineBy === "surface" ? "surface" : "plain",
     };
@@ -624,11 +694,12 @@ export function ownPreset(
   weights: Weights,
   limits: Limits,
   now = Date.now(),
+  bounds?: Profile["bounds"],
 ): PlanPreset {
   return {
     id: `own-${now.toString(36)}`,
     blurb: base ? `Made from ${presetName(base)}` : "Your own",
-    profile: { name, weights: { ...weights }, limits: { ...limits } },
+    profile: { name, weights: { ...weights }, limits: { ...limits }, ...(bounds ? { bounds } : {}) },
     own: true,
   };
 }

@@ -28,6 +28,7 @@ import type {
 import type { EdgeCostsParams, EdgeCostsResult, RouteOutcome } from "@/engine/protocol";
 import type { EngineStore } from "@/engine/store";
 import {
+  baseMinFactor,
   type Change,
   changeSentence,
   changes,
@@ -48,6 +49,7 @@ import {
   probeOrder,
   type SavedPlan,
   sameCost,
+  snapMinFactor,
   snapWeight,
   type Waypoint,
   type Weights,
@@ -108,11 +110,16 @@ export type PlanState = {
   baseId: string;
   weights: Weights;
   limits: Limits;
+  /** the detours slider (`bounds.min_factor`) when moved away from the base's; `null`: the base's */
+  detours: number | null;
   compareId: string | null;
   // derived from the above (kept in the snapshot so selectors stay cheap and stable)
   base: PlanPreset | undefined;
   baseWeights: Weights;
   baseLimits: Limits;
+  /** the `min_factor` in force and the base's */
+  minFactor: number;
+  baseMinFactor: number;
   changes: Change[];
   sentence: string;
   prefIds: PrefId[];
@@ -197,6 +204,7 @@ export class PlannerStore {
       baseId: r?.baseId ?? DEFAULT_BASE,
       weights: r?.weights ?? {},
       limits: r?.limits ?? {},
+      detours: r?.detours ?? null,
       compareId: r?.compareId ?? null,
       engineReady: false,
       main: NO_LINE,
@@ -232,6 +240,7 @@ export class PlannerStore {
     const plan =
       "weights" in patch ||
       "limits" in patch ||
+      "detours" in patch ||
       "baseId" in patch ||
       "presets" in patch ||
       "catalogue" in patch;
@@ -273,6 +282,7 @@ export class PlannerStore {
       baseId: s.baseId,
       weights: s.weights,
       limits: s.limits,
+      ...(s.detours !== null ? { detours: s.detours } : {}),
       compareId: s.compareId,
       lineBy: s.lineBy,
     };
@@ -299,6 +309,7 @@ export class PlannerStore {
       patch.baseId = base?.id ?? DEFAULT_BASE;
       patch.weights = { ...(base?.profile.weights ?? {}) };
       patch.limits = normaliseLimits(base?.profile.limits ?? {}, catalogue);
+      patch.detours = null;
     } else if (!restored) {
       const base = presets.find((p) => p.id === this.#state.baseId);
       patch.weights = { ...(base?.profile.weights ?? {}) };
@@ -368,6 +379,7 @@ export class PlannerStore {
         baseId: id,
         weights: { ...base.profile.weights },
         limits: normaliseLimits(base.profile.limits, this.#state.catalogue),
+        detours: null,
         compareId: this.#state.compareId === id ? null : this.#state.compareId,
         chip: null,
       },
@@ -379,6 +391,20 @@ export class PlannerStore {
     const v = snapWeight(value);
     if (this.#state.weights[id] === v) return;
     this.#set({ weights: { ...this.#state.weights, [id]: v } }, { route: true, save: true });
+  }
+
+  /** The detours slider: `bounds.min_factor`, 1.0 (direct) … 0.3 (go far for good ways). */
+  setDetours(value: number) {
+    const s = this.#state;
+    const v = snapMinFactor(value);
+    const next = Math.abs(v - s.baseMinFactor) < 1e-6 ? null : v;
+    if (next === s.detours) return;
+    this.#set({ detours: next }, { route: true, save: true });
+  }
+
+  resetDetours() {
+    if (this.#state.detours === null) return;
+    this.#set({ detours: null }, { route: true, save: true });
   }
 
   addPref(id: PrefId) {
@@ -445,7 +471,14 @@ export class PlannerStore {
 
   savePreset(name: string) {
     const s = this.#state;
-    const preset = ownPreset(name.trim() || `${presetName(s.base)} +`, s.base, s.weights, s.limits);
+    const preset = ownPreset(
+      name.trim() || `${presetName(s.base)} +`,
+      s.base,
+      s.weights,
+      s.limits,
+      undefined,
+      planProfile(s.base, s.weights, s.limits, s.minFactor).bounds,
+    );
     this.#set({ presets: [...s.presets, preset], baseId: preset.id }, { save: true });
     this.#saveOwn();
   }
@@ -598,7 +631,12 @@ export class PlannerStore {
       }
       return;
     }
-    const key = JSON.stringify([request.waypoints, request.profile.weights, request.profile.limits]);
+    const key = JSON.stringify([
+      request.waypoints,
+      request.profile.weights,
+      request.profile.limits,
+      request.profile.bounds,
+    ]);
     if (this.#sent.get(lane) === key) return;
     this.#sent.set(lane, key);
     const started = this.#now();
@@ -651,7 +689,7 @@ export class PlannerStore {
         });
       return;
     }
-    const profile = planProfile(s.base, s.weights, s.limits);
+    const profile = planProfile(s.base, s.weights, s.limits, s.minFactor);
     const before = this.#sent.get("route");
     if (s.whyNot) this.#mainPending = true;
     this.#send("route", this.#request(profile), (main, key) => {
@@ -674,7 +712,7 @@ export class PlannerStore {
     const base = s.base;
     const ghost =
       s.changed && !s.compareId && base
-        ? this.#request(planProfile(base, s.baseWeights, s.baseLimits))
+        ? this.#request(planProfile(base, s.baseWeights, s.baseLimits, s.baseMinFactor))
         : null;
     this.#send("ghost", ghost, (line) => {
       this.#set({ ghost: line });
@@ -793,7 +831,7 @@ export class PlannerStore {
       if (this.#sent.get("route") !== key) return;
       const limits = tries[i] as Limits;
       const outcome = await this.#engine.route(
-        this.#request(planProfile(s.base, s.weights, limits)),
+        this.#request(planProfile(s.base, s.weights, limits, s.minFactor)),
         "probe",
       );
       if (this.#sent.get("route") !== key) return;
@@ -811,19 +849,26 @@ function derive(s: PlanState): PlanState {
   const base = s.presets.find((p) => p.id === s.baseId);
   const baseWeights = base?.profile.weights ?? {};
   const baseLimits = normaliseLimits(base?.profile.limits ?? {}, s.catalogue);
-  const list = changes({ weights: baseWeights, limits: baseLimits }, s.weights, s.limits, s.catalogue);
+  const baseMin = baseMinFactor(base);
+  const minFactor = s.detours ?? baseMin;
+  const list = changes({ weights: baseWeights, limits: baseLimits }, s.weights, s.limits, s.catalogue, {
+    base: baseMin,
+    plan: minFactor,
+  });
   return {
     ...s,
     base,
     baseWeights,
     baseLimits,
+    minFactor,
+    baseMinFactor: baseMin,
     changes: list,
     sentence: changeSentence(presetName(base), list),
     prefIds: prefRows(s.weights, s.catalogue?.core ?? []),
     limitIds: limitRows(baseLimits, s.limits),
     changed: !sameCost(
-      { weights: baseWeights, limits: baseLimits },
-      { weights: s.weights, limits: s.limits },
+      { weights: baseWeights, limits: baseLimits, minFactor: baseMin },
+      { weights: s.weights, limits: s.limits, minFactor },
     ),
   };
 }

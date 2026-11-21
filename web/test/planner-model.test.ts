@@ -4,14 +4,19 @@ import {
   changeSentence,
   changes,
   deltas,
+  detourHint,
+  detourTimes,
+  detourWord,
   insertIndex,
   limitInMessage,
   moveItem,
   normaliseLimits,
   parsePlan,
   parsePresets,
+  planProfile,
   probeOrder,
   sameCost,
+  snapMinFactor,
   snapWeight,
   tradeoff,
   tradeoffText,
@@ -113,6 +118,35 @@ describe("the profile against its base", () => {
     expect(weightWord(undefined, 50)).toBe("prefer");
     expect(weightWord(undefined, -20)).toBe("rather not");
     expect(weightWord({ low_label: "keep it flat" }, -80)).toBe("keep it flat");
+  });
+});
+
+describe("detours", () => {
+  const base = { weights: { unpaved: 85 }, limits: {} };
+
+  test("min_factor snaps to the engine's grid and range", () => {
+    expect(snapMinFactor(0.52)).toBe(0.5);
+    expect(snapMinFactor(0.1)).toBe(0.3);
+    expect(snapMinFactor(7)).toBe(1);
+    expect(snapMinFactor(0.35)).toBe(0.35);
+  });
+
+  test("words and hint at the ends and the default", () => {
+    expect(detourWord(1)).toBe("Direct");
+    expect(detourWord(0.3)).toBe("Go far for good ways");
+    expect(detourTimes(0.5)).toBe("2×");
+    expect(detourTimes(0.3)).toBe("3.3×");
+    expect(detourHint(0.5)).toBe("Up to 2× longer for a way you like.");
+    expect(detourHint(1)).toContain("only avoid");
+  });
+
+  test("a moved slider is a change and routes differently; the profile carries the bounds", () => {
+    const list = changes(base, base.weights, base.limits, CATALOGUE, { base: 0.5, plan: 0.3 });
+    expect(list.map((c) => c.text)).toEqual(["more detours"]);
+    expect(changes(base, base.weights, base.limits, CATALOGUE, { base: 0.5, plan: 0.5 })).toEqual([]);
+    expect(sameCost({ ...base, minFactor: 0.5 }, { ...base, minFactor: 0.3 })).toBe(false);
+    expect(planProfile(undefined, {}, {}, 0.4).bounds?.min_factor).toBe(0.4);
+    expect(planProfile(undefined, {}, {}).bounds).toBeUndefined();
   });
 });
 

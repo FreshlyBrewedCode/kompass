@@ -25,6 +25,30 @@ async function started(storage = memoryStorage()) {
   return { store, calls, storage };
 }
 
+describe("the detours slider", () => {
+  test("sends min_factor, is a change on the base, resets, and persists", async () => {
+    const { store, calls, storage } = await started();
+    store.addWaypointAt(0, 0);
+    store.addWaypointAt(0.01, 0);
+    await settle();
+    expect(calls[0]?.request.profile.bounds).toBeUndefined();
+    store.setDetours(0.3);
+    await settle();
+    const s = store.getSnapshot();
+    expect(s.minFactor).toBe(0.3);
+    expect(s.changed).toBe(true);
+    expect(s.changes.map((c) => c.kind)).toEqual(["detours"]);
+    expect(calls.filter((c) => c.lane === "route").at(-1)?.request.profile.bounds?.min_factor).toBe(0.3);
+    store.flush();
+    const again = new PlannerStore(fakeEngine(answer).engine, { storage, schedule, now: now(0) });
+    await again.init();
+    expect(again.getSnapshot().minFactor).toBe(0.3);
+    store.resetDetours();
+    expect(store.getSnapshot().minFactor).toBe(0.5);
+    expect(store.getSnapshot().changed).toBe(false);
+  });
+});
+
 describe("the planner store", () => {
   test("starts on the default preset, no route until start and destination", async () => {
     const { store, calls } = await started();

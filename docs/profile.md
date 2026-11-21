@@ -23,7 +23,11 @@ graph whenever it changes, and the search ([routing.md](routing.md)) runs on tha
   (`true` there means the catalogue default).
 - **bounds**: the clamp of the factor product, `min_factor` 0.3 … 1.0 (default 0.5) and `max_factor`
   2 … 100 (default 20). Every allowed way costs between the two times its length, plus additive
-  terms; `min_factor` is what keeps the A* bound valid whatever the sliders do.
+  terms; `min_factor` is what keeps the A* bound valid whatever the sliders do. The app exposes it as the
+  **Detours** slider ([planner.md](planner.md#detours)); 1 / `min_factor` is how much longer a ride may be
+  for a way you like. The range 0.3 is validation only (the A* bound is the smallest factor a compile
+  actually produced, valid for any positive value); on the demo region the Gravel explorer's smallest
+  factor at 0.3 is 0.40, so a lower floor would change nothing there.
 - **name**, **base**: for the UI (presets have a name; a plan names the preset it came from, and the
   diff against it is computed, not stored). Routing ignores both: two profiles that differ only there
   share one compiled cost.

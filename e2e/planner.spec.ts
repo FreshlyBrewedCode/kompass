@@ -149,6 +149,41 @@ test("two profiles, two routes: compare, the trade-off, ride it this way", async
   await expect.poll(async () => JSON.stringify((await plan(page)).main)).toBe(JSON.stringify(both.compare));
 });
 
+test("the detours slider sets min_factor, shows what it means and reroutes", async ({ page }, testInfo) => {
+  await fresh(page);
+  await tapAt(page, node(1, 1));
+  await tapAt(page, node(4, 3));
+  await expect(page.getByTestId("stat-km").first()).toHaveText(/\d/);
+  await openProfile(page);
+  const slider = page.getByTestId("detours-slider");
+  await slider.scrollIntoViewIfNeeded();
+  await expect(page.getByTestId("detours-word")).toHaveText("Detours for good ways");
+  await expect(page.getByTestId("detours-hint")).toHaveText("Up to 2× longer for a way you like.");
+  const state = () =>
+    page.evaluate(() => {
+      const s = (
+        window as unknown as { __kompass: { planner: { getSnapshot(): Record<string, unknown> } } }
+      ).__kompass.planner.getSnapshot();
+      const main = s.main as { result: { summary: { cost: number } } | null };
+      return { minFactor: s.minFactor as number, cost: main.result?.summary.cost ?? null };
+    });
+  const before = await state();
+  expect(before.minFactor).toBe(0.5);
+  await slider.focus();
+  await slider.press("End"); // all the way to "go far for good ways"
+  await expect(page.getByTestId("detours-word")).toHaveText("Go far for good ways");
+  await expect(page.getByTestId("detours-hint")).toHaveText("Up to 3.3× longer for a way you like.");
+  // the profile sent to the engine carries bounds.min_factor: the route's cost is computed with it
+  await expect.poll(async () => (await state()).minFactor).toBe(0.3);
+  await expect.poll(async () => (await state()).cost).not.toBe(before.cost);
+  await expect(page.getByTestId("change-dot").first()).toBeVisible();
+  await screenshot(page, testInfo, "planner-detours");
+  // back to the preset's value
+  await page.getByTestId("detours").getByTestId("change-dot").click();
+  await expect(page.getByTestId("detours-word")).toHaveText("Detours for good ways");
+  await expect.poll(async () => (await state()).cost).toBe(before.cost);
+});
+
 test("a slider reroutes live with the base as a ghost; a preference from the picker; reset", async ({
   page,
 }, testInfo) => {
@@ -314,5 +349,11 @@ test.describe("in a dark system theme", () => {
     await expect(page.getByTestId("stat-km").first()).toHaveText(/\d/);
     await openProfile(page);
     await screenshot(page, testInfo, "planner-profile");
+    const slider = page.getByTestId("detours-slider");
+    await slider.scrollIntoViewIfNeeded();
+    await slider.focus();
+    await slider.press("End");
+    await expect(page.getByTestId("detours-word")).toHaveText("Go far for good ways");
+    await screenshot(page, testInfo, "planner-detours");
   });
 });
