@@ -1,12 +1,12 @@
 // Builds the MapLibre style of a region, bottom to top:
 //
-//   ground      background, land cover and land use, water          (basemap.ts, Protomaps tiles)
+//   ground      background, land cover and land use                 (basemap.ts, Protomaps tiles)
 //   relief      hillshade, contour lines                            (the manifest's `terrain`, optional)
+//   water       lakes and the sea, above the relief
 //   features    rivers, buildings
 //   routes      the soft band of signed cycle routes                (ways.ts, overlay)
-//   roads       the base tiles' roads below z13                     (basemap.ts)
-//   ways        the overlay's roads, tracks and paths from z13 on   (ways.ts); between their rims and
-//               their lines: the one information layer or the explored band (info.ts)
+//   ways        the overlay's roads, tracks and paths, every zoom   (ways.ts); between their rims and
+//               their fills: the one information layer, the explored band or the cost layer
 //   top         motorways, railways, borders                        (basemap.ts)
 //   rides       the recorded tracks
 //   labels      contour heights, then the Protomaps labels
@@ -15,14 +15,14 @@
 import { language_script_pairs } from "@protomaps/basemaps";
 import type { ExpressionSpecification, LayerSpecification, StyleSpecification } from "maplibre-gl";
 import type { RidesLayerData } from "@/rides/protocol";
-import { type BaseLayers, baseLayers } from "./basemap";
+import { type BaseLayers, baseLayers, oldOverlayTracks } from "./basemap";
 import { CARTO, type Carto } from "./carto";
 import { costArrowLayers, costLayers } from "./cost";
 import { infoSpec, type MapLayers } from "./info";
 import type { Manifest } from "./manifest";
 import { CASING, EXPLORED, RIDES, SELECTED, type Theme } from "./palette";
 import { dataFileUrl } from "./region";
-import { routeLayer, WAY_UNDERLAY, wayLayers } from "./ways";
+import { routeLayer, underlayWidth, wayClasses, wayLayers } from "./ways";
 
 type Expr = ExpressionSpecification;
 
@@ -148,10 +148,13 @@ export function terrainLayers(
       layout: { ...layout, "line-join": "round" },
       paint: {
         "line-color": c.contour,
+        // faint at the overview zooms, where they would read as tracks
         "line-opacity": [
           "interpolate",
           ["linear"],
           ["zoom"],
+          11,
+          ["case", index, 0.2, 0.1],
           13,
           ["case", index, 0.42, 0.16],
           15,
@@ -197,19 +200,12 @@ export function terrainLayers(
 }
 
 /**
- * Width of the information band by zoom. From z13 on it lies *under* the ways' own lines, so it has to
- * be wider than a road to show as a coloured rim; below, where the overlay draws no ways, it is the line.
+ * An information layer's filter: only the edges the ways draw at this zoom (never a ferry: a band
+ * would draw a ring on the lake; no car-park aisle or pavement before its way shows).
  */
-export const INFO_WIDTH_STOPS: readonly (readonly [zoom: number, width: number])[] = [
-  [8, 1],
-  [11, 2.2],
-  [13, 4.6],
-  [15, 7.5],
-  [17, 14],
-  [19, 30],
-];
-const infoWidth = (scale: number): Expr =>
-  ["interpolate", ["linear"], ["zoom"], ...INFO_WIDTH_STOPS.flatMap(([z, w]) => [z, w * scale])] as Expr;
+export function infoFilter(manifest: Manifest, filter: Expr): Expr {
+  return ["all", wayClasses(manifest.overlay.attributes).shown, filter];
+}
 
 /**
  * The information layer: a coloured band under the edges an attribute's defaults pick (`info.ts`). The
@@ -225,12 +221,12 @@ export function infoLayers(manifest: Manifest, theme: Theme, layers: MapLayers):
       source: OVERLAY_SOURCE,
       "source-layer": manifest.overlay.layer,
       minzoom: spec?.minzoom ?? 0,
-      filter: (spec?.filter ?? ["literal", false]) as never,
+      filter: infoFilter(manifest, spec?.filter ?? ["literal", false]) as never,
       layout: { "line-cap": "round", "line-join": "round", visibility: visibility(spec !== null) },
       paint: {
         "line-color": spec?.color ?? CASING[theme],
-        "line-opacity": ["interpolate", ["linear"], ["zoom"], 12, 0.95, 14, 0.78],
-        "line-width": infoWidth(1),
+        "line-opacity": ["interpolate", ["linear"], ["zoom"], 12, 0.95, 14, 0.82],
+        "line-width": underlayWidth(manifest.overlay.attributes),
       },
     },
   ];
@@ -246,6 +242,9 @@ export function exploredLayer(manifest: Manifest, theme: Theme, layers: MapLayer
     type: "line",
     source: OVERLAY_SOURCE,
     "source-layer": manifest.overlay.layer,
+    // every ridden way but a ferry (a band would draw a ring on the lake); what you rode shows even
+    // where the map leaves the way out at this zoom (a driveway, a pavement)
+    filter: ["!", wayClasses(manifest.overlay.attributes).ferry],
     layout: {
       "line-cap": "round",
       "line-join": "round",
@@ -260,12 +259,12 @@ export function exploredLayer(manifest: Manifest, theme: Theme, layers: MapLayer
         ["step", ["to-number", ["feature-state", "count"], 1], 0.5, 2, 0.7, 5, 0.9],
         0,
       ],
-      "line-width": infoWidth(1.15),
+      "line-width": underlayWidth(manifest.overlay.attributes, 1.1),
     },
   };
 }
 
-const NO_BASE: BaseLayers = { ground: [], features: [], roads: [], top: [], labels: [] };
+const NO_BASE: BaseLayers = { ground: [], water: [], features: [], top: [], labels: [] };
 
 export function buildStyle(options: StyleOptions): StyleSpecification {
   const { manifest, dataUrl, theme, assetsUrl, layers } = options;
@@ -335,15 +334,18 @@ export function buildStyle(options: StyleOptions): StyleSpecification {
     layers: [
       ...base.ground,
       ...terrain.relief,
+      ...base.water,
       ...base.features,
       routeLayer(attributes, way),
-      ...base.roads,
-      // casing and halo, then the bands, then the roads' and tracks' own lines on top of them
-      ...ways.slice(0, WAY_UNDERLAY),
+      ...(manifest.basemap && manifest.overlay.drawing.length === 0
+        ? oldOverlayTracks(BASEMAP_SOURCE, c)
+        : []),
+      // halo and casing, then the bands, then the ways' own lines and fills on top of them
+      ...ways.under,
       ...infoLayers(manifest, theme, layers),
       exploredLayer(manifest, theme, layers),
       ...costLayers(manifest, theme, layers.info.kind === "cost"),
-      ...ways.slice(WAY_UNDERLAY),
+      ...ways.over,
       ...costArrowLayers(manifest, theme, layers.info.kind === "cost"),
       ...base.top,
       ...ridesLayers(theme, rides),

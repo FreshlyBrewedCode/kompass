@@ -1,15 +1,14 @@
 // The base map layers of the outdoor style, on the Protomaps tiles (schema v4): land cover and land
-// use, water, buildings, the roads *below* the zoom where the overlay takes over, motorways and
-// railways (never in the overlay) and the labels. Pure builders.
+// use, water, buildings, motorways and railways (never in the overlay) and the labels. The roads,
+// tracks and paths are the overlay's at every zoom (ways.ts). Pure builders.
 //
 // From `@protomaps/basemaps` come only the label layers and a few fills (earth, water), recoloured
-// through a flavour; land cover and roads are our own layers, because an outdoor map needs meadow,
-// farmland and built-up areas told apart and a road hierarchy that continues into the overlay's.
+// through a flavour; land cover is our own, because an outdoor map needs meadow, farmland and built-up
+// areas told apart.
 import { type Flavor, namedFlavor, layers as protomapsLayers } from "@protomaps/basemaps";
 import type { ExpressionSpecification, LayerSpecification } from "maplibre-gl";
 import type { Carto } from "./carto";
 import type { Theme } from "./palette";
-import { WAYS_MINZOOM } from "./ways";
 
 type Expr = ExpressionSpecification;
 
@@ -121,69 +120,23 @@ function landFills(source: string, c: Carto): LayerSpecification[] {
 
 const KIND = ["get", "kind"] as Expr;
 const DETAIL = ["get", "kind_detail"] as Expr;
-const byDetail = (major: unknown, secondary: unknown, other: unknown): Expr =>
-  [
-    "match",
-    DETAIL,
-    ["trunk", "trunk_link", "primary", "primary_link"],
-    major,
-    ["secondary", "secondary_link"],
-    secondary,
-    other,
-  ] as Expr;
 
 /**
- * The base tiles' roads below `WAYS_MINZOOM`, in the same colours and ending at the same widths as the
- * overlay's, which replaces them from there on. Tracks show one zoom early, as a hint of what comes.
+ * Tracks at z12 from the base tiles, for overlays built before they carried tracks below z13 (those
+ * have no `overlay.drawing` either): one plain line, the base tiles know no grade.
  */
-function lowZoomRoads(source: string, c: Carto): LayerSpecification[] {
-  const base = { type: "line", source, "source-layer": "roads", maxzoom: WAYS_MINZOOM } as const;
-  const round = { "line-cap": "round", "line-join": "round" } as const;
-  const roads: Expr = ["in", KIND, ["literal", ["major_road", "minor_road"]]];
-  const notService: Expr = ["!=", DETAIL, "service"];
-  // px at z7, 10, 12, 13; the last column is what `ways.ts` starts with
-  const width = (extra: number): Expr => [
-    "interpolate",
-    ["exponential", 1.4],
-    ["zoom"],
-    7,
-    byDetail(0.7 + extra, 0, 0),
-    10,
-    byDetail(1.4 + extra, 0.9 + extra, ["match", KIND, "major_road", 0.5 + extra, 0]),
-    12,
-    byDetail(2.2 + extra, 1.8 + extra, ["match", KIND, "major_road", 1.5 + extra, 1 + extra]),
-    13,
-    byDetail(2.8 + extra, 2.4 + extra, ["match", KIND, "major_road", 2.1 + extra, 1.8 + extra]),
-  ];
+export function oldOverlayTracks(source: string, c: Carto): LayerSpecification[] {
   return [
     {
-      ...base,
       id: "base-track",
+      type: "line",
+      source,
+      "source-layer": "roads",
       minzoom: 12,
-      filter: ["==", KIND, "path"],
-      layout: { "line-cap": "butt", "line-join": "round" },
-      paint: { "line-color": c.track, "line-opacity": 0.7, "line-width": 0.8, "line-dasharray": [4, 1.6] },
-    },
-    {
-      ...base,
-      id: "base-road-casing",
-      minzoom: 8,
-      filter: ["all", roads, notService],
-      layout: round,
-      paint: {
-        "line-color": byDetail(c.primaryCasing, c.secondaryCasing, c.roadCasing),
-        "line-width": width(1.2),
-      },
-    },
-    {
-      ...base,
-      id: "base-road",
-      filter: ["all", roads, notService],
-      layout: { ...round, "line-sort-key": byDetail(3, 2, ["match", KIND, "major_road", 1, 0]) },
-      paint: {
-        "line-color": byDetail(c.primary, c.secondary, c.road),
-        "line-width": width(0),
-      },
+      maxzoom: 13,
+      filter: ["all", ["==", KIND, "path"], ["==", DETAIL, "track"]],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": c.trackCasing, "line-opacity": 0.7, "line-width": 1.1 },
     },
   ];
 }
@@ -281,12 +234,12 @@ function withoutPeaks(layer: LayerSpecification): LayerSpecification {
 }
 
 export type BaseLayers = {
-  /** background, land, water areas: everything the relief is drawn on */
+  /** background, land cover and land use: everything the relief is drawn on */
   ground: LayerSpecification[];
+  /** lakes and the sea: above the relief (flat water is not shaded and carries no contours) */
+  water: LayerSpecification[];
   /** rivers and streams, buildings: above the relief */
   features: LayerSpecification[];
-  /** the roads below the zoom where the overlay draws them */
-  roads: LayerSpecification[];
   /** motorways and railways: above the overlay's ways */
   top: LayerSpecification[];
   labels: LayerSpecification[];
@@ -321,9 +274,9 @@ export function baseLayers(source: string, theme: Theme, c: Carto, lang: string)
     },
   ];
   return {
-    ground: [...keep(KEEP_GROUND), ...landFills(source, c), ...keep(KEEP_WATER)],
+    ground: [...keep(KEEP_GROUND), ...landFills(source, c)],
+    water: keep(KEEP_WATER),
     features,
-    roads: lowZoomRoads(source, c),
     top: [...motorwaysAndRail(source, c), ...boundaries],
     labels: [...peaks(source, c), ...all.filter((l) => labelIds.has(l.id)).map(withoutPeaks)],
   };

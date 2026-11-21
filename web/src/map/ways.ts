@@ -1,47 +1,65 @@
-// The overlay edges drawn as the map's own roads, tracks and paths: the line vocabulary of the outdoor
-// style. Pure builders (manifest → layers), no MapLibre runtime.
+// The overlay edges drawn as the map's own roads, tracks and paths: the "Bands" line system of the
+// outdoor style (docs/map.md, design round 2, variant D). Pure builders (manifest → layers), no MapLibre
+// runtime.
 //
-//   paved road ............. a cased band, white to yellow by class (the classic road)
-//   paved track ............ the same, narrow, with a brown rim: "a lane you can ride on anything"
-//   everything unpaved ..... one brown line whose dash says how firm it is:
-//                            solid = paved path, long dashes = compacted, short dashes = gravel,
-//                            dots = soft ground
-//   width ................... the kind of way: unpaved road > track > cycle path > path
-//   violet .................. cycling: a separate cycle path is a violet line, a signed cycle route a
-//                            soft violet band under whatever carries it
-//   grey .................... private or no bicycle access
-//   a lighter brown ......... neither surface nor track grade is mapped (a guess is drawn, not a fact)
+//   roads ............. cased bands in their familiar tiers: main roads lemon yellow, secondary pale
+//                       yellow, the rest white; the width is the tier
+//   what a gravel ..... a band too, and its fill darkens with roughness: white = paved (grade 1),
+//   bike rolls on       cream = compacted (grade 2), ochre = gravel (grade 3), all with a brown rim;
+//                       an unpaved road is the band of its grade at the road's width
+//   soft ground ....... no band: a dark broken line, short dashes (grade 4) or dots (grade 5)
+//   not mapped ........ a pale grey band (a track with neither surface nor grade: a fact, not a guess)
+//   paths ............. thin lines: grey when paved, dark brown dashes when not (long: firm, short:
+//                       soft), paler when nothing is mapped; violet is cycling (separate cycle paths,
+//                       and the soft band of signed cycle routes under whatever carries them)
+//   faint ............. private or no bicycle access; in a tunnel
+//   ferry ............. a blue dashed line, never a band
 //
-// The classes come from the manifest's enum labels, so the codes of a build are never assumed.
+// Every look is one row of `LOOKS`; the layers and the key (`mapKey`) are both generated from it, so
+// they cannot drift apart. The classes come from the manifest's enum labels, never from codes; the
+// drawing properties (`bridge`, `tunnel`, `layer`, `service_kind`) may be missing (older overlays).
 import type { ExpressionSpecification, LayerSpecification } from "maplibre-gl";
 import type { Carto } from "./carto";
 import type { OverlayAttribute } from "./manifest";
 
 type Expr = ExpressionSpecification;
 
-/** From this zoom on the overlay carries every edge, and draws the roads instead of the base map. */
-export const WAYS_MINZOOM = 13;
 export const ROUTES_MINZOOM = 9;
 /** Paved paths along a road (`road_near_share` from `SIDEPATH_SHARE` percent on) appear from here. */
 export const SIDEPATH_MINZOOM = 15;
 export const SIDEPATH_SHARE = 60;
+/** Driveways and car-park aisles (`service_kind`) appear from these zooms, thinner than service roads. */
+export const DRIVEWAY_MINZOOM = 14;
+export const PARKING_AISLE_MINZOOM = 15;
+/** Tracks and paths are drawn at `TRACK_FADE` opacity up to `FADE_FROM`, fully from `FADE_TO`. */
+export const TRACK_FADE = 0.5;
+const FADE_FROM = 11;
+const FADE_TO = 12.5;
+/** Bridges get their rails from here (below, a bridge is just its way). */
+export const BRIDGE_MINZOOM = 13;
 
 export const WAY_ROUTE = "way-route";
-export const WAY_CASING = "way-casing";
 export const WAY_HALO = "way-halo";
+export const WAY_CASING = "way-casing";
 export const WAY_SELECTED = "way-selected";
-export const WAY_ROAD = "way-road";
 export const WAY_SOLID = "way-solid";
-export const WAY_FIRM = "way-firm";
-export const WAY_LOOSE = "way-loose";
-export const WAY_SOFT = "way-soft";
-/** How many of `wayLayers` are rims (casing, halo, selection): the bands of `style.ts` go right above them. */
-export const WAY_UNDERLAY = 3;
+export const WAY_LONG = "way-dash-long";
+export const WAY_SHORT = "way-dash-short";
+export const WAY_DOTS = "way-dots";
+export const WAY_BAND = "way-band";
+export const WAY_BRIDGE = "way-bridge";
+export const WAY_FERRY = "way-ferry";
 /** Every edge is in exactly one of these: what a tap can hit. */
-export const WAY_PICK_LAYERS = [WAY_CASING, WAY_HALO] as const;
+export const WAY_PICK_LAYERS = [WAY_CASING, WAY_HALO, WAY_FERRY] as const;
 
-/** Dash and gap in line widths, per firmness (`null`: a solid line). */
-export const DASHES = { firm: [5.5, 1.6], loose: [2.6, 1.7], soft: [0.9, 1.5] } as const;
+/** Dash and gap in line widths, per pattern; one layer each (a constant dash keeps the plain line shader). */
+export const DASHES = {
+  long: [3.2, 1.7],
+  short: [2.2, 1.6],
+  dots: [0.9, 1.5],
+  ferry: [3, 2.5],
+} as const;
+type Pattern = "solid" | keyof typeof DASHES;
 
 const normalise = (label: string) =>
   label
@@ -70,167 +88,323 @@ function match(key: string, arms: readonly (readonly [number[], unknown])[], fal
   if (used.length === 0) return (Array.isArray(fallback) ? fallback : ["literal", fallback]) as Expr;
   return ["match", ["get", key], ...used.flat(), fallback] as unknown as Expr;
 }
+const pick = (by: Expr, arms: readonly (readonly [number | number[], unknown])[], fallback: unknown) =>
+  ["match", by, ...arms.flat(), fallback] as unknown as Expr;
+const all = (...parts: Expr[]): Expr => ["all", ...parts] as Expr;
+const any = (...parts: Expr[]): Expr => ["any", ...parts] as Expr;
+const not = (e: Expr): Expr => ["!", e];
+const oneOf = (e: Expr, values: readonly number[]): Expr => ["in", e, ["literal", [...values]]] as Expr;
 
-const HIGHWAY = {
-  major: ["trunk", "trunk_link", "primary", "primary_link"],
-  secondary: ["secondary", "secondary_link"],
-  tertiary: ["tertiary", "tertiary_link"],
-  minor: ["unclassified", "residential", "living_street", "road"],
-  service: ["service"],
-  track: ["track"],
-  cycleway: ["cycleway"],
-  /** assumed soft when nothing is mapped; footways and the rest are assumed paved */
-  path: ["path", "bridleway"],
+/**
+ * The tier of a way, the width channel: 8 main road (trunk, primary) · 7 secondary · 6 tertiary ·
+ * 5 minor road · 4 street · 3 service · 2 track · 1 cycle path · 0 path, footway and the rest;
+ * 9: a driveway or car-park aisle (a service road drawn thinner).
+ */
+export const TIER = {
+  major: 8,
+  secondary: 7,
+  tertiary: 6,
+  minor: 5,
+  street: 4,
+  service: 3,
+  track: 2,
+  cycle: 1,
+  path: 0,
+  aisle: 9,
 } as const;
 
-/** The expressions every way layer is built from. */
+const HIGHWAY: Record<number, string[]> = {
+  8: ["trunk", "trunk_link", "primary", "primary_link"],
+  7: ["secondary", "secondary_link"],
+  6: ["tertiary", "tertiary_link"],
+  5: ["unclassified", "road"],
+  4: ["residential", "living_street", "pedestrian"],
+  3: ["service"],
+  2: ["track"],
+  1: ["cycleway"],
+};
+
+/** What an edge looks like: one row of `LOOKS` each. */
+export const LOOK = {
+  major: 1,
+  secondary: 2,
+  tertiary: 3,
+  road: 4,
+  /** grade 1: a paved track */
+  lane: 5,
+  compacted: 6,
+  gravel: 7,
+  unknown: 8,
+  /** grade 4: short dashes */
+  rough: 9,
+  /** grade 5: dots */
+  soft: 10,
+  cycle: 11,
+  pathPaved: 12,
+  /** an unpaved path, firm (grade 2, 3): long dashes */
+  path: 13,
+  /** an unpaved path, soft (grade 4, 5): short dashes */
+  pathSoft: 14,
+  pathUnknown: 15,
+  ferry: 16,
+} as const;
+export type LookId = keyof typeof LOOK;
+
+/** The expressions every way layer is built from (overlay properties; codes looked up by label). */
 export function wayClasses(attributes: readonly OverlayAttribute[]) {
   const codes = enumCodes(attributes);
-  const hw = (...groups: (keyof typeof HIGHWAY)[]) => codes("highway", ...groups.flatMap((g) => HIGHWAY[g]));
+  const hw = (...labels: string[]) => codes("highway", ...labels);
+  const sc = (...labels: string[]) => codes("surface_class", ...labels);
+  const tt = (...labels: string[]) => codes("tracktype", ...labels);
+  const separate = match("cycleway_kind", [[codes("cycleway_kind", "separate_path"), true]], false);
+  const serviceKind: Expr = ["to-number", ["get", "service_kind"], 0];
+  const minorService = all(match("highway", [[hw("service"), true]], false), oneOf(serviceKind, [1, 2]));
 
-  /** 7 major … 2 track; 0 for paths and everything else */
-  const rank = match(
-    "highway",
-    [
-      [hw("major"), 7],
-      [hw("secondary"), 6],
-      [hw("tertiary"), 5],
-      [hw("minor"), 4],
-      [hw("service"), 3],
-      [hw("track"), 2],
-    ],
-    0,
-  );
+  /** see `TIER` (without the aisles: they are service roads) */
+  const tier: Expr = [
+    "case",
+    // a path signed as a separate cycle path is one
+    all(separate, match("highway", [[hw("path", "footway", "bridleway"), true]], false)),
+    TIER.cycle,
+    match(
+      "highway",
+      Object.entries(HIGHWAY).map(([t, labels]) => [hw(...labels), Number(t)] as const),
+      TIER.path,
+    ),
+  ];
+  /** the tier for the widths: `tier`, the driveways and aisles thinner */
+  const width: Expr = ["case", minorService, TIER.aisle, tier];
 
-  const surface = (...labels: string[]) => codes("surface_class", ...labels);
-  const grade = (...labels: string[]) => codes("tracktype", ...labels);
-  /** 0 paved, 1 compacted, 2 gravel, 3 soft: from the surface, else the track grade, else the kind of way */
-  const firmness = match(
+  /**
+   * The grade 1 to 5 (0: nothing mapped): 1 paved, 2 compacted, 3 gravel, 4 mostly soft, 5 soft. The
+   * track grade where it is mapped (a paved surface always makes it 1), else read off the surface;
+   * roads, cycle paths and footways with nothing mapped count as paved, tracks and paths as unknown.
+   */
+  const grade: Expr = match(
     "surface_class",
-    [
-      [surface("paved_smooth", "paved_rough"), 0],
-      [surface("compacted"), 1],
-      [surface("gravel", "other"), 2],
-      [surface("soft"), 3],
-    ],
+    [[sc("paved_smooth", "paved_rough"), 1]],
     match(
       "tracktype",
       [
-        [grade("grade1"), 0],
-        [grade("grade2"), 1],
-        [grade("grade3"), 2],
-        [grade("grade4", "grade5"), 3],
+        [tt("grade1"), match("surface_class", [[sc("compacted", "gravel", "soft", "other"), 2]], 1)],
+        [tt("grade2"), 2],
+        [tt("grade3"), 3],
+        [tt("grade4"), 4],
+        [tt("grade5"), 5],
       ],
       match(
-        "highway",
+        "surface_class",
         [
-          [hw("track"), 2],
-          [hw("path"), 3],
+          [sc("compacted"), 2],
+          [sc("gravel", "other"), 3],
+          [sc("soft"), 4],
         ],
-        0,
+        match("highway", [[hw("track", "path", "bridleway"), 0]], 1),
       ),
     ),
   );
-  const known = (key: string, unknown: string) => {
-    const all = attributes.find((a) => a.key === key);
-    const values = all?.kind === "enum" ? all.values.map((v) => v.value) : [];
-    const unknownCodes = new Set(codes(key, unknown));
-    return match(key, [[values.filter((v) => !unknownCodes.has(v)), true]], false);
-  };
-  /** a track or path with neither surface nor grade: the dash is a guess */
-  const guessed: Expr = [
-    "all",
-    ["!", known("surface_class", "unknown")],
-    ["!", known("tracktype", "unknown")],
-    match("highway", [[hw("track", "path"), true]], false),
-  ];
-
-  /** drawn as a cased road: the big roads always, the small ones and tracks when paved */
-  const road: Expr = [
-    "any",
-    match("highway", [[hw("major", "secondary"), true]], false),
-    [
-      "all",
-      match("highway", [[hw("tertiary", "minor", "service", "track"), true]], false),
-      ["==", firmness, 0],
-    ],
-  ];
-  const cycle: Expr = [
-    "any",
-    match("highway", [[hw("cycleway"), true]], false),
-    match("cycleway_kind", [[codes("cycleway_kind", "separate_path"), true]], false),
-  ];
-  /** line width class of the unpaved ways: 3 unpaved road, 2 track, 1 cycle path, 0 path */
-  const kind: Expr = [
+  const ferry = match("highway", [[hw("ferry"), true]], false);
+  const byGrade = (paved: number, unknown: number): Expr =>
+    pick(
+      grade,
+      [
+        [1, paved],
+        [2, LOOK.compacted],
+        [3, LOOK.gravel],
+        [4, LOOK.rough],
+        [5, LOOK.soft],
+      ],
+      unknown,
+    );
+  /** see `LOOK` */
+  const look: Expr = [
     "case",
-    match("highway", [[hw("tertiary", "minor", "service"), true]], false),
-    3,
-    match("highway", [[hw("track"), true]], false),
-    2,
-    cycle,
-    1,
-    0,
-  ];
-  /**
-   * A paved path or cycle path that runs along a road (pavements, roadside cycle tracks): part of the
-   * road at planning zooms, a line of its own only from `SIDEPATH_MINZOOM` on. A town is full of them.
-   */
-  const sidepath: Expr = [
-    "all",
-    ["<", kind, 2],
-    ["==", firmness, 0],
-    [">=", ["to-number", ["get", "road_near_share"], 0], SIDEPATH_SHARE],
+    ferry,
+    LOOK.ferry,
+    ["==", tier, TIER.major],
+    LOOK.major,
+    ["==", tier, TIER.secondary],
+    LOOK.secondary,
+    ["==", tier, TIER.tertiary],
+    byGrade(LOOK.tertiary, LOOK.tertiary),
+    [">=", tier, TIER.service],
+    byGrade(LOOK.road, LOOK.road),
+    ["==", tier, TIER.track],
+    byGrade(LOOK.lane, LOOK.unknown),
+    ["==", tier, TIER.cycle],
+    LOOK.cycle,
+    pick(
+      grade,
+      [
+        [1, LOOK.pathPaved],
+        [[2, 3], LOOK.path],
+        [[4, 5], LOOK.pathSoft],
+      ],
+      LOOK.pathUnknown,
+    ),
   ];
   const restricted = match("bike_access", [[codes("bike_access", "private", "no"), true]], false);
+  const bridge: Expr = ["==", ["get", "bridge"], 1];
+  const tunnel: Expr = ["==", ["get", "tunnel"], 1];
+  /** the crossing level: OSM `layer`, a bridge at least 1, a tunnel at most −1 */
+  const level: Expr = [
+    "case",
+    bridge,
+    ["max", 1, ["to-number", ["get", "layer"], 0]],
+    tunnel,
+    ["min", -1, ["to-number", ["get", "layer"], 0]],
+    ["to-number", ["get", "layer"], 0],
+  ];
+  /** draw order of the bands: by crossing level, then tier (a road over the track it meets) */
+  const sort: Expr = ["+", ["*", level, 16], ["case", ["==", tier, TIER.track], 2.5, tier]];
+  /** a paved path along a road (pavements, roadside cycle tracks): a line of its own only close up */
+  const sidepath = all(
+    ["<=", tier, TIER.cycle],
+    ["==", grade, 1],
+    [">=", ["to-number", ["get", "road_near_share"], 0], SIDEPATH_SHARE],
+  );
+  /** what the way layers draw (the ferries have a layer of their own) */
+  const shown = all(
+    not(ferry),
+    any([">=", ["zoom"], SIDEPATH_MINZOOM], not(sidepath)),
+    any([">=", ["zoom"], DRIVEWAY_MINZOOM], ["!=", serviceKind, 2]),
+    any([">=", ["zoom"], PARKING_AISLE_MINZOOM], ["!=", serviceKind, 1]),
+  );
   const routeLevels = {
     local: codes("route_level", "lcn"),
     regional: codes("route_level", "rcn"),
     national: codes("route_level", "ncn", "icn"),
   };
-  return { rank, firmness, guessed, road, cycle, kind, sidepath, restricted, routeLevels };
+  return { tier, width, grade, look, restricted, bridge, tunnel, sort, sidepath, ferry, shown, routeLevels };
+}
+export type WayClasses = ReturnType<typeof wayClasses>;
+
+// ---- widths ----------------------------------------------------------------------------------------
+
+/** The zooms of the width tables. */
+export const ZOOMS = [8, 10, 12, 13, 14, 15, 16, 18] as const;
+type W = readonly [number, number, number, number, number, number, number, number];
+
+/** Fill width of a band (px), by `TIER`. A track band is as wide as a street from z14 on. */
+export const BAND_WIDTHS: Record<number, W> = {
+  8: [1.4, 2.2, 3.6, 4.6, 6.2, 8.4, 11.5, 22],
+  7: [0.9, 1.7, 3.1, 4.0, 5.4, 7.4, 10.2, 19],
+  6: [0.5, 1.1, 2.4, 3.3, 4.6, 6.4, 8.8, 17],
+  5: [0.4, 0.7, 1.7, 2.6, 3.7, 5.2, 7.4, 14],
+  4: [0.3, 0.6, 1.4, 2.2, 3.2, 4.6, 6.6, 13],
+  3: [0.3, 0.4, 0.8, 1.3, 2.0, 2.8, 4.2, 8.5],
+  2: [0.3, 0.45, 1.25, 2.2, 3.0, 3.9, 5.2, 9],
+  9: [0.2, 0.3, 0.5, 0.8, 1.3, 1.9, 2.8, 6],
+};
+/** What a band's casing adds (both sides together); the tracks' rim is finer: the fill carries the colour. */
+export const CASING_WIDTHS: Record<number, W> = {
+  8: [0.8, 1.0, 1.4, 1.6, 1.8, 2.0, 2.3, 3],
+  2: [0, 0, 0.6, 1.0, 1.2, 1.4, 1.6, 2.2],
+};
+const CASING_DEFAULT = 8;
+/** Width of a single line (px), by `TIER`: soft roads and tracks, cycle paths, paths. */
+export const LINE_WIDTHS: Record<number, W> = {
+  8: [0.8, 1.1, 1.8, 2.2, 2.7, 3.3, 4.0, 6],
+  2: [0.5, 0.8, 1.4, 1.9, 2.3, 2.7, 3.2, 4.6],
+  1: [0.4, 0.7, 1.2, 1.5, 1.8, 2.2, 2.7, 4],
+  0: [0.3, 0.5, 0.9, 1.1, 1.35, 1.6, 2.0, 3],
+};
+const lineClass = (tier: number) => (tier >= TIER.service && tier !== TIER.aisle ? 8 : tier === 9 ? 0 : tier);
+/** What the light rim under a single line adds. */
+export const HALO_WIDTHS: W = [0.6, 0.8, 1.2, 1.6, 1.9, 2.2, 2.6, 3.4];
+
+const TIERS = [8, 7, 6, 5, 4, 3, 2, 1, 0, 9] as const;
+const bandAt = (tier: number, i: number) => (BAND_WIDTHS[tier] ?? (BAND_WIDTHS[2] as W))[i] as number;
+const casingAt = (tier: number, i: number) =>
+  ((CASING_WIDTHS[tier === TIER.track ? 2 : CASING_DEFAULT] as W)[i] as number) *
+  (tier === TIER.aisle ? 0.7 : 1);
+const lineAt = (tier: number, i: number) => (LINE_WIDTHS[lineClass(tier)] as W)[i] as number;
+const round2 = (v: number) => Math.round(v * 100) / 100;
+
+/** `interpolate` over the zoom; `at(i)` gives the width at `ZOOMS[i]` (a number or a data expression). */
+function zoomed(at: (i: number) => unknown): Expr {
+  return ["interpolate", ["exponential", 1.4], ["zoom"], ...ZOOMS.flatMap((z, i) => [z, at(i)])] as Expr;
+}
+/** A `match` on the width tier with one number per tier. */
+function byTier(by: Expr, value: (tier: number) => number): Expr {
+  return pick(
+    by,
+    TIERS.map((t) => [t, round2(value(t))] as const),
+    round2(value(TIER.path)),
+  );
 }
 
-const ZOOMS = [13, 15, 17, 19] as const;
-type Widths = readonly [number, number, number, number];
-
-/** Road widths in px at z13, 15, 17, 19, by rank. */
-export const ROAD_WIDTHS: Record<number, Widths> = {
-  7: [2.8, 5.2, 11, 24],
-  6: [2.4, 4.6, 10, 22],
-  5: [2.1, 4.0, 9, 20],
-  4: [1.8, 3.4, 7.5, 17],
-  3: [1.0, 1.8, 4.5, 10],
-  2: [1.3, 2.1, 4.2, 9],
-};
-/** Line widths of the unpaved ways, by kind (3 road, 2 track, 1 cycle path, 0 path). */
-export const LINE_WIDTHS: Record<number, Widths> = {
-  3: [1.5, 2.1, 3.2, 5],
-  2: [1.15, 1.8, 2.8, 4.4],
-  1: [1.1, 1.65, 2.5, 4],
-  0: [0.75, 1.15, 1.9, 3],
-};
-
-/** `interpolate` over the zoom with a per-class width at every stop, plus `extra` px (a casing). */
-function widths(table: Record<number, Widths>, by: Expr, fallback: number, extra: Widths = [0, 0, 0, 0]) {
-  const stops: unknown[] = [];
-  for (const [i, zoom] of ZOOMS.entries()) {
-    const arms = Object.entries(table).flatMap(([cls, w]) => [
-      Number(cls),
-      (w[i] as number) + (extra[i] as number),
-    ]);
-    const other = (table[fallback]?.[i] as number) + (extra[i] as number);
-    stops.push(zoom, ["match", by, ...arms, other]);
+/** The same interpolation in TypeScript (for the key): the width at `zoom` from per-stop values. */
+export function widthAt(zoom: number, at: (i: number) => number): number {
+  const base = 1.4;
+  if (zoom <= ZOOMS[0]) return at(0);
+  for (let i = 1; i < ZOOMS.length; i++) {
+    const z1 = ZOOMS[i] as number;
+    if (zoom > z1) continue;
+    const z0 = ZOOMS[i - 1] as number;
+    const t = (base ** (zoom - z0) - 1) / (base ** (z1 - z0) - 1);
+    return at(i - 1) + (at(i) - at(i - 1)) * t;
   }
-  return ["interpolate", ["exponential", 1.4], ["zoom"], ...stops] as Expr;
+  return at(ZOOMS.length - 1);
 }
+
+/** The widths of an edge's drawing, per stop: fill (band) or line, and its outer edge (casing or halo). */
+export const WIDTHS = {
+  band: (tier: number, i: number) => bandAt(tier, i),
+  casing: (tier: number, i: number) => bandAt(tier, i) + casingAt(tier, i),
+  line: (tier: number, i: number) => lineAt(tier, i),
+  halo: (tier: number, i: number) => lineAt(tier, i) + (HALO_WIDTHS[i] as number),
+};
+
+// ---- looks -----------------------------------------------------------------------------------------
+
+type Shape = "band" | "line";
+export type Look = {
+  shape: Shape | "ferry";
+  fill: string;
+  /** a band's casing */
+  casing?: string;
+  /** a line's dash pattern */
+  pattern?: Pattern;
+};
+
+/** Every look, with the colours of a theme (`carto.ts`). */
+export function looks(c: Carto): Record<LookId, Look> {
+  const band = (fill: string, casing: string): Look => ({ shape: "band", fill, casing });
+  const line = (fill: string, pattern: Pattern): Look => ({ shape: "line", fill, pattern });
+  return {
+    major: band(c.major, c.majorCasing),
+    secondary: band(c.secondary, c.secondaryCasing),
+    tertiary: band(c.tertiary, c.tertiaryCasing),
+    road: band(c.road, c.roadCasing),
+    lane: band(c.lane, c.trackCasing),
+    compacted: band(c.compacted, c.trackCasing),
+    gravel: band(c.gravel, c.trackCasing),
+    unknown: band(c.unknown, c.unknownCasing),
+    rough: line(c.soft, "short"),
+    soft: line(c.soft, "dots"),
+    cycle: line(c.cycle, "solid"),
+    pathPaved: line(c.pathPaved, "solid"),
+    path: line(c.path, "long"),
+    pathSoft: line(c.path, "short"),
+    pathUnknown: line(c.pathUnknown, "long"),
+    ferry: { shape: "ferry", fill: c.ferry, pattern: "ferry" },
+  };
+}
+const ids = (table: Record<LookId, Look>, test: (l: Look) => boolean) =>
+  (Object.keys(table) as LookId[]).filter((id) => test(table[id])).map((id) => LOOK[id]);
 
 export type WayOptions = { source: string; sourceLayer: string; colors: Carto; routes: boolean };
 
-/** The route halo: goes under the base map's roads (it shows from the overview zooms on). */
+/** Widths of the soft band of signed cycle routes (px at z9, 13, 17; local, regional, national). */
+export const ROUTE_WIDTHS = { 9: [1, 1.4, 2], 13: [6, 7.5, 9], 17: [14, 17, 20] } as const;
+export const ROUTE_OPACITY = { 9: 0.3, 13: 0.24, 17: 0.18 } as const;
+
+/** The band of signed cycle routes: under the ways (it shows from the overview zooms on). */
 export function routeLayer(attributes: readonly OverlayAttribute[], o: WayOptions): LayerSpecification {
-  const { routeLevels: r } = wayClasses(attributes);
-  const any = [...r.local, ...r.regional, ...r.national];
-  const width = (local: number, regional: number, national: number) =>
+  const { routeLevels: r, ferry } = wayClasses(attributes);
+  const anyLevel = [...r.local, ...r.regional, ...r.national];
+  const width = ([local, regional, national]: readonly number[]) =>
     match(
       "route_level",
       [
@@ -245,126 +419,381 @@ export function routeLayer(attributes: readonly OverlayAttribute[], o: WayOption
     source: o.source,
     "source-layer": o.sourceLayer,
     minzoom: ROUTES_MINZOOM,
-    filter: match("route_level", [[any, true]], false) as never,
+    filter: all(match("route_level", [[anyLevel, true]], false), not(ferry)) as never,
     layout: { "line-cap": "round", "line-join": "round", visibility: o.routes ? "visible" : "none" },
     paint: {
       "line-color": o.colors.cycleRoute,
-      "line-opacity": ["interpolate", ["linear"], ["zoom"], 9, 0.3, 13, 0.24, 17, 0.18],
+      "line-opacity": [
+        "interpolate",
+        ["linear"],
+        ["zoom"],
+        ...Object.entries(ROUTE_OPACITY).flatMap(([z, v]) => [Number(z), v]),
+      ] as never,
       "line-width": [
         "interpolate",
         ["exponential", 1.4],
         ["zoom"],
-        9,
-        width(1, 1.4, 2),
-        13,
-        width(5, 6.5, 8),
-        17,
-        width(13, 16, 19),
+        ...Object.entries(ROUTE_WIDTHS).flatMap(([z, w]) => [Number(z), width(w)]),
       ] as Expr,
       "line-blur": 0.8,
     },
   };
 }
 
-/** The roads, tracks and paths, bottom to top. */
-export function wayLayers(attributes: readonly OverlayAttribute[], o: WayOptions): LayerSpecification[] {
-  const c = o.colors;
+/**
+ * Width of what lies under the ways (the information band, the explored band, the cost layer): wider
+ * than the way's casing or halo by `extra` px, so it shows as a coloured rim around the way's fill.
+ */
+export function underlayWidth(
+  attributes: readonly OverlayAttribute[],
+  scale = 1,
+  /** a factor per feature (e.g. by feature state) */
+  factor?: Expr,
+): Expr {
   const k = wayClasses(attributes);
-  const base = {
-    type: "line",
-    source: o.source,
-    "source-layer": o.sourceLayer,
-    minzoom: WAYS_MINZOOM,
-  } as const;
-  const round = { "line-cap": "round", "line-join": "round" } as const;
-  const line: Expr = ["all", ["!", k.road], ["any", [">=", ["zoom"], SIDEPATH_MINZOOM], ["!", k.sidepath]]];
+  const bandLooks = ids(looks(PLAIN), (l) => l.shape === "band");
+  return zoomed((i) => {
+    const e = UNDERLAY_EXTRA[i] as number;
+    const w: Expr = [
+      "case",
+      oneOf(k.look, bandLooks),
+      byTier(k.width, (t) => (WIDTHS.casing(t, i) + e) * scale),
+      byTier(k.width, (t) => (WIDTHS.halo(t, i) + e) * scale),
+    ];
+    return factor === undefined ? w : ["*", w, factor];
+  });
+}
+/** How much wider than a way's casing or halo the bands under it are (px, at `ZOOMS`). */
+export const UNDERLAY_EXTRA: W = [1.2, 1.6, 2.2, 2.6, 3, 3.4, 4, 6];
+/** Colours do not matter where only the shapes are asked for. */
+const PLAIN = new Proxy({} as Carto, { get: () => "#000000" });
 
-  const lineColor: Expr = [
-    "case",
-    k.restricted,
-    c.restricted,
-    k.cycle,
-    c.cycle,
-    k.guessed,
-    c.trackUnknown,
-    ["all", ["==", k.kind, 0], ["==", k.firmness, 0]],
-    c.pathPaved,
-    ["==", k.kind, 0],
-    c.path,
-    c.track,
-  ];
-  const lineWidth = widths(LINE_WIDTHS, k.kind, 0);
-  const dashed = (id: string, firmness: number, dash: readonly number[] | null): LayerSpecification => ({
+/** The roads, tracks and paths: `under` goes below the information bands, `over` above them. */
+export function wayLayers(
+  attributes: readonly OverlayAttribute[],
+  o: WayOptions,
+): { under: LayerSpecification[]; over: LayerSpecification[] } {
+  const k = wayClasses(attributes);
+  const table = looks(o.colors);
+  const entries = Object.entries(table) as [LookId, Look][];
+  const base = { type: "line", source: o.source, "source-layer": o.sourceLayer } as const;
+  const round = { "line-cap": "round", "line-join": "round" } as const;
+  const colour = (part: "fill" | "casing") =>
+    pick(
+      k.look,
+      entries.flatMap(([id, l]) => (l[part] ? [[LOOK[id], l[part]] as const] : [])),
+      o.colors.road,
+    );
+  const bands = all(
+    k.shown,
+    oneOf(
+      k.look,
+      ids(table, (l) => l.shape === "band"),
+    ),
+  );
+  const lines = all(
+    k.shown,
+    oneOf(
+      k.look,
+      ids(table, (l) => l.shape === "line"),
+    ),
+  );
+  /**
+   * Restricted ways and tunnels are drawn fainter; tracks and paths fade in over the overview zooms,
+   * so the roads stay the skeleton there.
+   */
+  const opacity = (full: number): Expr => {
+    const at = (fade: number): Expr => [
+      "*",
+      full,
+      ["case", k.restricted, 0.45, 1],
+      ["case", k.tunnel, 0.4, 1],
+      ["case", ["<=", k.tier, TIER.track], fade, 1],
+    ];
+    return ["interpolate", ["linear"], ["zoom"], FADE_FROM, at(TRACK_FADE), FADE_TO, at(1)];
+  };
+  const bandWidth = zoomed((i) => byTier(k.width, (t) => WIDTHS.band(t, i)));
+  const casingWidth = zoomed((i) => byTier(k.width, (t) => WIDTHS.casing(t, i)));
+  const lineWidth = zoomed((i) => byTier(k.width, (t) => WIDTHS.line(t, i)));
+  const haloWidth = zoomed((i) => byTier(k.width, (t) => WIDTHS.halo(t, i)));
+
+  const patterned = (id: string, pattern: Pattern): LayerSpecification => ({
     ...base,
     id,
-    filter: ["all", line, ["==", k.firmness, firmness]] as never,
-    // a dash keeps its length with butt caps; the solid line joins its neighbours with round ones
-    layout: dash ? { "line-cap": "butt", "line-join": "round" } : round,
+    filter: all(
+      lines,
+      oneOf(
+        k.look,
+        ids(table, (l) => l.shape === "line" && l.pattern === pattern),
+      ),
+    ) as never,
+    // a dash keeps its length with butt caps; a solid line joins its neighbours with round ones
+    layout: pattern === "solid" ? round : { "line-cap": "butt", "line-join": "round" },
     paint: {
-      "line-color": lineColor,
+      "line-color": colour("fill"),
       "line-width": lineWidth,
-      "line-opacity": ["case", k.restricted, 0.75, 1] as Expr,
-      ...(dash ? { "line-dasharray": [...dash] } : {}),
+      "line-opacity": opacity(1),
+      ...(pattern === "solid" ? {} : { "line-dasharray": [...DASHES[pattern]] }),
     },
   });
 
-  return [
-    {
-      ...base,
-      id: WAY_CASING,
-      filter: k.road as never,
-      layout: round,
-      paint: {
-        "line-color": [
-          "match",
-          k.rank,
-          7,
-          c.primaryCasing,
-          6,
-          c.secondaryCasing,
-          2,
-          c.laneCasing,
-          c.roadCasing,
-        ] as Expr,
-        "line-width": widths(ROAD_WIDTHS, k.rank, 4, [1.3, 1.6, 2, 2.4]),
-      },
-    },
+  const under: LayerSpecification[] = [
     {
       ...base,
       id: WAY_HALO,
-      filter: line as never,
+      filter: lines as never,
       layout: round,
       paint: {
-        "line-color": c.wayHalo,
-        "line-opacity": ["case", k.restricted, 0.35, 0.7] as Expr,
-        "line-width": widths(LINE_WIDTHS, k.kind, 0, [2, 2.4, 3, 3.6]),
-        "line-blur": 0.6,
+        "line-color": o.colors.wayHalo,
+        "line-opacity": opacity(0.85),
+        "line-width": haloWidth,
+        "line-blur": 0.4,
       },
     },
     {
-      // the edge the inspect panel shows: a halo under the line (its style stays readable), by feature-state
+      ...base,
+      id: WAY_CASING,
+      filter: bands as never,
+      layout: { ...round, "line-sort-key": k.sort as never },
+      paint: { "line-color": colour("casing"), "line-width": casingWidth, "line-opacity": opacity(1) },
+    },
+    {
+      // the edge the inspect panel shows: a halo under the way (its style stays readable), by feature-state
       ...base,
       id: WAY_SELECTED,
       layout: round,
       paint: {
-        "line-color": c.label,
+        "line-color": o.colors.label,
         "line-opacity": ["case", ["boolean", ["feature-state", "selected"], false], 0.9, 0],
-        "line-width": ["interpolate", ["linear"], ["zoom"], 13, 7, 16, 12, 19, 30],
+        "line-width": ["interpolate", ["linear"], ["zoom"], 12, 6, 16, 14, 19, 32],
+      },
+    },
+  ];
+  const over: LayerSpecification[] = [
+    patterned(WAY_SOLID, "solid"),
+    patterned(WAY_LONG, "long"),
+    patterned(WAY_SHORT, "short"),
+    patterned(WAY_DOTS, "dots"),
+    {
+      ...base,
+      id: WAY_BAND,
+      filter: bands as never,
+      layout: { ...round, "line-sort-key": k.sort as never },
+      paint: { "line-color": colour("fill"), "line-width": bandWidth, "line-opacity": opacity(1) },
+    },
+    {
+      // a bridge: two rails just outside the way, above whatever passes underneath
+      ...base,
+      id: WAY_BRIDGE,
+      minzoom: BRIDGE_MINZOOM,
+      filter: all(k.shown, k.bridge) as never,
+      layout: { "line-cap": "butt", "line-join": "round" },
+      paint: {
+        "line-color": o.colors.bridge,
+        "line-opacity": ["case", k.restricted, 0.5, 0.9],
+        "line-width": ["interpolate", ["linear"], ["zoom"], 13, 0.8, 16, 1.4, 18, 2],
+        "line-gap-width": zoomed((i) => [
+          "case",
+          oneOf(
+            k.look,
+            ids(table, (l) => l.shape === "band"),
+          ),
+          byTier(k.width, (t) => WIDTHS.casing(t, i) + 0.6),
+          byTier(k.width, (t) => WIDTHS.halo(t, i) + 0.6),
+        ]),
       },
     },
     {
       ...base,
-      id: WAY_ROAD,
-      filter: k.road as never,
-      layout: { ...round, "line-sort-key": k.rank as never },
+      id: WAY_FERRY,
+      filter: k.ferry as never,
+      layout: { "line-cap": "butt", "line-join": "round" },
       paint: {
-        "line-color": ["match", k.rank, 7, c.primary, 6, c.secondary, 2, c.lane, c.road] as Expr,
-        "line-width": widths(ROAD_WIDTHS, k.rank, 4),
+        "line-color": table.ferry.fill,
+        "line-opacity": 0.85,
+        "line-width": ["interpolate", ["linear"], ["zoom"], 8, 0.8, 13, 1.4, 17, 2.4],
+        "line-dasharray": [...DASHES.ferry],
       },
     },
-    dashed(WAY_SOLID, 0, null),
-    dashed(WAY_FIRM, 1, DASHES.firm),
-    dashed(WAY_LOOSE, 2, DASHES.loose),
-    dashed(WAY_SOFT, 3, DASHES.soft),
   ];
+  return { under, over };
+}
+
+// ---- the key ---------------------------------------------------------------------------------------
+
+/** One stroke of a key's sample line, bottom to top. */
+export type KeyStroke = {
+  color: string;
+  width: number;
+  opacity: number;
+  /** dash and gap in px; none: solid */
+  dash?: [number, number];
+  cap: "round" | "butt";
+  blur?: boolean;
+};
+export type KeyRow = {
+  group: "Roads" | "Tracks" | "Paths" | "Also";
+  label: string;
+  note?: string;
+  look: LookId;
+  tier: number;
+  /** the labels of an edge drawn like this (the unit tests check it classifies as `look` and `tier`) */
+  sample: Record<string, string>;
+  restricted?: boolean;
+  route?: boolean;
+};
+
+/** The key's zoom: what the key shows is the map at this zoom. */
+export const KEY_ZOOM = 14;
+const paved = { surface_class: "paved_smooth" };
+export const KEY_ROWS: readonly KeyRow[] = [
+  { group: "Roads", label: "Main road", look: "major", tier: 8, sample: { highway: "primary", ...paved } },
+  { group: "Roads", label: "Secondary", look: "secondary", tier: 7, sample: { highway: "secondary" } },
+  { group: "Roads", label: "Tertiary", look: "tertiary", tier: 6, sample: { highway: "tertiary" } },
+  { group: "Roads", label: "Minor road", look: "road", tier: 5, sample: { highway: "unclassified" } },
+  { group: "Roads", label: "Street", look: "road", tier: 4, sample: { highway: "residential" } },
+  { group: "Roads", label: "Service", look: "road", tier: 3, sample: { highway: "service" } },
+  {
+    group: "Roads",
+    label: "Unpaved road",
+    note: "gravel",
+    look: "gravel",
+    tier: 5,
+    sample: { highway: "unclassified", surface_class: "gravel" },
+  },
+  {
+    group: "Tracks",
+    label: "Paved",
+    note: "grade 1",
+    look: "lane",
+    tier: 2,
+    sample: { highway: "track", tracktype: "grade1" },
+  },
+  {
+    group: "Tracks",
+    label: "Compacted",
+    note: "grade 2",
+    look: "compacted",
+    tier: 2,
+    sample: { highway: "track", tracktype: "grade2" },
+  },
+  {
+    group: "Tracks",
+    label: "Gravel",
+    note: "grade 3",
+    look: "gravel",
+    tier: 2,
+    sample: { highway: "track", tracktype: "grade3" },
+  },
+  {
+    group: "Tracks",
+    label: "Mostly soft",
+    note: "grade 4",
+    look: "rough",
+    tier: 2,
+    sample: { highway: "track", tracktype: "grade4" },
+  },
+  {
+    group: "Tracks",
+    label: "Soft ground",
+    note: "grade 5",
+    look: "soft",
+    tier: 2,
+    sample: { highway: "track", tracktype: "grade5" },
+  },
+  {
+    group: "Tracks",
+    label: "Not mapped",
+    look: "unknown",
+    tier: 2,
+    sample: { highway: "track" },
+  },
+  { group: "Paths", label: "Cycle path", look: "cycle", tier: 1, sample: { highway: "cycleway" } },
+  { group: "Paths", label: "Paved", look: "pathPaved", tier: 0, sample: { highway: "path", ...paved } },
+  {
+    group: "Paths",
+    label: "Firm",
+    note: "gravel",
+    look: "path",
+    tier: 0,
+    sample: { highway: "path", surface_class: "gravel" },
+  },
+  {
+    group: "Paths",
+    label: "Soft",
+    note: "ground",
+    look: "pathSoft",
+    tier: 0,
+    sample: { highway: "path", surface_class: "soft" },
+  },
+  { group: "Paths", label: "Not mapped", look: "pathUnknown", tier: 0, sample: { highway: "path" } },
+  {
+    group: "Also",
+    label: "No bike access",
+    look: "compacted",
+    tier: 2,
+    sample: { highway: "track", tracktype: "grade2", bike_access: "private" },
+    restricted: true,
+  },
+  {
+    group: "Also",
+    label: "Cycle route",
+    note: "signed",
+    look: "compacted",
+    tier: 2,
+    sample: { highway: "track", tracktype: "grade2", route_level: "rcn" },
+    route: true,
+  },
+  { group: "Also", label: "Ferry", look: "ferry", tier: 0, sample: { highway: "ferry" } },
+];
+
+/** The strokes of a key row, as the map draws that way at `KEY_ZOOM`: same tables, same colours. */
+export function keyStrokes(row: KeyRow, c: Carto): KeyStroke[] {
+  const look = looks(c)[row.look];
+  const z = KEY_ZOOM;
+  const w = (f: (tier: number, i: number) => number) => round2(widthAt(z, (i) => f(row.tier, i)));
+  const opacity = row.restricted ? 0.45 : 1;
+  const strokes: KeyStroke[] = [];
+  if (row.route) {
+    const lerp = (a: number, b: number) => a + ((b - a) * (z - 13)) / 4;
+    strokes.push({
+      color: c.cycleRoute,
+      width: round2(lerp(ROUTE_WIDTHS[13][1], ROUTE_WIDTHS[17][1])),
+      opacity: lerp(ROUTE_OPACITY[13], ROUTE_OPACITY[17]),
+      cap: "round",
+      blur: true,
+    });
+  }
+  if (look.shape === "band") {
+    strokes.push({ color: look.casing ?? look.fill, width: w(WIDTHS.casing), opacity, cap: "round" });
+    strokes.push({ color: look.fill, width: w(WIDTHS.band), opacity, cap: "round" });
+  } else if (look.shape === "line") {
+    const width = w(WIDTHS.line);
+    strokes.push({ color: c.wayHalo, width: w(WIDTHS.halo), opacity: 0.85 * opacity, cap: "round" });
+    const pattern = look.pattern ?? "solid";
+    strokes.push({
+      color: look.fill,
+      width,
+      opacity,
+      cap: pattern === "solid" ? "round" : "butt",
+      ...(pattern === "solid"
+        ? {}
+        : {
+            dash: [round2(DASHES[pattern][0] * width), round2(DASHES[pattern][1] * width)] as [
+              number,
+              number,
+            ],
+          }),
+    });
+  } else {
+    const width = round2(1.4 + ((2.4 - 1.4) * (z - 13)) / 4);
+    strokes.push({
+      color: look.fill,
+      width,
+      opacity: 0.85,
+      cap: "butt",
+      dash: [round2(DASHES.ferry[0] * width), round2(DASHES.ferry[1] * width)],
+    });
+  }
+  return strokes;
 }

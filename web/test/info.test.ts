@@ -84,6 +84,15 @@ describe("infoSpec: what an attribute's layer shows by default", () => {
     expect(color.at(-2)).toBe(100);
   });
 
+  test("traffic alongside: from a quarter on (a tertiary road at country speed), a ramp", () => {
+    const spec = infoSpec(attribute("road_near_traffic"), "light");
+    expect(shows("road_near_traffic", { road_near_traffic: 7 })).toBe(false);
+    expect(shows("road_near_traffic", { road_near_traffic: 25 })).toBe(true);
+    expect(shows("road_near_traffic", {})).toBe(false);
+    expect(spec.minzoom).toBe(12);
+    expect(spec.legend).toMatchObject({ kind: "ramp", min: "25%", max: "100%" });
+  });
+
   test("a number: the steep ones only; a share without a rule: where it is not zero", () => {
     expect(shows("grade_max", { grade_max: 5.9 })).toBe(false);
     expect(shows("grade_max", { grade_max: 6 })).toBe(true);

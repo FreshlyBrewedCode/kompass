@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { validateStyleMin } from "@maplibre/maplibre-gl-style-spec";
+import { expression, validateStyleMin } from "@maplibre/maplibre-gl-style-spec";
 import { infoLayerFromName } from "../src/map/info";
 import { parseManifest } from "../src/map/manifest";
 import { buildStyle, DEFAULT_LAYERS, labelLanguage } from "../src/map/style";
-import { pipelineManifest } from "./pipeline-manifest";
+import { code, pipelineManifest } from "./pipeline-manifest";
 
 const manifest = pipelineManifest();
 const base = {
@@ -53,22 +53,25 @@ describe("buildStyle", () => {
     expect(new Set(ids(style)).size).toBe(style.layers.length);
   });
 
-  test("the order: ground, relief, the base roads, the ways with the bands inside, motorways, rides, labels", () => {
+  test("the order: ground, relief, water, the ways with the bands inside, motorways, rides, labels", () => {
     const order = ids(buildStyle({ manifest, ...base }));
     const sequence = [
       "land-cover",
-      "water",
       "hillshade",
       "contour-line",
+      "water",
       "buildings",
       "way-route",
-      "base-road",
-      "way-casing",
       "way-halo",
+      "way-casing",
       "info-line",
       "explored-line",
-      "way-road",
-      "way-soft",
+      "cost-line",
+      "way-solid",
+      "way-dots",
+      "way-band",
+      "way-bridge",
+      "way-ferry",
       "base-motorway",
       "rides-line",
       "contour-label",
@@ -81,25 +84,45 @@ describe("buildStyle", () => {
     expect(sequence.every((id) => order.includes(id))).toBe(true);
   });
 
-  test("the overlay draws the roads from z13 on, the base tiles below, never both", () => {
+  test("the overlay draws every road, track and path at every zoom; the base tiles none of them", () => {
     const style = buildStyle({ manifest, ...base });
-    for (const id of ["base-track", "base-road-casing", "base-road"])
-      expect(layer(style, id)?.maxzoom).toBe(13);
-    for (const id of [
-      "way-casing",
-      "way-halo",
-      "way-road",
-      "way-solid",
-      "way-firm",
-      "way-loose",
-      "way-soft",
-    ]) {
-      expect(layer(style, id)?.minzoom).toBe(13);
+    for (const id of ["way-casing", "way-halo", "way-band", "way-solid", "way-dash-long", "way-dots"]) {
+      expect(layer(style, id)?.minzoom).toBeUndefined();
     }
+    expect(ids(style)).not.toContain("base-road");
+    // an overlay from before the drawing properties has no tracks below z13: the base tiles hint at z12
+    expect(ids(style)).not.toContain("base-track");
+    const old = buildStyle({
+      manifest: { ...manifest, overlay: { ...manifest.overlay, drawing: [] } },
+      ...base,
+    });
+    expect(layer(old, "base-track")).toMatchObject({ minzoom: 12, maxzoom: 13 });
+    expect(validateStyleMin(old as never)).toEqual([]);
     // motorways and railways are not in the overlay: the base tiles draw them at every zoom
     expect(layer(style, "base-motorway")?.maxzoom).toBeUndefined();
     // none of the package's own road or land layers is left
     expect(ids(style).filter((id) => /^roads_(?!labels|shields|oneway)|^landuse_/.test(id))).toEqual([]);
+  });
+
+  test("the bands on top never draw a ferry (no rings on the lakes)", () => {
+    const style = buildStyle({
+      manifest,
+      ...base,
+      layers: { ...DEFAULT_LAYERS, info: infoLayerFromName("forest_share", manifest.overlay.attributes) },
+    });
+    const passes = (id: string, properties: Record<string, number>) => {
+      const compiled = expression.createExpression(layer(style, id)?.filter ?? true, "test", {
+        type: "boolean",
+      } as never);
+      if (compiled.result !== "success") throw new Error(JSON.stringify(compiled.value));
+      return compiled.value.evaluate({ zoom: 14 }, { type: 2, properties } as never);
+    };
+    const ferry = { highway: code("highway", "ferry"), forest_share: 90, route_level: 2 };
+    const track = { ...ferry, highway: code("highway", "track") };
+    for (const id of ["info-line", "explored-line", "cost-line", "way-route"]) {
+      expect([id, passes(id, ferry)]).toEqual([id, false]);
+      expect([id, passes(id, track)]).toEqual([id, true]);
+    }
   });
 
   test("the information layer: off by default, an attribute's band, or the explored band", () => {
@@ -154,19 +177,21 @@ describe("buildStyle", () => {
     expect(ids(bare)).toEqual([
       "background",
       "way-route",
-      "way-casing",
       "way-halo",
+      "way-casing",
       "way-selected",
       "info-line",
       "explored-line",
       "cost-line",
       "cost-closed",
       "cost-selected",
-      "way-road",
       "way-solid",
-      "way-firm",
-      "way-loose",
-      "way-soft",
+      "way-dash-long",
+      "way-dash-short",
+      "way-dots",
+      "way-band",
+      "way-bridge",
+      "way-ferry",
       "cost-arrow-along",
       "cost-arrow-against",
       "rides-casing",
@@ -181,8 +206,8 @@ describe("buildStyle", () => {
     expect(validateStyleMin(on as never)).toEqual([]);
     for (const id of ["cost-line", "cost-closed", "cost-selected", "cost-arrow-along"])
       expect(layer(on, id)?.layout).toMatchObject({ visibility: "visible" });
-    expect(ids(on).indexOf("cost-line")).toBeLessThan(ids(on).indexOf("way-road"));
-    expect(ids(on).indexOf("cost-arrow-along")).toBeGreaterThan(ids(on).indexOf("way-soft"));
+    expect(ids(on).indexOf("cost-line")).toBeLessThan(ids(on).indexOf("way-band"));
+    expect(ids(on).indexOf("cost-arrow-along")).toBeGreaterThan(ids(on).indexOf("way-band"));
     const off = buildStyle({ manifest, ...base });
     expect(layer(off, "cost-line")?.layout).toMatchObject({ visibility: "none" });
   });

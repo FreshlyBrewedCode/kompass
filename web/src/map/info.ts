@@ -83,6 +83,9 @@ export const RULES: Record<string, Rule> = {
   water_share: { from: 0.2 },
   builtup_share: { from: 0.5 },
   road_near_share: { from: 0.2, minzoom: 12 },
+  // loud enough to matter: a tertiary road at country speed and up (a 50 km/h street is about 7 %);
+  // on a road it includes the road itself, so the main roads always show
+  road_near_traffic: { from: 0.25, minzoom: 12 },
   grade_max: { from: 6 },
 };
 const DEFAULT_MINZOOM = 11;
