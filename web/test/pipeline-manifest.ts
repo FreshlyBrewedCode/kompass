@@ -35,6 +35,7 @@ export function pipelineManifest(extra: Record<string, unknown> = {}): Manifest 
       layer: "edges",
       minzoom: 8,
       maxzoom: 14,
+      drawing: ["bridge", "tunnel", "layer", "service_kind"],
       attributes: [
         enumAttribute("highway", "Road class"),
         enumAttribute("surface_class", "Surface"),
@@ -45,6 +46,7 @@ export function pipelineManifest(extra: Record<string, unknown> = {}): Manifest 
         { key: "forest_share", label: "In forest", kind: "share", min: 0, max: 100 },
         { key: "forest_edge_share", label: "Forest edge", kind: "share", min: 0, max: 100 },
         { key: "road_near_share", label: "Near a motor road", kind: "share", min: 0, max: 100 },
+        { key: "road_near_traffic", label: "Traffic alongside", kind: "share", min: 0, max: 100 },
         { key: "grade_max", label: "Max grade", kind: "number", unit: "%", min: 0, max: 25 },
       ],
     },

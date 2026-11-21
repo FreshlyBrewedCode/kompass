@@ -12,6 +12,7 @@
 import type { ExpressionSpecification, LayerSpecification } from "maplibre-gl";
 import type { Manifest } from "./manifest";
 import { COST_CLOSED, COST_STOPS, SELECTED, type Theme } from "./palette";
+import { underlayWidth, wayClasses } from "./ways";
 
 type Expr = ExpressionSpecification;
 
@@ -31,17 +32,6 @@ export const COST_ARROW_AGAINST = "cost-arrow-against";
 /** The band layers (under the ways' lines) and the chevrons (above them). */
 export const COST_BAND_LAYERS = [COST_LINE, COST_CLOSED_LINE, COST_SELECTED] as const;
 export const COST_ARROW_LAYERS = [COST_ARROW_ALONG, COST_ARROW_AGAINST] as const;
-
-/**
- * Width of the band by zoom (px): as wide as the information band (style.ts), so it shows as a coloured
- * rim beside the ways' own lines from z13 on.
- */
-const WIDTH_STOPS: readonly (readonly [zoom: number, width: number])[] = [
-  [13, 4.6],
-  [15, 7.5],
-  [17, 14],
-  [19, 30],
-];
 
 /** What an edge is on the layer (feature-state `ck`). */
 export const KIND = { none: 0, open: 1, atMin: 2, atMax: 3, closed: 4 } as const;
@@ -128,16 +118,16 @@ function roundNice(f: number): number {
 const state = (key: string, fallback: number): Expr => ["to-number", ["feature-state", key], fallback];
 const kindIs = (...kinds: Kind[]): Expr => ["in", state("ck", 0), ["literal", kinds]];
 
-const width = (scale: (atClamp: boolean) => number): Expr =>
-  [
-    "interpolate",
-    ["linear"],
-    ["zoom"],
-    ...WIDTH_STOPS.flatMap(([z, w]) => [
-      z,
-      ["case", kindIs(KIND.atMin, KIND.atMax), w * scale(true), w * scale(false)],
-    ]),
-  ] as Expr;
+/**
+ * Width of the band: as wide as the information band (ways.ts' `underlayWidth`), so it shows as a
+ * coloured rim around the ways' own fills; edges at the clamp `atClamp` times that.
+ */
+const width = (manifest: Manifest, scale: number, atClamp = scale): Expr =>
+  underlayWidth(
+    manifest.overlay.attributes,
+    atClamp === scale ? scale : 1,
+    atClamp === scale ? undefined : ["case", kindIs(KIND.atMin, KIND.atMax), atClamp, scale],
+  );
 
 /** The colour by feature state: the stops spread evenly over −1 … +1. */
 export function costColor(theme: Theme): Expr {
@@ -156,7 +146,12 @@ export function costColor(theme: Theme): Expr {
  * not drawn (it is not in the last answer yet).
  */
 export function costLayers(manifest: Manifest, theme: Theme, on: boolean): LayerSpecification[] {
-  const source = { source: SOURCE, "source-layer": manifest.overlay.layer } as const;
+  const source = {
+    source: SOURCE,
+    "source-layer": manifest.overlay.layer,
+    // only what the ways draw: no ferry (a band would draw a ring on the lake), no hidden aisle
+    filter: wayClasses(manifest.overlay.attributes).shown as never,
+  } as const;
   const visibility = on ? "visible" : "none";
   return [
     {
@@ -168,7 +163,7 @@ export function costLayers(manifest: Manifest, theme: Theme, on: boolean): Layer
       paint: {
         "line-color": costColor(theme),
         "line-opacity": ["case", kindIs(KIND.open, KIND.atMin, KIND.atMax), 0.92, 0],
-        "line-width": width((atClamp) => (atClamp ? 1.55 : 1)),
+        "line-width": width(manifest, 1, 1.55),
       },
     },
     {
@@ -180,7 +175,7 @@ export function costLayers(manifest: Manifest, theme: Theme, on: boolean): Layer
       paint: {
         "line-color": COST_CLOSED[theme],
         "line-opacity": ["case", kindIs(KIND.closed), 0.85, 0],
-        "line-width": width(() => 0.7),
+        "line-width": width(manifest, 0.7),
         "line-dasharray": [1.2, 0.9],
       },
     },
@@ -195,7 +190,7 @@ export function costLayers(manifest: Manifest, theme: Theme, on: boolean): Layer
         "line-color": SELECTED[theme],
         "line-opacity": ["case", ["boolean", ["feature-state", "selected"], false], 1, 0],
         "line-width": 2.5,
-        "line-gap-width": width((atClamp) => (atClamp ? 1.55 : 1)),
+        "line-gap-width": width(manifest, 1, 1.55),
       },
     },
   ];

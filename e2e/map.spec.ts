@@ -20,7 +20,8 @@ const closeLayers = async (page: Page) => {
   await page.getByTestId("sheet-close").click();
   await expect(page.getByTestId("layers-panel")).toHaveCount(0);
 };
-const WAYS = ["way-road", "way-solid", "way-firm", "way-loose", "way-soft"];
+const WAYS = ["way-band", "way-solid", "way-dash-long", "way-dash-short", "way-dots"];
+const PICK = ["way-casing", "way-halo", "way-ferry"];
 
 test("the map opens as the readable map: the overlay draws roads, tracks and paths, nothing on top", async ({
   page,
@@ -34,11 +35,37 @@ test("the map opens as the readable map: the overlay draws roads, tracks and pat
   for (const layer of WAYS) expect(await drawn(page, [layer])).toBeGreaterThan(0);
   const total = await drawn(page, WAYS);
   expect(total).toBeGreaterThan(50);
-  expect(await drawn(page, ["way-casing", "way-halo"])).toBe(total);
+  expect(await drawn(page, PICK)).toBe(total);
+  // the fixture's bridges get their rails
+  expect(await drawn(page, ["way-bridge"])).toBeGreaterThan(0);
   // the relief comes from the fixture's own DEM tiles
   expect(await visibility(page, "hillshade")).toBe("visible");
   expect(await drawn(page, ["contour-line"])).toBeGreaterThan(0);
   await screenshot(page, testInfo, "map");
+});
+
+test("the key: every line style of the map, drawn from the style's own tables", async ({
+  page,
+}, testInfo) => {
+  await openMap(page);
+  await page.getByTestId("map-rides").click();
+  await expect(page.getByTestId("mode-none")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("map-key")).toHaveCount(0);
+  await page.getByTestId("map-key-toggle").click();
+  const key = page.getByTestId("map-key");
+  await expect(key).toBeVisible();
+  await expect(page.getByTestId("map-key-entry")).toHaveCount(21);
+  await expect(key).toContainText("Compacted");
+  await expect(key).toContainText("Soft ground");
+  // every sample is a drawn line, readable at the phone's width (nothing overflows the sheet)
+  expect(await key.locator("svg path").count()).toBeGreaterThan(21);
+  const box = (await key.boundingBox()) as { x: number; width: number };
+  expect(box.x + box.width).toBeLessThanOrEqual((page.viewportSize()?.width ?? 0) + 1);
+  await key.scrollIntoViewIfNeeded();
+  await screenshot(page, testInfo, "map-key");
+  // another mode folds it away
+  await page.getByTestId("mode-explored").click();
+  await expect(key).toHaveCount(0);
 });
 
 test("the layers control: one information layer at a time, with its legend; the toggles", async ({
@@ -51,7 +78,7 @@ test("the layers control: one information layer at a time, with its legend; the 
   expect(await filter(page, "info-line")).toContain("surface_class");
   const shown = await drawn(page, ["info-line"]);
   expect(shown).toBeGreaterThan(0);
-  expect(shown).toBeLessThan(await drawn(page, ["way-casing", "way-halo"]));
+  expect(shown).toBeLessThan(await drawn(page, PICK));
   await expect(page.getByTestId("info-surface_class")).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("legend-entry")).toHaveCount(6);
   await expect(page.getByTestId("legend-entry").last()).toHaveText("Unknown");
