@@ -180,6 +180,18 @@ pub enum SurfaceSource {
     WeakGuess,
 }
 
+/// Where the traffic level of an edge comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema, TS))]
+pub enum TrafficFrom {
+    /// The way's own traffic (road class, speed, lanes, access, a cycle track on it); 0 on paths.
+    Way,
+    /// The motor roads within 20 m: their level (`road_near_traffic`) × the share of the way near
+    /// them (`road_near_share`) × 0.3, louder than the way's own.
+    Alongside,
+}
+
 /// One active preference's part in an arc's cost.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema, TS))]
@@ -282,8 +294,11 @@ pub struct EdgeExplanation {
     /// The surface class the cost uses, and where it comes from.
     pub cost_surface: String,
     pub surface_source: SurfaceSource,
-    /// The traffic level, 0..=1, that `quiet` penalises.
+    /// The traffic level, 0..=1, that `quiet` penalises: the louder of the way's own and the
+    /// traffic it gets from the roads beside it.
     pub traffic: f32,
+    /// Where `traffic` comes from.
+    pub traffic_from: TrafficFrom,
     /// Every attribute the graph keeps for the edge.
     pub attributes: Vec<Attribute>,
     pub bounds: Bounds,
@@ -433,6 +448,7 @@ impl Planner {
             return Err(invalid_request(format!("edge {e} is not in the graph")));
         }
         let (class, conf) = cost::cost_surface(g, e);
+        let (traffic, alongside) = cost::traffic_level(g, e);
         let side = |reverse: bool| {
             let a = arc(e, reverse);
             let b = v.model.breakdown(g, v.personal, a);
@@ -449,7 +465,12 @@ impl Planner {
                 Confidence::Strong => SurfaceSource::StrongGuess,
                 Confidence::Weak => SurfaceSource::WeakGuess,
             },
-            traffic: cost::traffic_level(g, e),
+            traffic,
+            traffic_from: if alongside {
+                TrafficFrom::Alongside
+            } else {
+                TrafficFrom::Way
+            },
             attributes: attributes(g, v.personal, e),
             bounds: req.profile.bounds(),
             along: side(false),
@@ -767,6 +788,7 @@ fn attributes(g: &Graph, personal: Option<&PersonalLayer>, e: EdgeId) -> Vec<Att
         pct("water_share", x.water),
         pct("builtup_share", x.builtup),
         pct("road_near_share", x.road_near),
+        pct("road_near_traffic", x.road_near_traffic),
         num("ascent_fwd_m", Some(dm(x.ascent_fwd_m))),
         num("ascent_bwd_m", Some(dm(x.ascent_bwd_m))),
         num("max_grade_fwd_pct", Some(f64::from(x.max_grade_fwd_pct))),

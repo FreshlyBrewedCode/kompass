@@ -182,6 +182,8 @@ columns! {
         ctx: u16 = b"ctx_____",
         /// `road_near_share` 0-3 · width 4-7
         ctx2: u8 = b"ctx2____",
+        /// `road_near_traffic` 0-3 (fifteenths) · 4-7 reserved (0)
+        ctx3: u8 = b"ctx3____",
         ascent_fwd_dm: u16 = b"asc_fwd_",
         ascent_bwd_dm: u16 = b"asc_bwd_",
         grade_fwd: u8 = b"grd_fwd_",
@@ -211,6 +213,7 @@ impl EdgeColumns {
         self.diff.push(p.diff);
         self.ctx.push(p.ctx);
         self.ctx2.push(p.ctx2);
+        self.ctx3.push(p.ctx3);
         self.ascent_fwd_dm.push(p.ascent_fwd_dm);
         self.ascent_bwd_dm.push(p.ascent_bwd_dm);
         self.grade_fwd.push(p.grade_fwd);
@@ -230,6 +233,7 @@ impl EdgeColumns {
             diff: self.diff[e],
             ctx: self.ctx[e],
             ctx2: self.ctx2[e],
+            ctx3: self.ctx3[e],
             ascent_fwd_dm: self.ascent_fwd_dm[e],
             ascent_bwd_dm: self.ascent_bwd_dm[e],
             grade_fwd: self.grade_fwd[e],
@@ -720,6 +724,14 @@ impl Graph {
     #[must_use]
     pub fn road_near_share(&self, e: EdgeId) -> f32 {
         f32::from(self.edges.ctx2[e as usize] & 15) / 15.0
+    }
+
+    /// The traffic level of the motor roads within 20 m, 0..=1, over the part of the length near
+    /// them (0 where none is).
+    #[inline]
+    #[must_use]
+    pub fn road_near_traffic(&self, e: EdgeId) -> f32 {
+        f32::from(self.edges.ctx3[e as usize] & 15) / 15.0
     }
 
     /// Metres in 0.5 m steps (7.5 = 7.5 or more); `None` unknown.

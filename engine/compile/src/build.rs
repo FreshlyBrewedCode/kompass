@@ -3,7 +3,7 @@
 //! (`docs/graph-format.md`):
 //!
 //! ```json
-//! "graph": { "formatVersion": 3, "buildId": "…", "tileZoom": 11, "nodes": 1, "edges": 1,
+//! "graph": { "formatVersion": 4, "buildId": "…", "tileZoom": 11, "nodes": 1, "edges": 1,
 //!   "bytes": 1, "index": { "file": "graph/index.kmpg", "bytes": 1 },
 //!   "tiles": [ { "x": 1, "y": 1, "edges": 1,
 //!                "graph": { "file": "graph/tiles/11-1-1.kmpg", "bytes": 1, "gzip": 1 },

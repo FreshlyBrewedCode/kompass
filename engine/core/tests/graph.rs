@@ -63,6 +63,7 @@ fn random_attrs(rng: &mut Rng) -> EdgeAttrs {
         water: rng.unit(),
         builtup: rng.unit(),
         road_near: rng.unit(),
+        road_near_traffic: rng.unit(),
         width_m: (rng.below(2) > 0).then(|| rng.unit() * 7.0 + 0.5),
         ascent_fwd_m: rng.unit() * 40.0,
         ascent_bwd_m: rng.unit() * 40.0,
@@ -171,6 +172,7 @@ fn accessors_agree_with_the_decoded_attributes() {
         assert!((g.water_share(e) - a.water).abs() < 1e-6);
         assert!((g.builtup_share(e) - a.builtup).abs() < 1e-6);
         assert!((g.road_near_share(e) - a.road_near).abs() < 1e-6);
+        assert!((g.road_near_traffic(e) - a.road_near_traffic).abs() < 1e-6);
         assert_eq!(g.width_m(e), a.width_m);
         let (fwd, bwd) = (arc(e, false), arc(e, true));
         assert!((g.ascent_m(fwd) - a.ascent_fwd_m).abs() < 1e-6);

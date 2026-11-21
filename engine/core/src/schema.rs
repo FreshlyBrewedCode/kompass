@@ -12,7 +12,7 @@ use crate::cost::{Clamp, Role, WayKind};
 use crate::explain::{
     Additive, AdditiveKind, ArcCostExplanation, AttrValue, Attribute, ClosedBy, ClosedPart, Closure,
     CompareRequest, EdgeExplanation, ExplainEdgeRequest, PrefPart, RouteComparison, StretchComparison,
-    StretchCost, SurfaceSource,
+    StretchCost, SurfaceSource, TrafficFrom,
 };
 use crate::presets::Preset;
 use crate::profile::{Bounds, LimitId, LimitValue, PrefId, Profile, Weight};
@@ -106,6 +106,7 @@ pub fn typescript() -> String {
         decl::<AttrValue>(&cfg),
         decl::<Attribute>(&cfg),
         decl::<SurfaceSource>(&cfg),
+        decl::<TrafficFrom>(&cfg),
         decl::<PrefPart>(&cfg),
         decl::<AdditiveKind>(&cfg),
         decl::<Additive>(&cfg),

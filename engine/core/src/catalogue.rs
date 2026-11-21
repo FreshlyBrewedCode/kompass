@@ -396,7 +396,7 @@ pub fn pref_meta(id: PrefId) -> PrefMeta {
             Traffic,
             "Low traffic",
             "Quiet",
-            "Guessed from road class, speed limit, lanes and who may drive there.",
+            "Guessed from road class, speed limit, lanes and who may drive there; a path beside a busy road gets part of its traffic.",
             50,
             0.85,
             4.0,

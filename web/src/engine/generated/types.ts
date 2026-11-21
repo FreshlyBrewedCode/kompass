@@ -504,6 +504,11 @@ export type Attribute = { attribute: string, value: AttrValue | null, };
 export type SurfaceSource = "tagged" | "strong_guess" | "weak_guess";
 
 /**
+ * Where the traffic level of an edge comes from.
+ */
+export type TrafficFrom = "way" | "alongside";
+
+/**
  * One active preference's part in an arc's cost.
  */
 export type PrefPart = { id: PrefId, 
@@ -612,9 +617,14 @@ surface: SurfaceKind,
  */
 cost_surface: string, surface_source: SurfaceSource, 
 /**
- * The traffic level, 0..=1, that `quiet` penalises.
+ * The traffic level, 0..=1, that `quiet` penalises: the louder of the way's own and the
+ * traffic it gets from the roads beside it.
  */
 traffic: number, 
+/**
+ * Where `traffic` comes from.
+ */
+traffic_from: TrafficFrom, 
 /**
  * Every attribute the graph keeps for the edge.
  */
