@@ -1688,6 +1688,34 @@ fn edge_costs_by_bbox_cover_the_box() {
     );
 }
 
+/// A paved farm track (car-free, grade 1) against a compacted gravel track: Gravel explorer still
+/// prefers the gravel, but not at any length. Its stacked surface bonuses (`unpaved`, `fine_gravel`,
+/// `track`) used to put a compacted track at the `min_factor` clamp (0.50 against 0.87, a 1.7× detour
+/// for gravel); on the rider's own rides that sent it off the paved tracks they ride (route-quality
+/// report of #40). Now gravel is worth a detour up to about 1.35×.
+#[test]
+fn gravel_explorer_takes_gravel_but_not_at_any_length() {
+    let paved_track = EdgeAttrs {
+        highway: Highway::Track,
+        tracktype: Tracktype::Grade1,
+        surface: SurfaceClass::PavedSmooth,
+        ..EdgeAttrs::default()
+    };
+    let gravel_track = EdgeAttrs {
+        highway: Highway::Track,
+        tracktype: Tracktype::Grade2,
+        surface: SurfaceClass::Compacted,
+        ..EdgeAttrs::default()
+    };
+    let gravel = kompass_core::presets::preset("gravel_explorer").unwrap().profile;
+    let takes_gravel = |detour: f32| {
+        let d = diamond(gravel_track, HALF_M * detour, paved_track, HALF_M, None);
+        takes_top(&d, &gravel, None)
+    };
+    assert!(takes_gravel(1.25), "gravel 1.25× longer: still the gravel");
+    assert!(!takes_gravel(1.45), "gravel 1.45× longer: the paved track");
+}
+
 /// A cycle path right beside a primary road and a quieter one away from roads, 15 % longer: the
 /// roadside path's traffic comes from the road alongside (`road_near_traffic` × `road_near_share` ×
 /// 0.3), so seeking quiet now moves the route off it; without the column (an older build) it stays.
@@ -1713,7 +1741,7 @@ fn quiet_moves_the_route_off_a_roadside_path() {
     );
     assert!(
         !takes_top(&d, &gravel, None),
-        "Gravel explorer (quiet 50) leaves the roadside path"
+        "Gravel explorer (quiet 70) leaves the roadside path"
     );
     assert!(
         !takes_top(&d, &weights(&[(PrefId::Quiet, 50)]), None),

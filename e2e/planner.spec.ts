@@ -173,11 +173,15 @@ test("the detours slider sets min_factor, shows what it means and reroutes", asy
   await slider.press("End"); // all the way to "go far for good ways"
   await expect(page.getByTestId("detours-word")).toHaveText("Go far for good ways");
   await expect(page.getByTestId("detours-hint")).toHaveText("Up to 3.3× longer for a way you like.");
-  // the profile sent to the engine carries bounds.min_factor: the route's cost is computed with it
   await expect.poll(async () => (await state()).minFactor).toBe(0.3);
-  await expect.poll(async () => (await state()).cost).not.toBe(before.cost);
   await expect(page.getByTestId("change-dot").first()).toBeVisible();
   await screenshot(page, testInfo, "planner-detours");
+  // the profile sent to the engine carries bounds.min_factor: the route's cost is computed with it
+  // ("Direct" clamps every way the preset likes at 1; the far end changes only ways below 0.5)
+  await slider.press("Home");
+  await expect(page.getByTestId("detours-word")).toHaveText("Direct");
+  await expect.poll(async () => (await state()).minFactor).toBe(1);
+  await expect.poll(async () => (await state()).cost).not.toBe(before.cost);
   // back to the preset's value
   await page.getByTestId("detours").getByTestId("change-dot").click();
   await expect(page.getByTestId("detours-word")).toHaveText("Detours for good ways");
@@ -304,7 +308,7 @@ test("a slider moves only from its knob: a tap on the track changes nothing", as
   // dragging the knob does
   await page.mouse.move(kx, ky);
   await page.mouse.down();
-  await page.mouse.move(kx - box.width / 3, ky, { steps: 8 });
+  await page.mouse.move(kx - box.width / 2, ky, { steps: 8 });
   await page.mouse.up();
   await expect.poll(weight).toBeLessThan(before - 30);
   // the keyboard still works

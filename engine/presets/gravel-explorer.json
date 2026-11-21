@@ -4,8 +4,8 @@
   "profile": {
     "name": "Gravel explorer",
     "weights": {
-      "unpaved": 85,
-      "quiet": 50,
+      "unpaved": 50,
+      "quiet": 70,
       "climb": 20,
       "novel": 60,
       "forest_edge": 50,
@@ -14,7 +14,7 @@
       "sketchy": -50,
       "built": -30,
       "track": 40,
-      "fine_gravel": 40
+      "fine_gravel": 20
     },
     "limits": {
       "no_stairs": true,

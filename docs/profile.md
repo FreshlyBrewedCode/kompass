@@ -11,7 +11,7 @@ graph whenever it changes, and the search ([routing.md](routing.md)) runs on tha
 
 ```json
 { "name": "Gravel explorer", "base": "gravel_explorer",
-  "weights": { "unpaved": 85, "quiet": 50, "climb": 20, "forest_edge": 0 },
+  "weights": { "unpaved": 50, "quiet": 70, "climb": 20, "forest_edge": 0 },
   "limits": { "legal_only": true, "max_grade": 14, "paved_only": false },
   "bounds": { "min_factor": 0.5, "max_factor": 20 } }
 ```
@@ -77,11 +77,13 @@ something bad (a never-ridden grass track the profile dislikes stays disliked).
 
 **Seeing it.** Every step of this, per arc, is what the cost debug queries return (`edgeCosts` for a
 map layer, `explainEdge` for one edge, `compare` for two routes; [routing.md](routing.md#explaining-the-cost)),
-computed by the same code as the compile. On a 24 km demo-region route the Gravel explorer has 41 %
-of the length at exactly `min_factor`: a compacted track is 0.65 (unpaved) × 0.87 (track) × 0.89
-(fine gravel) ≈ 0.50 already, and any climb or forest-edge bonus takes it below. There a slider
-pushed further changes nothing, and a gravel detour more than twice as long loses against a way at
-factor 1; `clamp` (one edge) and `clamped_min_m` (a stretch) show it.
+computed by the same code as the compile. Before the route-quality round of #40, a 24 km demo-region
+route under the Gravel explorer had 41 % of the length at exactly `min_factor`: a compacted track was
+0.65 (unpaved 85) × 0.87 (track) × 0.89 (fine gravel 40) ≈ 0.50 already, and any climb or forest-edge
+bonus took it below. There a slider pushed further changes nothing, and a gravel detour more than
+twice as long loses against a way at factor 1; `clamp` (one edge) and `clamped_min_m` (a stretch) show
+it. Now (unpaved 50, fine gravel 20) a compacted track is 0.78 × 0.87 × 0.94 ≈ 0.63 against 0.87 for
+a paved farm track: gravel is worth a detour of about 1.35×, and the sliders have room both ways.
 
 **Additive terms** (all ≥ 0): avoiding climbs costs `−w × 25` m per metre of ascent beyond the
 deadband (25 m at −100, 10 m at −40); 15 m per barrier (gate, bollard); steps 5 m per metre plus 20 m
@@ -237,21 +239,26 @@ Limits (excluded both ways):
 
 ## Presets
 
+Tuned against the rider's own rides and BRouter's gravel profile (`kompass replay`,
+[the route-quality report](reports/2026-11-21-route-quality.md)): the Gravel explorer's surface bonuses
+are milder than they were (unpaved 85 → 50, fine gravel 40 → 20) so a car-free paved farm track is not
+traded for any gravel detour, and `quiet` is stronger (50 → 70) against paths beside busy roads.
+
 | preset | weights | limits |
 |---|---|---|
-| Gravel explorer | unpaved 85, track 40, fine gravel 40, quiet 50, forest edge 50, novel 60, climb 20, main −80, soft ground −40, sketchy −50, built-up −30 | no stairs, legal only |
+| Gravel explorer | unpaved 50, track 40, fine gravel 20, quiet 70, forest edge 50, novel 60, climb 20, main −80, soft ground −40, sketchy −50, built-up −30 | no stairs, legal only |
 | Paved & quiet | unpaved −70, quiet 60, cycle paths away from roads 60, main −60, cobbles −50, climb −30, novel 0 | paved only, no stairs, legal only |
+| River valley | water 90, climb −60, ramps −70, quiet 40, novel −10, unpaved 0 | no stairs |
+| Blank slate | the core set at 0 | none: the shortest way |
 
 `quiet` and "cycle paths away from roads" (`cycleway_sep`) do not count the same thing twice: the
 first is how loud it is (a path beside a quiet street is quiet), the second the kind of way (a path
 of its own through the land, whatever road is near). On a path beside a busy road `quiet` penalises
 and `cycleway_sep` withholds its bonus; on one away from roads `quiet` is 1 and the bonus counts.
-| River valley | water 90, climb −60, ramps −70, quiet 40, novel −10, unpaved 0 | no stairs |
-| Blank slate | the core set at 0 | none: the shortest way |
 
 How they ride on the real region (12 random pairs of 30–60 km, no coordinates kept; the PR of #18 has
-the tables): Gravel explorer about 61 % unpaved (shortest way: 26 %), 0.1 km of main road per route
-(shortest: 11 km), detour 1.19 median / 1.32 max; Paved & quiet 0 % unpaved and 4.6 km of main road
+the tables): Gravel explorer about 55 % unpaved (shortest way: 26 %; 62 % before #40), 0.1 km of main
+road per route (shortest: 11 km), detour 1.19 median / 1.31 max; Paved & quiet 0 % unpaved and 4.6 km of main road
 at a 1.31 median detour (paved only on its own: 20 km of main road at 1.12, so most of the detour is
 spent leaving main roads); River valley a quarter less climbing and three times the water share of
 the shortest way at a 1.10 median detour.
