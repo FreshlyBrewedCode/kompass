@@ -9,7 +9,7 @@ use std::time::Instant;
 use kompass_core::cost::{WayKind, reported_surface, way_kind};
 use kompass_core::explain::{
     ArcCostExplanation, AttrValue, EdgeExplanation, EdgeSelection, ExplainEdgeRequest, StretchCost,
-    describe_closure,
+    TrafficFrom, describe_closure,
 };
 use kompass_core::graph::arc_edge;
 use kompass_core::route::Reason;
@@ -307,12 +307,17 @@ pub(crate) fn edge_text(x: &EdgeExplanation) -> String {
         .unwrap_or_default();
     let _ = writeln!(
         out,
-        "edge {}: {:.1} m, {}, surface for the cost {} ({source}), traffic {:.2}; bounds {} … {}",
+        "edge {}: {:.1} m, {}, surface for the cost {} ({source}), traffic {:.2}{}; bounds {} … {}",
         x.edge,
         x.length_m,
         label(x.way),
         x.cost_surface,
         x.traffic,
+        if x.traffic_from == TrafficFrom::Alongside {
+            " (from the road alongside)"
+        } else {
+            ""
+        },
         x.bounds.min_factor,
         x.bounds.max_factor
     );

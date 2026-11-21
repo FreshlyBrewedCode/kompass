@@ -127,6 +127,16 @@ def maxspeed(df: pd.DataFrame) -> tuple[pd.Series, np.ndarray]:
     return kmh.round().clip(0, 250).astype("UInt8"), src.astype(np.uint8)
 
 
+def lanes(df: pd.DataFrame) -> pd.Series:
+    """`lanes` as a number (UInt8, NA unknown)."""
+    return _num(df["tag_lanes"].fillna(""), r"^\s*(\d+)").clip(0, 20).astype("UInt8")
+
+
+def motor_access(df: pd.DataFrame) -> pd.Series:
+    """`motor_vehicle`, else `motorcar`, as `motor_access` codes."""
+    return code(df["tag_motor_vehicle"].fillna(df["tag_motorcar"]), MOTOR, "motor_access").astype(np.uint8)
+
+
 def bike_access(df: pd.DataFrame, hw: pd.Series) -> pd.Series:
     c = schema.codes("bike_access")
     acc = df["tag_access"].map(ACCESS_LEVEL).map(c)
@@ -195,11 +205,9 @@ def derive(df: pd.DataFrame) -> pd.DataFrame:
     out["tracktype"] = _num(df["tag_tracktype"].fillna(""), r"grade([1-5])").fillna(0).astype(np.uint8)
     out["smoothness"] = code(df["tag_smoothness"], SMOOTHNESS, "smoothness").astype(np.uint8)
     out["maxspeed_kmh"], out["maxspeed_src"] = maxspeed(df)
-    out["lanes"] = _num(df["tag_lanes"].fillna(""), r"^\s*(\d+)").clip(0, 20).astype("UInt8")
+    out["lanes"] = lanes(df)
     out["bike_access"] = bike_access(df, hw)
-    out["motor_access"] = code(
-        df["tag_motor_vehicle"].fillna(df["tag_motorcar"]), MOTOR, "motor_access"
-    ).astype(np.uint8)
+    out["motor_access"] = motor_access(df)
     out["foot_access_no"] = df["tag_foot"].isin(["no", "use_sidepath"])
     out["cycleway_kind"] = cycleway_kind(df, hw)
     out["segregated"] = code(df["tag_segregated"], {"yes": "yes", "no": "no"}, "segregated").astype(np.uint8)

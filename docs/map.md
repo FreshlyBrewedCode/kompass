@@ -143,7 +143,8 @@ control; `?layer=<attribute key>|explored` in the URL), and toggles the relief a
   "Max grade" from 6 %. Ordered enums and numbers use a sequential ramp (viridis, trimmed per
   theme), other enums categorical hues (Okabe–Ito) or the rule's own colours. Missing values are not
   drawn. The legend names what is left out. A new attribute works without a rule (every value, or
-  every non-zero value).
+  every non-zero value): "Traffic alongside" (`road_near_traffic`, how loud the motor roads within
+  20 m are, [profile.md](profile.md#traffic)) has none yet and draws every way near a road.
 - **Explored**: a teal band on ridden edges (`feature-state.ridden`); never ridden stays the map.
 - **Cost**: every visible edge coloured by the current profile's factor (below).
 - **Inspect**: tapping a way opens the panel with every attribute (from z13, where the ways are

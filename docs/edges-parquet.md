@@ -26,9 +26,11 @@ drift.
 - Nothing is derived that the engine can compute from these columns, with one exception: elevation
   and the context shares need the DEM and landuse polygons, so they are precomputed.
 
-A column added later (`layer`) does not bump the schema version: the engine's compile reads the
-columns it knows by name and ignores others, so it keeps reading older and newer files. The version
-changes only for what the engine must know about.
+A column added later (`layer`, `road_near_traffic`) does not bump the schema version: the engine's
+compile reads the columns it knows by name and ignores others, so it keeps reading older and newer
+files; a column it uses but an older file lacks (`road_near_traffic`) reads as 0 with a warning (the
+cost then behaves as before the column). The version changes only for what the engine must know
+about.
 
 ## Key-value metadata
 
@@ -88,6 +90,7 @@ changes only for what the engine must know about.
 | `water_share` | uint8 | Percent within 100 m of a lake or river area, or a river or canal. |
 | `builtup_share` | uint8 | Percent inside built-up landuse. |
 | `road_near_share` | uint8 | Percent within 20 m of a motor road (100 on roads themselves). |
+| `road_near_traffic` | uint8 | How loud the motor roads within 20 m are: the traffic level (percent, the engine's model of class, speed limit, lanes and motor access; `traffic.json`) of the loudest one, averaged over the part of the length within 20 m of one; 0 where none is. On a road it includes the road itself. |
 | `ele_from_m` | float32 | Elevation at the first end node (smoothing keeps the ends raw, so all edges at a node agree). |
 | `ele_to_m` | float32 | Elevation at the last end node. |
 | `ascent_fwd_m` | float32 | Climbing along the geometry's direction (smoothed profile). |

@@ -370,6 +370,9 @@ pub struct EdgeAttrs {
     pub water: f32,
     pub builtup: f32,
     pub road_near: f32,
+    /// The traffic level (0..=1, fifteenths) of the motor roads within 20 m, over the part of the
+    /// length near them (`road_near_traffic`; 0 where none is).
+    pub road_near_traffic: f32,
     /// Metres in 0.5 m steps (saturates at 7.5); `None` unknown.
     pub width_m: Option<f32>,
     /// Metres (0.1 m steps).
@@ -394,6 +397,7 @@ pub struct Packed {
     pub diff: u8,
     pub ctx: u16,
     pub ctx2: u8,
+    pub ctx3: u8,
     pub ascent_fwd_dm: u16,
     pub ascent_bwd_dm: u16,
     pub grade_fwd: u8,
@@ -477,6 +481,7 @@ impl EdgeAttrs {
                 | (share(self.water) << 8)
                 | (share(self.builtup) << 12),
             ctx2: share(self.road_near) as u8 | (width << 4),
+            ctx3: share(self.road_near_traffic) as u8,
             ascent_fwd_dm: q(self.ascent_fwd_m, 10.0, 65535.0) as u16,
             ascent_bwd_dm: q(self.ascent_bwd_m, 10.0, 65535.0) as u16,
             grade_fwd: q(self.max_grade_fwd_pct, 1.0, 255.0) as u8,
@@ -519,6 +524,7 @@ impl Packed {
             water: s(self.ctx >> 8),
             builtup: s(self.ctx >> 12),
             road_near: s(u16::from(self.ctx2)),
+            road_near_traffic: s(u16::from(self.ctx3)),
             width_m: (width != 0).then_some(f32::from(width) * 0.5),
             ascent_fwd_m: f32::from(self.ascent_fwd_dm) * 0.1,
             ascent_bwd_m: f32::from(self.ascent_bwd_dm) * 0.1,
@@ -626,6 +632,7 @@ mod tests {
             water: 0.0,
             builtup: 0.6,
             road_near: 1.0,
+            road_near_traffic: 0.6,
             width_m: Some(2.5),
             ascent_fwd_m: 12.3,
             ascent_bwd_m: 0.4,

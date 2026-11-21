@@ -46,11 +46,11 @@ def build_village_file(village, tmp_path):
     """Context, elevation (fake DEM), graph and finalize on the village, like the real stages."""
     n = len(village)
     x, y, part = samples.vertices(village.geometry.to_numpy(), REGION.crs)
-    is_road = village.tag_highway.isin(context.ROAD_LABELS).to_numpy()
+    roads = context.road_attrs(village)
     forest = context.ContextFeatures(
         np.array([shapely.box(300, 0, 700, 800)], dtype=object), *(np.array([], dtype=object),) * 3
     )
-    ctx = context.shares(x, y, part, n, is_road, forest, (-1000, -1000, 4000, 1500), log=lambda *_: None)
+    ctx = context.shares(x, y, part, n, roads, forest, (-1000, -1000, 4000, 1500), log=lambda *_: None)
     ele = elevation.profiles(x, y, part, n, plane)
     comp, km = graph.components(
         village.node_from.to_numpy(), village.node_to.to_numpy(), village.length_m.to_numpy().astype(float)

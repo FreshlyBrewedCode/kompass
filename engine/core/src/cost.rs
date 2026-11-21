@@ -83,6 +83,8 @@ pub(crate) struct View {
     pub water: u8,
     pub built: u8,
     pub road_near: u8,
+    /// The traffic level of the roads within 20 m, fifteenths.
+    pub near_traffic: u8,
     pub length: f32,
 }
 
@@ -155,7 +157,7 @@ fn lv(x: f32) -> i8 {
 impl View {
     #[inline]
     pub(crate) fn decode(c: &EdgeColumns, e: usize) -> View {
-        let (surf, smooth, access, road, speed, diff, ctx, ctx2) = (
+        let (surf, smooth, access, road, speed, diff, ctx, ctx2, ctx3) = (
             c.surf[e],
             c.smooth[e],
             c.access[e],
@@ -164,6 +166,7 @@ impl View {
             c.diff[e],
             c.ctx[e],
             c.ctx2[e],
+            c.ctx3[e],
         );
         #[allow(clippy::cast_possible_truncation, reason = "4-bit nibbles")]
         let nib = |s: u32| ((ctx >> s) & 15) as u8;
@@ -189,6 +192,7 @@ impl View {
             water: nib(8),
             built: nib(12),
             road_near: ctx2 & 15,
+            near_traffic: ctx3 & 15,
             length: crate::attrs::length_m_of(c.length_dm[e]),
         }
     }
@@ -269,65 +273,33 @@ impl View {
         if self.kmh != 0 {
             return f32::from(self.kmh);
         }
-        let built = self.built > HALF;
-        match self.hw {
-            hw::TRUNK..=hw::TERTIARY_LINK => {
-                if built {
-                    50.0
-                } else {
-                    100.0
-                }
-            }
-            hw::UNCLASSIFIED | hw::ROAD => {
-                if built {
-                    50.0
-                } else {
-                    70.0
-                }
-            }
-            hw::RESIDENTIAL => 40.0,
-            hw::LIVING_STREET => 10.0,
-            hw::SERVICE => 25.0,
-            hw::TRACK => 30.0,
-            _ => 0.0,
-        }
+        let (open, town) = crate::traffic::guess_kmh(self.hw);
+        if self.built > HALF { town } else { open }
     }
 
-    /// 0..=1: how much motor traffic the way likely carries.
+    /// 0..=1: how much motor traffic riding the way itself means ([`crate::traffic::own_level`]).
     #[inline]
     pub(crate) fn traffic(&self) -> f32 {
-        let class = match self.hw {
-            1 | 2 => 1.0,
-            3 | 4 => 0.9,
-            5 | 6 => 0.7,
-            7 | 8 => 0.45,
-            hw::UNCLASSIFIED => 0.25,
-            hw::ROAD => 0.2,
-            hw::RESIDENTIAL => 0.12,
-            hw::SERVICE => 0.05,
-            hw::LIVING_STREET => 0.03,
-            hw::TRACK => 0.02,
-            _ => return 0.0,
-        };
-        let speed = 0.4 + 0.6 * ((self.kmh() - 30.0) / 70.0).clamp(0.0, 1.0);
-        let lanes = match self.lanes {
-            0..=2 => 1.0,
-            3 => 1.15,
-            _ => 1.3,
-        };
-        let motor = match self.motor {
-            1 | 2 => 0.1,
-            3 | 4 => 0.4,
-            _ => 1.0,
-        };
-        let separated = match self.cyc {
-            1 => 0.9,
-            2 => 0.75,
-            3 => 0.35,
-            5 => 0.4,
-            _ => 1.0,
-        };
-        (class * speed * lanes * motor * separated).min(1.0)
+        crate::traffic::own_level(
+            self.hw,
+            self.kmh,
+            self.lanes,
+            self.motor,
+            self.built > HALF,
+            self.cyc,
+        )
+    }
+
+    /// 0..=1: the traffic the way gets from the roads within 20 m ([`crate::traffic::alongside`]).
+    #[inline]
+    pub(crate) fn alongside(&self) -> f32 {
+        crate::traffic::alongside(share(self.near_traffic), share(self.road_near))
+    }
+
+    /// 0..=1: what `quiet` penalises, the louder of the way's own traffic and the traffic beside it.
+    #[inline]
+    pub(crate) fn exposure(&self) -> f32 {
+        self.traffic().max(self.alongside())
     }
 
     /// The difficulty on the MTB scale (0 = S0), from `mtb:scale` or else `sac_scale`; `None`
@@ -456,8 +428,9 @@ pub(crate) fn membership(
             _ => 0.0,
         }),
         PrefId::Main => lv(f32::from(u8::from(v.is_main()))),
-        // seeking quiet is avoiding traffic: the membership is the traffic, negated
-        PrefId::Quiet => lv(-v.traffic()),
+        // seeking quiet is avoiding traffic: the membership is the traffic, negated (the class
+        // compile takes the two parts apart: `lv(−max(a, b)) = min(lv(−a), lv(−b))`)
+        PrefId::Quiet => lv(-v.exposure()),
         PrefId::Speed => lv(if v.is_motor_road() {
             ((v.kmh() - 50.0) / 30.0).clamp(0.0, 1.0)
         } else {
@@ -607,6 +580,9 @@ pub struct CostModel {
     quality: Vec<(PrefId, Table)>,
     /// Direction-independent gated preferences.
     gated: Vec<(PrefId, Table)>,
+    /// `quiet` (quality), apart: its membership reads the tags (the way's own traffic) and the
+    /// context (the roads beside it), which the class compile looks up separately.
+    quiet: Option<Table>,
     steep: Option<Table>,
     /// Seeking climbs (gated, directional).
     climb_bonus: Option<Table>,
@@ -726,6 +702,7 @@ impl CostModel {
         let mut m = CostModel {
             quality: Vec::new(),
             gated: Vec::new(),
+            quiet: None,
             steep: None,
             climb_bonus: None,
             climb_cost: 0.0,
@@ -740,6 +717,7 @@ impl CostModel {
             }
             match id {
                 PrefId::Steep => m.steep = Some(table(id, w)),
+                PrefId::Quiet => m.quiet = Some(table(id, w)),
                 PrefId::Climb if w > 0.0 => m.climb_bonus = Some(table(id, w)),
                 PrefId::Climb => m.climb_cost = -w * pref_meta(id).max_penalty,
                 _ if pref_meta(id).gated => m.gated.push((id, table(id, w))),
@@ -917,6 +895,9 @@ impl CostModel {
             for (id, t) in &self.quality {
                 q *= at(t, membership(*id, &v, surface, pe));
             }
+            if let Some(t) = &self.quiet {
+                q *= at(t, membership(PrefId::Quiet, &v, surface, pe));
+            }
             let mut bonus = 1.0f32;
             for (id, t) in &self.gated {
                 let f = at(t, membership(*id, &v, surface, pe));
@@ -1034,6 +1015,17 @@ impl CostModel {
             q *= f;
             terms.push(Term {
                 id: *id,
+                membership: level(m),
+                factor: f,
+                role: Role::Quality,
+            });
+        }
+        if let Some(t) = &self.quiet {
+            let m = membership(PrefId::Quiet, &v, surface, pe);
+            let f = at(t, m);
+            q *= f;
+            terms.push(Term {
+                id: PrefId::Quiet,
                 membership: level(m),
                 factor: f,
                 role: Role::Quality,
@@ -1268,6 +1260,8 @@ struct CtxTables {
     water: [(f32, f32); 16],
     /// By road-near | bike path << 4 | road with a cycle track << 5.
     road: [(f32, f32); 64],
+    /// `quiet`'s membership level of the traffic beside a way, by road-near | near traffic << 4.
+    alongside: [i8; 256],
 }
 
 /// An edge with nothing set (for the context tables).
@@ -1293,6 +1287,7 @@ const ZERO_VIEW: View = View {
     water: 0,
     built: 0,
     road_near: 0,
+    near_traffic: 0,
     length: 1.0,
 };
 
@@ -1347,9 +1342,20 @@ impl CostModel {
             forest_edge: [(1.0, 1.0); 16],
             water: [(1.0, 1.0); 16],
             road: [(1.0, 1.0); 64],
+            alongside: [0; 256],
         };
         for i in 0..256usize {
             let lo = (i & 15) as u8;
+            t.alongside[i] = membership(
+                PrefId::Quiet,
+                &View {
+                    road_near: lo,
+                    near_traffic: (i >> 4) as u8,
+                    ..ZERO_VIEW
+                },
+                (0, Confidence::Tagged),
+                None,
+            );
             t.forest_built[i] = self.ctx_products(
                 &[PrefId::Forest, PrefId::Built, PrefId::Open],
                 &View {
@@ -1414,15 +1420,16 @@ impl CostModel {
             return self.compile_into(g, personal, out);
         }
         let personal = personal.filter(|p| p.fits(m));
-        // per tag class: (quality, bonus); quality infinite when a limit excludes it
-        let tags: Vec<(f32, f32)> = classes
+        // per tag class: (quality, bonus, `quiet`'s level of the way's own traffic); quality infinite
+        // when a limit excludes it
+        let tags: Vec<(f32, f32, i8)> = classes
             .rep
             .iter()
             .map(|&r| {
                 let v = View::decode(c, r as usize);
                 let surface = v.surface();
                 if self.excluded(&v, surface, 0.0, 0.0).is_some() {
-                    return (f32::INFINITY, 1.0);
+                    return (f32::INFINITY, 1.0, 0);
                 }
                 let (mut q, mut bonus) = (1.0, 1.0);
                 Self::products(
@@ -1445,7 +1452,13 @@ impl CostModel {
                     &mut q,
                     &mut bonus,
                 );
-                (q, bonus)
+                // the own part only: a context-free view of the class (the tags it is keyed by)
+                let own = View {
+                    road_near: 0,
+                    near_traffic: 0,
+                    ..v
+                };
+                (q, bonus, membership(PrefId::Quiet, &own, surface, None))
             })
             .collect();
         let ct = self.ctx_tables();
@@ -1464,7 +1477,7 @@ impl CostModel {
         out.resize(m * 2, f32::INFINITY);
         let mut min_seen = f32::INFINITY;
         for (e, pair) in out.as_chunks_mut::<2>().0.iter_mut().enumerate() {
-            let (tq, tb) = tags[usize::from(classes.tag[e])];
+            let (tq, tb, quiet_own) = tags[usize::from(classes.tag[e])];
             if !tq.is_finite() {
                 continue;
             }
@@ -1489,6 +1502,10 @@ impl CostModel {
             for (pq, pb) in parts {
                 q *= pq;
                 bonus *= pb;
+            }
+            if let Some(t) = &self.quiet {
+                let along = ct.alongside[road_near | usize::from(c.ctx3[e] & 15) << 4];
+                q *= at(t, quiet_own.min(along));
             }
             let len = crate::attrs::length_m_of(c.length_dm[e]);
             let mut penalty = f32::from(c.diff[e] >> 6) * BARRIER_M;
@@ -1573,10 +1590,13 @@ pub(crate) fn cost_surface(g: &Graph, e: EdgeId) -> (SurfaceClass, Confidence) {
     (SurfaceClass::from_code(s).unwrap_or_default(), conf)
 }
 
-/// The traffic level the cost uses for an edge, 0..=1 (`quiet` penalises it).
+/// The traffic level `quiet` penalises on an edge, 0..=1, and whether it is the traffic of the
+/// roads beside it (louder than the way's own).
 #[must_use]
-pub(crate) fn traffic_level(g: &Graph, e: EdgeId) -> f32 {
-    View::decode(g.edge_columns(), e as usize).traffic()
+pub(crate) fn traffic_level(g: &Graph, e: EdgeId) -> (f32, bool) {
+    let v = View::decode(g.edge_columns(), e as usize);
+    let (own, along) = (v.traffic(), v.alongside());
+    (own.max(along), along > own)
 }
 
 impl CostModel {

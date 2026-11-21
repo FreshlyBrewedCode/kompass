@@ -45,6 +45,7 @@ pub mod schema;
 pub mod search;
 pub mod spatial;
 pub mod testing;
+pub mod traffic;
 
 pub use catalogue::{Catalogue, catalogue};
 pub use graph::{ArcId, EdgeId, Graph, GraphInfo, GraphLoader, NodeId, TileInfo};

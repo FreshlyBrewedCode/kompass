@@ -55,6 +55,7 @@ const COLUMNS: &[&str] = &[
     "water_share",
     "builtup_share",
     "road_near_share",
+    "road_near_traffic",
     "ele_from_m",
     "ele_to_m",
     "ascent_fwd_m",
@@ -63,6 +64,10 @@ const COLUMNS: &[&str] = &[
     "max_grade_bwd_pct",
     "geometry",
 ];
+
+/// Columns added to `edges.parquet` after its schema version 1 that older files lack: read as 0
+/// with a warning (the cost then behaves as before the column), so an older build still compiles.
+const OPTIONAL: &[&str] = &["road_near_traffic"];
 
 /// What the compiler saw (for the command line and the report; no coordinates).
 #[derive(Debug, Clone, Default)]
@@ -78,6 +83,8 @@ pub struct CompileStats {
     /// The largest disagreement between edges about a node's position, 1e-7 degrees.
     pub node_mismatch_e7: i64,
     pub max_length_m: f32,
+    /// What the compiler had to assume (an older file without an optional column).
+    pub warnings: Vec<String>,
 }
 
 fn column<'a>(batch: &'a RecordBatch, name: &str) -> Result<&'a ArrayRef, Error> {
@@ -246,13 +253,22 @@ pub fn read_parquet(path: &Path, zoom: u8) -> Result<(Graph, CompileStats), Erro
         .ok_or_else(|| Error("edges.parquet has no kompass:build_id".into()))?
         .clone();
     let rows = usize::try_from(builder.metadata().file_metadata().num_rows()).unwrap_or(0);
-    let mask = ProjectionMask::columns(builder.parquet_schema(), COLUMNS.iter().copied());
+    let present = |name: &str| builder.schema().fields().iter().any(|f| f.name() == name);
+    let missing: Vec<&str> = OPTIONAL.iter().copied().filter(|n| !present(n)).collect();
+    let mask = ProjectionMask::columns(
+        builder.parquet_schema(),
+        COLUMNS.iter().copied().filter(|n| !missing.contains(n)),
+    );
     let reader = builder.with_projection(mask).with_batch_size(64 * 1024).build()?;
 
     let mut asm = Assembler::new(&build_id, SCHEMA_VERSION, zoom);
     let mut node_of: HashMap<i64, u32> = HashMap::with_capacity(rows);
     let mut stats = CompileStats {
         build_id,
+        warnings: missing
+            .iter()
+            .map(|n| format!("edges.parquet has no column `{n}` (an older pipeline): read as 0; rebuild the region to use it"))
+            .collect(),
         ..CompileStats::default()
     };
     let mut pts = Vec::new();
@@ -304,6 +320,11 @@ pub fn read_parquet(path: &Path, zoom: u8) -> Result<(Graph, CompileStats), Erro
             c("builtup_share")?,
             c("road_near_share")?,
         );
+        let road_traffic = if missing.contains(&"road_near_traffic") {
+            vec![0.0; b.num_rows()]
+        } else {
+            c("road_near_traffic")?
+        };
         let (asc_f, asc_b, grd_f, grd_b) = (
             c("ascent_fwd_m")?,
             c("ascent_bwd_m")?,
@@ -377,6 +398,7 @@ pub fn read_parquet(path: &Path, zoom: u8) -> Result<(Graph, CompileStats), Erro
                 water: f(water[i] / 100.0),
                 builtup: f(builtup[i] / 100.0),
                 road_near: f(road[i] / 100.0),
+                road_near_traffic: f(road_traffic[i] / 100.0),
                 width_m: opt(width[i]).filter(|&w| w > 0.0).map(f),
                 ascent_fwd_m: f(asc_f[i]),
                 ascent_bwd_m: f(asc_b[i]),

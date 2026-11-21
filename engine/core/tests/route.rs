@@ -628,6 +628,7 @@ fn random_attrs(rng: &mut Rng) -> EdgeAttrs {
         water: rng.unit(),
         builtup: rng.unit(),
         road_near: rng.unit(),
+        road_near_traffic: rng.unit(),
         width_m: None,
         ascent_fwd_m: rng.unit() * 15.0,
         ascent_bwd_m: rng.unit() * 15.0,
@@ -1549,5 +1550,122 @@ fn edge_costs_by_bbox_cover_the_box() {
         planner
             .edge_costs(&p, &EdgeSelection::Bbox([f64::NAN, 0.0, 1.0, 1.0]))
             .is_err()
+    );
+}
+
+/// A cycle path right beside a primary road and a quieter one away from roads, 15 % longer: the
+/// roadside path's traffic comes from the road alongside (`road_near_traffic` × `road_near_share` ×
+/// 0.3), so seeking quiet now moves the route off it; without the column (an older build) it stays.
+#[test]
+fn quiet_moves_the_route_off_a_roadside_path() {
+    use kompass_core::explain::{ExplainEdgeRequest, TrafficFrom};
+    let path = |road_near: f32, road_near_traffic: f32| EdgeAttrs {
+        highway: Highway::Cycleway,
+        surface: SurfaceClass::PavedSmooth,
+        cycleway: CyclewayKind::SeparatePath,
+        road_near,
+        road_near_traffic,
+        ..EdgeAttrs::default()
+    };
+    // beside a primary at 80 km/h (level 0.9 × 0.91 ≈ 0.8) for its whole length
+    let roadside = path(1.0, 0.8);
+    let away = path(0.0, 0.0);
+    let gravel = kompass_core::presets::preset("gravel_explorer").unwrap().profile;
+    let d = diamond(roadside, HALF_M, away, HALF_M * 1.15, None);
+    assert!(
+        takes_top(&d, &Profile::default(), None),
+        "neutral: the shorter roadside path"
+    );
+    assert!(
+        !takes_top(&d, &gravel, None),
+        "Gravel explorer (quiet 50) leaves the roadside path"
+    );
+    assert!(
+        !takes_top(&d, &weights(&[(PrefId::Quiet, 50)]), None),
+        "quiet 50 alone does too"
+    );
+    // the same ways from an older build: no traffic beside them, the shorter way wins
+    let old = diamond(path(1.0, 0.0), HALF_M, away, HALF_M * 1.15, None);
+    assert!(takes_top(&old, &gravel, None));
+
+    // the membership, as the cost debug view explains it
+    let mut planner = Planner::new(d.built.graph.clone());
+    let explain = |planner: &mut Planner, h: usize| {
+        planner
+            .explain_edge(&ExplainEdgeRequest {
+                profile: weights(&[(PrefId::Quiet, 100)]),
+                edge: d.built.edge(h),
+            })
+            .unwrap()
+    };
+    let x = explain(&mut planner, d.top[0]);
+    assert_eq!(x.traffic_from, TrafficFrom::Alongside);
+    assert!((x.traffic - 0.24).abs() < 1e-6, "0.8 × 1 × 0.3: {}", x.traffic);
+    let quiet = x
+        .along
+        .preferences
+        .iter()
+        .find(|p| p.id == PrefId::Quiet)
+        .unwrap();
+    assert!(
+        (quiet.membership + 4.0 / 15.0).abs() < 1e-6,
+        "quantised: {}",
+        quiet.membership
+    );
+    assert!(
+        quiet.factor > 1.4 && quiet.factor < 1.5,
+        "4^(4/15): {}",
+        quiet.factor
+    );
+    let attr = x
+        .attributes
+        .iter()
+        .find(|a| a.attribute == "road_near_traffic")
+        .unwrap();
+    assert_eq!(attr.value, Some(kompass_core::explain::AttrValue::Number(80.0)));
+    let y = explain(&mut planner, d.bottom[0]);
+    assert_eq!(y.traffic_from, TrafficFrom::Way);
+    assert!(y.traffic.abs() < 1e-6);
+}
+
+/// A road keeps its own traffic level: the roads beside it never make it quieter, and a louder one
+/// within 20 m makes a quiet road count as loud as a path beside that road would.
+#[test]
+fn roads_keep_their_own_traffic_level() {
+    use kompass_core::explain::{ExplainEdgeRequest, TrafficFrom};
+    let primary = EdgeAttrs {
+        highway: Highway::Primary,
+        surface: SurfaceClass::PavedSmooth,
+        maxspeed_kmh: Some(100),
+        road_near: 1.0,
+        road_near_traffic: 0.9,
+        ..EdgeAttrs::default()
+    };
+    let service_beside = EdgeAttrs {
+        highway: Highway::Service,
+        surface: SurfaceClass::PavedSmooth,
+        road_near: 1.0,
+        road_near_traffic: 0.9,
+        ..EdgeAttrs::default()
+    };
+    let d = diamond(primary, HALF_M, service_beside, HALF_M, None);
+    let mut planner = Planner::new(d.built.graph.clone());
+    let explain = |planner: &mut Planner, h: usize| {
+        planner
+            .explain_edge(&ExplainEdgeRequest {
+                profile: weights(&[(PrefId::Quiet, 100)]),
+                edge: d.built.edge(h),
+            })
+            .unwrap()
+    };
+    let road = explain(&mut planner, d.top[0]);
+    assert_eq!(road.traffic_from, TrafficFrom::Way);
+    assert!((road.traffic - 0.9).abs() < 1e-6, "{}", road.traffic);
+    let service = explain(&mut planner, d.bottom[0]);
+    assert_eq!(service.traffic_from, TrafficFrom::Alongside);
+    assert!(
+        (service.traffic - 0.28).abs() < 1e-6,
+        "0.9 is 14/15: {}",
+        service.traffic
     );
 }

@@ -13,7 +13,7 @@
 //!   edge's cost, every step, both directions; `--time` times the bulk edge costs.
 //! - `kompass profile schema | catalogue [--build <dir>] | presets`: the profile's JSON Schema, the
 //!   catalogue (with coverage shares of a region), the shipped presets.
-//! - `kompass schema --write <dir> | --check <dir>`: the generated JSON Schemas and TypeScript types.
+//! - `kompass schema --write <dir> | --check <dir> [--traffic <file>]`: the generated JSON Schemas and TypeScript types (and the traffic model for the pipeline).
 //! - `kompass bench --build <dir>`: seeded random routes at ~10/50/100 km under the main presets.
 //! - `kompass compare --build <dir> --profiles a,b`: route quality of profiles on seeded random pairs.
 //! - `kompass match --build <dir> [--geojson <dir>] [--explored <file>] <gpx files or directories>`:
@@ -49,7 +49,7 @@ const USAGE: &str = "usage: kompass [--version | --help]
                      [--out <file>] [--segments] [--radius <m>] [--explain] [--why-not <lon,lat>]
        kompass explain --build <dir> --profile <file|preset> (--edge <id> [--json] | --time)
        kompass profile schema | catalogue [--build <dir>] | presets
-       kompass schema --write <dir> | --check <dir>
+       kompass schema --write <dir> | --check <dir> [--traffic <file>]
        kompass bench --build <dir> [--pairs <n>] [--seed <n>] [--profiles <a,b>]
        kompass compare --build <dir> --profiles <a,b,...> [--pairs <n>] [--km <min-max>] [--seed <n>] [--out-dir <dir>]";
 
@@ -215,6 +215,9 @@ fn compile(a: &Args) -> Result<(), Failure> {
         "longest edge {:.1} m; node positions agree within {} e-7 deg",
         stats.max_length_m, stats.node_mismatch_e7
     );
+    for w in &stats.warnings {
+        eprintln!("warning: {w}");
+    }
     let sum = |dir: &str| {
         written
             .files
@@ -407,8 +410,11 @@ fn profile(rest: &[String]) -> Result<(), Failure> {
 }
 
 fn schema(a: &Args) -> Result<(), Failure> {
-    a.only(&["--write", "--check"])?;
+    a.only(&["--write", "--check", "--traffic"])?;
     let files = kompass_core::schema::files();
+    // the traffic model for the pipeline (`pipeline/src/kompass_pipeline/traffic.json`)
+    let traffic = a.get("--traffic").map(PathBuf::from);
+    let table = kompass_core::traffic::table_json();
     if let Some(dir) = a.get("--write") {
         let dir = PathBuf::from(dir);
         std::fs::create_dir_all(&dir)?;
@@ -416,17 +422,26 @@ fn schema(a: &Args) -> Result<(), Failure> {
             std::fs::write(dir.join(name), contents)?;
         }
         println!("wrote {} files to {}", files.len(), dir.display());
+        if let Some(t) = &traffic {
+            std::fs::write(t, &table)?;
+            println!("wrote {}", t.display());
+        }
         return Ok(());
     }
     let dir = a
         .get("--check")
         .map(PathBuf::from)
         .ok_or_else(|| Failure::Usage("schema needs --write <dir> or --check <dir>".into()))?;
-    let stale: Vec<&str> = files
+    let mut stale: Vec<&str> = files
         .iter()
         .filter(|(name, contents)| std::fs::read_to_string(dir.join(name)).ok().as_ref() != Some(contents))
         .map(|(name, _)| *name)
         .collect();
+    if let Some(t) = &traffic
+        && std::fs::read_to_string(t).ok().as_ref() != Some(&table)
+    {
+        stale.push("the traffic table");
+    }
     if stale.is_empty() {
         println!("{} files up to date", files.len());
         Ok(())

@@ -243,6 +243,14 @@ COLUMNS: tuple[Column, ...] = (
     _c("builtup_share", u8, "Percent inside built-up landuse."),
     _c("road_near_share", u8, "Percent within 20 m of a motor road (100 on roads themselves)."),
     _c(
+        "road_near_traffic",
+        u8,
+        "How loud the motor roads within 20 m are: the traffic level (percent, the engine's model of "
+        "class, speed limit, lanes and motor access; `traffic.json`) of the loudest one, averaged over "
+        "the part of the length within 20 m of one; 0 where none is. On a road it includes the road "
+        "itself.",
+    ),
+    _c(
         "ele_from_m",
         f32,
         "Elevation at the first end node (smoothing keeps the ends raw, so all edges at a node agree).",
@@ -334,6 +342,7 @@ OVERLAY: tuple[OverlayAttr, ...] = (
     _share("water_share", "Near water"),
     _share("builtup_share", "Built-up"),
     _share("road_near_share", "Near a motor road"),
+    _share("road_near_traffic", "Traffic alongside"),
     OverlayAttr(
         "grade_max",
         "Max grade",

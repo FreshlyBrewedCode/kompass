@@ -18,7 +18,7 @@ import {
 } from "@/map/cost";
 import { CostLayer, summarise } from "@/map/cost-layer";
 import { COST_STOPS } from "@/map/palette";
-import { edgeVerdict, partedBounds, prefRowsOf, whyNot } from "@/planner/cost/model";
+import { edgeVerdict, partedBounds, prefRowsOf, roleText, whyNot } from "@/planner/cost/model";
 import { CATALOGUE, result, stretchCost } from "./planner-fake";
 
 describe("the cost scale", () => {
@@ -204,6 +204,7 @@ function edge(along: ArcCostExplanation, against: ArcCostExplanation = along): E
     cost_surface: "gravel",
     surface_source: "tagged",
     traffic: 0,
+    traffic_from: "way",
     attributes: [],
     bounds: { min_factor: 0.5, max_factor: 20 },
     along,
@@ -272,6 +273,14 @@ describe("the verdict of one edge", () => {
     const v = edgeVerdict(edge(main, oneway), CATALOGUE);
     expect(v.title).toBe("Avoided ×5.0: main roads and traffic");
     expect(v.notes).toContain("One-way: only this direction may be ridden.");
+    // a path beside a busy road: its traffic is the road's alongside
+    const roadside = { ...edge(arc({ preferences: [pref("quiet", 50, 1.25)], factor: 1.25 })) };
+    roadside.traffic = 0.27;
+    roadside.traffic_from = "alongside";
+    const r = edgeVerdict(roadside, CATALOGUE);
+    expect(r.title).toBe("Avoided ×1.3: traffic alongside");
+    expect(r.notes).toContain("Traffic from the motor road alongside (within 20 m): level 27 %.");
+    expect(roleText(pref("quiet", 50, 1.25), 1, true)).toBe("road alongside");
     const up = arc({ factor: 1, ascent_m: 20, extra_m: 40, additive: [{ kind: "climb", metres: 40 }] });
     const down = arc({ factor: 0.8, preferences: [pref("unpaved", 85, 0.8)] });
     const w = edgeVerdict(edge(up, down), CATALOGUE);

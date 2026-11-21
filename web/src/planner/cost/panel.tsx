@@ -236,17 +236,20 @@ function Arithmetic({ arc, x, title }: { arc: ArcCostExplanation; x: EdgeExplana
 function PrefLine({
   part,
   gate,
+  alongside,
   open,
   onToggle,
 }: {
   part: PrefPart;
   gate: number;
+  /** the edge's traffic is the road's beside it */
+  alongside: boolean;
   open: boolean;
   onToggle: () => void;
 }) {
   const pref = usePlan((s) => s.catalogue?.preferences.find((p) => p.id === part.id));
   const inPlan = usePlan((s) => part.id in s.weights || (s.catalogue?.core.includes(part.id) ?? false));
-  const role = roleText(part, gate);
+  const role = roleText(part, gate, alongside);
   return (
     <li data-testid={`cost-pref-${part.id}`}>
       <button
@@ -385,6 +388,7 @@ export function CostPanel({
                     key={p.id}
                     part={p}
                     gate={best?.gate ?? 1}
+                    alongside={fresh?.traffic_from === "alongside"}
                     open={open === p.id}
                     onToggle={() => toggle(p.id)}
                   />
@@ -415,6 +419,7 @@ export function CostPanel({
             <p className="mt-1 text-muted-foreground">
               Surface for the cost: {fresh.cost_surface.replace(/_/g, " ")} (
               {fresh.surface_source.replace(/_/g, " ")}), traffic {Math.round(fresh.traffic * 100)} %
+              {fresh.traffic_from === "alongside" && " (from the road alongside)"}
             </p>
             <dl className="mt-1 grid grid-cols-[1fr_auto] gap-x-4 gap-y-0.5">
               {fresh.attributes.map((a) => (

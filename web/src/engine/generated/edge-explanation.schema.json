@@ -28,9 +28,13 @@
       "$ref": "#/$defs/SurfaceSource"
     },
     "traffic": {
-      "description": "The traffic level, 0..=1, that `quiet` penalises.",
+      "description": "The traffic level, 0..=1, that `quiet` penalises: the louder of the way's own and the\ntraffic it gets from the roads beside it.",
       "type": "number",
       "format": "float"
+    },
+    "traffic_from": {
+      "description": "Where `traffic` comes from.",
+      "$ref": "#/$defs/TrafficFrom"
     },
     "attributes": {
       "description": "Every attribute the graph keeps for the edge.",
@@ -58,6 +62,7 @@
     "cost_surface",
     "surface_source",
     "traffic",
+    "traffic_from",
     "attributes",
     "bounds",
     "along",
@@ -131,6 +136,21 @@
           "description": "Untagged, a guess: counts 0.7 for the surface preferences, closed by `paved_only` and\n`no_unknown_surface`.",
           "type": "string",
           "const": "weak_guess"
+        }
+      ]
+    },
+    "TrafficFrom": {
+      "description": "Where the traffic level of an edge comes from.",
+      "oneOf": [
+        {
+          "description": "The way's own traffic (road class, speed, lanes, access, a cycle track on it); 0 on paths.",
+          "type": "string",
+          "const": "way"
+        },
+        {
+          "description": "The motor roads within 20 m: their level (`road_near_traffic`) × the share of the way near\nthem (`road_near_share`) × 0.3, louder than the way's own.",
+          "type": "string",
+          "const": "alongside"
         }
       ]
     },

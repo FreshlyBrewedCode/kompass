@@ -84,6 +84,19 @@ fn the_generated_types_are_up_to_date() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
 }
 
+/// The traffic model the pipeline reads (`pipeline/src/kompass_pipeline/traffic.json`) is the
+/// engine's (`bun run gen:engine` rewrites it).
+#[test]
+fn the_pipeline_traffic_table_is_up_to_date() {
+    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../pipeline/src/kompass_pipeline/traffic.json");
+    let got = std::fs::read_to_string(&file).unwrap_or_default();
+    assert!(
+        got == kompass_core::traffic::table_json(),
+        "pipeline/src/kompass_pipeline/traffic.json is stale: run `bun run gen:engine`"
+    );
+}
+
 #[test]
 fn prints_the_profile_schema_catalogue_and_presets() {
     let run = |args: &[&str]| {

@@ -79,9 +79,12 @@ export function closureTag(c: Closure): string {
   return `${key}=${value}`;
 }
 
-/** A preference as a word in a sentence: what it rewards or punishes here. */
-export function prefNoun(id: PrefId, factor: number): string {
-  if (id === "quiet") return factor > 1 ? "traffic" : "quiet";
+/**
+ * A preference as a word in a sentence: what it rewards or punishes here. `alongside`: the edge's
+ * traffic is the road's beside it (a path along a busy road), not its own.
+ */
+export function prefNoun(id: PrefId, factor: number, alongside = false): string {
+  if (id === "quiet") return factor > 1 ? (alongside ? "traffic alongside" : "traffic") : "quiet";
   if (id === "climb") return "climbing";
   if (id === "built") return "built-up";
   return noun(id);
@@ -143,11 +146,13 @@ export function edgeVerdict(x: EdgeExplanation, catalogue: Catalogue | null): Ve
   const f = best.factor;
   const { active } = prefRowsOf(best);
   const notes: string[] = [];
+  const alongside = x.traffic_from === "alongside";
+  const noun = (p: PrefPart) => prefNoun(p.id, p.factor, alongside);
   const words = (sign: 1 | -1, n = 2) =>
     active
       .filter((p) => (sign < 0 ? p.factor < 1 : p.factor > 1))
       .slice(0, n)
-      .map((p) => prefNoun(p.id, p.factor));
+      .map(noun);
   let tone: Tone;
   let title: string;
   if (best.clamp === "min") {
@@ -171,8 +176,13 @@ export function edgeVerdict(x: EdgeExplanation, catalogue: Catalogue | null): Ve
     title =
       active.length === 0
         ? `Neutral ${formatFactor(f)}: nothing in this profile applies`
-        : `Neutral ${formatFactor(f)}: ${list(active.slice(0, 2).map((p) => prefNoun(p.id, p.factor)))} about cancel out`;
+        : `Neutral ${formatFactor(f)}: ${list(active.slice(0, 2).map(noun))} about cancel out`;
   }
+  const quiet = best.preferences.find((p) => p.id === "quiet");
+  if (alongside && quiet && quiet.factor > 1 + NO_EFFECT)
+    notes.push(
+      `Traffic from the motor road alongside (within 20 m): level ${Math.round(x.traffic * 100)} %.`,
+    );
   if (best.gate < 0.999 && best.bonus < 0.999)
     notes.push(
       `The landscape bonuses count only ${Math.round(best.gate * 100)} %: the way itself is not good enough for them.`,
@@ -206,8 +216,12 @@ function dedupe(closures: Closure[]): Closure[] {
   });
 }
 
-/** How a preference row reads its role: "bonus, counts 60 %" for a gated bonus through a part gate. */
-export function roleText(p: PrefPart, gate: number): string {
+/**
+ * How a preference row reads its role: "bonus, counts 60 %" for a gated bonus through a part gate;
+ * "road alongside" for traffic that comes from the road beside the way.
+ */
+export function roleText(p: PrefPart, gate: number, alongside = false): string {
+  if (p.id === "quiet" && alongside && p.factor > 1) return "road alongside";
   if (p.role === "gated_bonus") return gate < 0.999 ? `bonus, counts ${Math.round(gate * 100)} %` : "bonus";
   if (p.role === "gated_penalty") return "penalty";
   if (p.role === "additive") return "metres on top";
