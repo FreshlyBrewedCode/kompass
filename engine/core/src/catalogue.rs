@@ -217,6 +217,16 @@ impl PrefMeta {
     }
 }
 
+/// A "steeper than X %" preference: a grade threshold of the family (the ramp is
+/// [`crate::cost::grade_ramp`]). Strong when avoided (4× at −100 on a full match, and they stack), a
+/// mild bonus when sought.
+const fn ramps_over(label: &'static str, short: &'static str, hint: &'static str) -> PrefMeta {
+    p(Group::Terrain, label, short, hint, -60, 0.85, 4.0).data(
+        "max_grade_fwd_pct",
+        "From a surface model: forest grades are discounted, they are mostly canopy noise.",
+    )
+}
+
 /// The facts of a preference. The bonus and penalty strengths are the tuning knobs of the cost
 /// model (tuned on a real region, see the PR of #18 and `docs/profile.md`).
 #[must_use]
@@ -518,6 +528,11 @@ pub fn pref_meta(id: PrefId) -> PrefMeta {
             "max_grade_fwd_pct",
             "From a surface model: forest grades are discounted, they are mostly canopy noise.",
         ),
+        PrefId::RampsOver6 => ramps_over("Steeper than 6 %", "Over 6 %", "Climbs over 6 %, full at 9 %; descents count half."),
+        PrefId::RampsOver8 => ramps_over("Steeper than 8 %", "Over 8 %", "Climbs over 8 %, full at 11 %; descents count half."),
+        PrefId::RampsOver10 => ramps_over("Steeper than 10 %", "Over 10 %", "Climbs over 10 %, full at 13 %; descents count half."),
+        PrefId::RampsOver12 => ramps_over("Steeper than 12 %", "Over 12 %", "Climbs over 12 %, full at 15 %; descents count half."),
+        PrefId::RampsOver15 => ramps_over("Steeper than 15 %", "Over 15 %", "Climbs over 15 %, full at 18 %; descents count half."),
         PrefId::BikeRoutes => p(
             Signs,
             "Signed bike routes",

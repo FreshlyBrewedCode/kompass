@@ -324,6 +324,18 @@ fn tamed_grade(max_grade: u8, ascent_dm: u16, len: f32, forest: u8) -> f32 {
     (f32::from(max_grade).min(2.5 * avg + 5.0) - 5.0 * share(forest)).max(0.0)
 }
 
+/// The tamed steepest grade of an arc up and down (percent): what the grade preferences and
+/// `max_grade` see.
+#[must_use]
+pub fn arc_grade_pct(g: &Graph, a: crate::ArcId) -> (f32, f32) {
+    let c = g.edge_columns();
+    let e = arc_edge(a) as usize;
+    let v = View::decode(c, e);
+    let fwd = tamed_grade(c.grade_fwd[e], c.ascent_fwd_dm[e], v.length, v.forest);
+    let bwd = tamed_grade(c.grade_bwd[e], c.ascent_bwd_dm[e], v.length, v.forest);
+    if arc_is_reverse(a) { (bwd, fwd) } else { (fwd, bwd) }
+}
+
 /// Ascent that counts, metres: the part beyond the deadband.
 #[inline]
 fn effective_ascent(ascent_dm: u16, len: f32, forest: u8) -> f32 {
@@ -516,7 +528,57 @@ pub(crate) fn membership(
             })
         }
         // directional: see the arc terms
-        PrefId::Climb | PrefId::Steep => 0,
+        PrefId::Climb
+        | PrefId::Steep
+        | PrefId::RampsOver6
+        | PrefId::RampsOver8
+        | PrefId::RampsOver10
+        | PrefId::RampsOver12
+        | PrefId::RampsOver15 => 0,
+    }
+}
+
+/// How a grade preference matches an arc: 0 up to `from_pct` of tamed grade uphill, rising linearly
+/// to 1 at `full_pct`; a descent counts at `downhill` times that rate (so it reaches 1 later). The
+/// arc's membership is the larger of the two.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GradeRamp {
+    pub from_pct: f32,
+    pub full_pct: f32,
+    pub downhill: f32,
+}
+
+impl GradeRamp {
+    /// The membership level at a tamed grade up and down.
+    #[inline]
+    fn level(self, up: f32, down: f32) -> i8 {
+        let span = self.full_pct - self.from_pct;
+        let up = (up - self.from_pct) / span;
+        let down = self.downhill * (down - self.from_pct) / span;
+        lv(up.max(down).clamp(0.0, 1.0))
+    }
+}
+
+/// The ramp of a grade preference (`steep` and the "steeper than X %" family), `None` for the
+/// others. `steep` is the gentle one (8 → 16 %); the family's ramps are 3 points wide, so a
+/// threshold has no cliff but still means what it says.
+#[must_use]
+pub fn grade_ramp(id: PrefId) -> Option<GradeRamp> {
+    let r = |from_pct: f32, full_pct: f32| {
+        Some(GradeRamp {
+            from_pct,
+            full_pct,
+            downhill: 0.5,
+        })
+    };
+    match id {
+        PrefId::Steep => r(8.0, 16.0),
+        PrefId::RampsOver6 => r(6.0, 9.0),
+        PrefId::RampsOver8 => r(8.0, 11.0),
+        PrefId::RampsOver10 => r(10.0, 13.0),
+        PrefId::RampsOver12 => r(12.0, 15.0),
+        PrefId::RampsOver15 => r(15.0, 18.0),
+        _ => None,
     }
 }
 
@@ -583,7 +645,8 @@ pub struct CostModel {
     /// `quiet` (quality), apart: its membership reads the tags (the way's own traffic) and the
     /// context (the roads beside it), which the class compile looks up separately.
     quiet: Option<Table>,
-    steep: Option<Table>,
+    /// The grade preferences (quality, directional): `steep` and the "steeper than X %" family.
+    grades: Vec<(PrefId, GradeRamp, Table)>,
     /// Seeking climbs (gated, directional).
     climb_bonus: Option<Table>,
     /// Avoiding climbs: metres per metre of effective ascent.
@@ -703,7 +766,7 @@ impl CostModel {
             quality: Vec::new(),
             gated: Vec::new(),
             quiet: None,
-            steep: None,
+            grades: Vec::new(),
             climb_bonus: None,
             climb_cost: 0.0,
             limits: Limits::default(),
@@ -715,8 +778,11 @@ impl CostModel {
             if w == 0.0 {
                 continue;
             }
+            if let Some(r) = grade_ramp(id) {
+                m.grades.push((id, r, table(id, w)));
+                continue;
+            }
             match id {
-                PrefId::Steep => m.steep = Some(table(id, w)),
                 PrefId::Quiet => m.quiet = Some(table(id, w)),
                 PrefId::Climb if w > 0.0 => m.climb_bonus = Some(table(id, w)),
                 PrefId::Climb => m.climb_cost = -w * pref_meta(id).max_penalty,
@@ -873,7 +939,7 @@ impl CostModel {
         out.clear();
         out.resize(m * 2, f32::INFINITY);
         let personal = personal.filter(|p| p.fits(m));
-        let need_grade = self.steep.is_some() || self.limits.max_grade.is_some();
+        let need_grade = !self.grades.is_empty() || self.limits.max_grade.is_some();
         let mut min_seen = f32::INFINITY;
         for e in 0..m {
             let v = View::decode(c, e);
@@ -945,10 +1011,8 @@ impl CostModel {
     ) -> f32 {
         let mut q = q;
         let mut bonus = bonus;
-        if let Some(t) = &self.steep {
-            let up = (grade_up - 8.0) / 8.0;
-            let down = 0.5 * (grade_down - 8.0) / 8.0;
-            q *= at(t, lv(up.max(down).clamp(0.0, 1.0)));
+        for (_, r, t) in &self.grades {
+            q *= at(t, r.level(grade_up, grade_down));
         }
         if let Some(t) = &self.climb_bonus {
             let rate = effective_ascent(ascent_dm, len, forest) / len.max(1.0);
@@ -1053,14 +1117,12 @@ impl CostModel {
             });
         }
         // the directional ones, as in `arc_factor`
-        if let Some(t) = &self.steep {
-            let up = (grade[dir] - 8.0) / 8.0;
-            let down = 0.5 * (grade[1 - dir] - 8.0) / 8.0;
-            let m = lv(up.max(down).clamp(0.0, 1.0));
+        for (id, r, t) in &self.grades {
+            let m = r.level(grade[dir], grade[1 - dir]);
             let f = at(t, m);
             q *= f;
             terms.push(Term {
-                id: PrefId::Steep,
+                id: *id,
                 membership: level(m),
                 factor: f,
                 role: Role::Quality,
@@ -1471,7 +1533,7 @@ impl CostModel {
         } else {
             Vec::new()
         };
-        let need_grade = self.steep.is_some() || self.limits.max_grade.is_some();
+        let need_grade = !self.grades.is_empty() || self.limits.max_grade.is_some();
         let per_arc = need_grade || self.climb_bonus.is_some() || self.climb_cost > 0.0;
         out.clear();
         out.resize(m * 2, f32::INFINITY);
