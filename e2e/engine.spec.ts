@@ -41,9 +41,13 @@ test("the graph downloads with progress, is cached on the device, and routes off
   context,
 }, testInfo) => {
   const log = requestLog(page);
-  // slow the graph files down a little, so the download state is visible on this tiny region
+  // slow the graph files down, each one more than the last, so the download state and its progress
+  // text stay visible on this tiny region (with one common delay they all landed at once and the
+  // progress text could be gone before the assertion ran)
+  let delayed = 0;
   await page.route(/\/data\/graph\//, async (r) => {
-    await new Promise((resolve) => setTimeout(resolve, 1200));
+    delayed += 1;
+    await new Promise((resolve) => setTimeout(resolve, 800 + delayed * 300));
     await r.continue();
   });
   await page.goto("./?dev");
