@@ -161,3 +161,29 @@ whole route per preference; `--why-not lon,lat` routes again through that point 
 adds the least straight-line distance) and prints the comparison. Text only, no coordinates; the GeoJSON
 then goes only to `--out`. `kompass explain --build … --profile … --edge <id> [--json]` prints one edge;
 `--time` times `edgeCosts`.
+
+## Route quality against the rider's rides
+
+`kompass replay` (`engine/cli/src/replay.rs`) asks the vision's question, "routes the rider would actually
+ride", of the rider's own history. Each recorded ride is map-matched ([matching.md](matching.md)) and cut
+into legs of about `--leg-km` (graph node to graph node; legs with a chain break, or whose end points are
+closer than `--min-straight` × the ridden length, are skipped: no A→B router reproduces a loop). Every
+profile routes each leg; `--ref name=dir` adds another router's answer (`<dir>/ride<k>-leg<j>.gpx`, e.g. a
+local BRouter fed from `legs.json`), map-matched onto the same graph, so all lines are arc lists measured
+alike:
+
+- **reproduced**: the share of the ridden length the line rides too (edges, either direction; a parallel
+  way such as a road and its sidepath counts as missed), and **on ridden**, the share of the line that was
+  ridden;
+- length against the ridden line, ascent (the tamed one), unpaved share, main roads, roadside cycle paths,
+  km beside busy roads (`road_near_traffic` ≥ 0.45 over half of a path or track), paved tracks, the mix of
+  way types;
+- under the first profile (the judge): its cost of every line, the length at its `min_factor` clamp, what it
+  closes on each line (for the ridden line also by access tag), and per preference the length-weighted
+  geometric mean factor;
+- turns (≥ 45° at a junction) per km and zigzags (a turn the other way within 300 m);
+- where the judge's route leaves the ridden line: the `compare` stretches of ≥ 300 m with a first grouping.
+
+Stdout holds numbers and ride/leg indices only; `--out-dir` gets the private detail (`legs.json` with the
+end points, a GeoJSON per leg with every line, `stretches.txt`), so it belongs under `data/` or a temporary
+directory. The first round is [the route-quality report](reports/2026-11-21-route-quality.md).

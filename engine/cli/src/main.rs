@@ -18,6 +18,8 @@
 //! - `kompass compare --build <dir> --profiles a,b`: route quality of profiles on seeded random pairs.
 //! - `kompass match --build <dir> [--geojson <dir>] [--explored <file>] <gpx files or directories>`:
 //!   map-matches recorded tracks, prints aggregate numbers (`docs/matching.md`).
+//! - `kompass replay --build <dir> --profiles <a,b> [--ref name=dir]... <gpx files>`: route quality
+//!   against the lines the rider actually rode, leg by leg (overlap, surfaces, roads, turns).
 
 #![allow(
     clippy::doc_markdown,
@@ -31,6 +33,7 @@ mod bench;
 mod explain;
 mod gpx;
 mod matchcmd;
+mod replay;
 mod route;
 
 use std::path::PathBuf;
@@ -45,6 +48,9 @@ const USAGE: &str = "usage: kompass [--version | --help]
        kompass info --build <dir> [--snaps <n>]
        kompass match --build <dir> [--geojson <dir>] [--explored <file>] [--no-geometry]
                      [--radius|--candidates|--sigma|--beta|--step|--skip|--gap|--spur <v>] <gpx files or directories>
+       kompass replay --build <dir> [--profiles <a,b,...>] [--ref <name>=<dir>]... [--leg-km <km>] [--min-straight <r>]
+                      [--leg ride<k>-leg<j>] [--out-dir <dir>]
+                      <gpx files or directories>
        kompass route --build <dir> --profile <file|preset> --from <lon,lat> [--via <lon,lat>]... --to <lon,lat>
                      [--out <file>] [--segments] [--radius <m>] [--explain] [--why-not <lon,lat>]
        kompass explain --build <dir> --profile <file|preset> (--edge <id> [--json] | --time)
@@ -68,6 +74,7 @@ fn main() -> ExitCode {
         Some("compile") => Args::parse(rest, &[]).and_then(|a| compile(&a)),
         Some("info") => Args::parse(rest, &[]).and_then(|a| info(&a)),
         Some("match") => matchcmd::run(rest),
+        Some("replay") => replay::run(rest),
         Some("route") => Args::parse(rest, &["--segments", "--explain"]).and_then(|a| route::run(&a)),
         Some("explain") => Args::parse(rest, &["--json", "--time"]).and_then(|a| explain::run(&a)),
         Some("profile") => profile(rest),

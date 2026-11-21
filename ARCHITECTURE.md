@@ -72,6 +72,5 @@ agent's `set_profile` tool on the generated schema.
 - OSM gaps: many tracks lack `surface`. Keep *unknown* explicit and let personal corrections
   fill in over time.
 - OSM has no traffic volumes. "Quiet" is a proxy; official German count data may help.
-- Evaluation: compare against BRouter's gravel profile, and use my own history as ground truth.
 - Privacy: the repo is public. No home location, tracks, names, tokens or hostnames go into
   the repo.
