@@ -144,6 +144,8 @@ export type PlanState = {
   picker: boolean;
   lineBy: LineBy;
   inspect: boolean;
+  /** the route lines are hidden so the map under them reads (the shell's toggle, `H`; not saved) */
+  routeHidden: boolean;
   /** a row that was just added (flashes, opens as a chip) */
   fresh: string | null;
   /** metres along the main route under the timeline's cursor */
@@ -220,6 +222,7 @@ export class PlannerStore {
       picker: false,
       lineBy: r?.lineBy ?? "plain",
       inspect: false,
+      routeHidden: false,
       fresh: null,
       cursorM: null,
       fitSeq: 0,
@@ -593,6 +596,9 @@ export class PlannerStore {
   }
   setInspect(inspect: boolean) {
     this.#set({ inspect });
+  }
+  setRouteHidden(routeHidden: boolean) {
+    if (routeHidden !== this.#state.routeHidden) this.#set({ routeHidden });
   }
   setCursor(cursorM: number | null) {
     if (cursorM !== this.#state.cursorM) this.#set({ cursorM });

@@ -285,6 +285,14 @@
   color: var(--foreground);
 }
 
+.no-scrollbar {
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 .thin-scroll {
   scrollbar-width: thin;
   overscroll-behavior: contain;

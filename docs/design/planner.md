@@ -296,6 +296,21 @@ deliberately differs:
 - **Engine state**: a dot on the brand mark while the graph loads; the download state replaces the
   summary card as designed. The theme choice (system / light / dark) was added later, in Map & rides (docs/map.md).
 
+## Changed after playtest 1 (#36)
+
+The sections above are the design as drawn; these points override them.
+
+- **Phone stack**: the strip sits *above* the summary card and is **one row that scrolls sideways**
+  (no scrollbar, a fade at an edge with more behind it, the profile chip first, changed preferences
+  next); no "+N" chip on the phone. The tablet keeps the two-row strip.
+- **No agent bar on the phone** for now (`AGENT_ON_PHONE` in `shell.tsx`); the desk and tablet keep it.
+- **Route toggle**: an eye button in the top bar's right pill (only while there is a route), and the
+  key `H`. It hides every route line (plan, ghost, compared, "why not") and the route notes; stops stay.
+  Not saved.
+- **Sliders move only from the knob** (44 px target): a tap or press on the track does nothing, a
+  drag starts after 4 px sideways (a vertical swipe scrolls the sheet), the keyboard as before. The
+  Detours slider uses the same control.
+
 ## Sandbox only
 
 The theme toggle (the real app follows the system setting), the toy engine and its fixed routes,
