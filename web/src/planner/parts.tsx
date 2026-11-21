@@ -41,11 +41,14 @@ import { exportGpx, gpxFilename, routeToGpx } from "./gpx";
 import {
   compareRows,
   deltas,
+  detourHint,
+  detourWord,
   elevationProfile,
   fmtKm,
   fmtTime,
   limitNumber,
   limitState,
+  MIN_FACTOR_RANGE,
   presetName,
   SURFACE_GROUP,
   surfaceShares,
@@ -451,6 +454,66 @@ export function AddButton() {
   );
 }
 
+/**
+ * The detours control: not a preference but a bound on all of them: how far the route may leave
+ * the direct way for ways you like (`bounds.min_factor`). Apart from the preference sliders, with its
+ * own heading; the ring is the base profile's value.
+ */
+export function DetoursRow() {
+  const store = usePlanner();
+  const v = usePlan((s) => s.minFactor);
+  const b = usePlan((s) => s.baseMinFactor);
+  const changed = usePlan((s) => s.detours !== null);
+  const { min, max, step } = MIN_FACTOR_RANGE;
+  // left is direct (max), right goes far (min): the slider counts steps of "how far", 0 … 14
+  const steps = Math.round((max - min) / step);
+  const pos = Math.round((max - v) / step);
+  const basePos = (Math.round((max - b) / step) / steps) * 100;
+  const word = detourWord(v);
+  return (
+    <div data-fade data-testid="detours" className="mt-4 rounded-control border border-border px-3 py-2">
+      <div className="flex h-5 items-center gap-1.5">
+        <ChangeDot on={changed} onClick={() => store.resetDetours()} />
+        <span className={cn(label, "min-w-0 truncate")}>Detours</span>
+        <span
+          className="ml-auto shrink-0 whitespace-nowrap font-medium text-muted-foreground text-xs"
+          data-testid="detours-word"
+        >
+          {word}
+        </span>
+      </div>
+      <div className="relative">
+        <input
+          type="range"
+          aria-label="Detours"
+          data-testid="detours-slider"
+          min={0}
+          max={steps}
+          step={1}
+          value={pos}
+          aria-valuetext={`${word}. ${detourHint(v)}`}
+          onChange={(e) => store.setDetours(max - Number(e.target.value) * step)}
+          className="block h-7 w-full cursor-pointer touch-pan-y rounded-full accent-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        />
+        {changed && (
+          <i
+            title="The base profile's value"
+            className="pointer-events-none absolute top-0.5 size-2 -translate-x-1/2 rounded-full border-[1.5px] border-muted-foreground bg-card"
+            style={{ left: `calc(8px + (100% - 16px) * ${basePos / 100})` }}
+          />
+        )}
+      </div>
+      <div className="flex justify-between font-semibold text-2xs text-muted-foreground uppercase tracking-wider">
+        <span>Direct</span>
+        <span>Go far for good ways</span>
+      </div>
+      <p className="mt-1 text-muted-foreground text-xs" data-testid="detours-hint">
+        {detourHint(v)}
+      </p>
+    </div>
+  );
+}
+
 /** The whole profile as a list: sliders, add, limits. */
 export function ProfileList({
   held,
@@ -487,6 +550,7 @@ export function ProfileList({
       <div data-fade className="mt-2">
         <AddButton />
       </div>
+      <DetoursRow />
       <div data-fade id="kp-limits" className="mt-4">
         <div className={cn(label, "flex items-center gap-1.5")}>
           <Lock className="size-3" />

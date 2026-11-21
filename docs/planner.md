@@ -98,9 +98,19 @@ Why the router goes where it goes, for a rider. Three parts on the engine's cost
 Where: the panel and the card take the summary card's place on the phone, the bottom-left slot (above
 the agent bar) on the desk.
 
+## Detours
+
+The profile editor has, apart from the preference sliders and above the limits, a **Detours** control:
+`bounds.min_factor` in a rider's words, from "Direct" (1.0: preferences only avoid) to "Go far for good
+ways" (0.3), in steps of 0.05, with the hint "Up to 1/min_factor × longer for a way you like". It is not a
+preference but the bound on all of them (the clamp, `docs/profile.md`). Like the sliders it is a per-plan
+change on the base preset: the store holds `detours` (`null`: the base's value, saved in the plan only when
+moved), a moved value is a change ("more detours"), has the change dot to reset, and is sent as
+`profile.bounds`.
+
 ## Persistence
 
-- The plan (`kompass.plan.v1` in `localStorage`): waypoints, base id, weights, limits, compared
+- The plan (`kompass.plan.v1` in `localStorage`): waypoints, base id, weights, limits, detours (when moved), compared
   preset, route colouring; written 250 ms after a change and on `pagehide`. Waypoints outside the
   region's bounds are dropped on load; a missing base falls back to Gravel explorer.
 - Own presets (`kompass.presets.v1`): `{ id, blurb, profile }` like the shipped ones; saved, renamed
