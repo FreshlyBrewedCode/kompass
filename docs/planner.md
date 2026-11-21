@@ -66,6 +66,16 @@ itself and calls `setData` only for the source whose data changed. Waypoints are
 (44 px targets, draggable; a drag moves the waypoint live and reroutes), notes are a few HTML
 markers. `fitSeq` in the store asks for a fit (a restored plan, a new comparison).
 
+**Hiding the route**: the eye button in the top bar (shown while there is a route) or the key `H` (not
+while typing in a field) sets `routeHidden` in the store; `RouteLayer` sets the route lines' layout
+`visibility` (`ROUTE_LINES`: main, ghost, compared and "why not" lines with their casings) and drops the
+notes. Markers, the cursor and the plan stay; the state is not saved.
+
+**Sliders** (`KnobSlider` in `parts.tsx`, behind the preference `Dial` and Detours) move only from the
+knob: a press elsewhere on the track is ignored, a drag goes live after 4 px of mostly sideways travel
+(so a vertical swipe on a row scrolls the sheet instead), the knob keeps its offset to the finger.
+Arrow keys step (a preference: 5, Shift or Page keys 25), Home / End go to the ends.
+
 **Taps**: a tap adds a waypoint, or closes the open sheet. Inspecting a way (the region map's
 `pickEdge`, `docs/map.md`) is on only while asked for: "Inspect a way" in Map & rides, available
 with an information layer; `RegionMap.setPicking` turns the map's own tap handling on and off.
