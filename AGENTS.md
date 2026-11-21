@@ -63,7 +63,7 @@ cd engine && cargo run -p kompass-cli -- profile schema | catalogue [--build <di
 cd engine && cargo run --release -p kompass-cli -- bench --build ../data/build/<name>
                          # seeded random routes at ~10/50/100 km, both main presets: compile and route
                          # times, settled nodes, result size (pairs never printed or stored)
-cd engine && cargo run --release -p kompass-cli -- compare --build ../data/build/<name> --profiles a,b [--out-dir /tmp/x]
+cd engine && cargo run --release -p kompass-cli -- compare --build ../data/build/<name> --profiles a,b [--grade 10] [--out-dir /tmp/x]
                          # route quality on seeded random 30–60 km pairs vs. the shortest way (GeoJSON
                          # only where --out-dir points: keep it out of the repo, it shows the region)
 bun run gen:engine       # regenerate web/src/engine/generated/ (JSON Schemas + TypeScript types of the

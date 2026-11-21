@@ -183,9 +183,12 @@ struct Quality {
     bike_path: f64,
     water: f64,
     forest: f64,
+    /// Km whose tamed grade exceeds `--grade` uphill, and downhill.
+    steep_up_km: f64,
+    steep_down_km: f64,
 }
 
-fn quality(g: &Graph, r: &RouteResult, shortest_km: f64) -> Quality {
+fn quality(g: &Graph, r: &RouteResult, shortest_km: f64, grade: f32) -> Quality {
     let s = &r.summary;
     let km = f64::from(s.distance_m) / 1000.0;
     let share = |k: kompass_core::cost::WayKind| {
@@ -203,7 +206,20 @@ fn quality(g: &Graph, r: &RouteResult, shortest_km: f64) -> Quality {
             .sum::<f64>()
             / (km * 1000.0).max(1.0)
     };
+    let steep = |up: bool| {
+        r.arcs
+            .iter()
+            .filter(|&&a| {
+                let (u, d) = kompass_core::cost::arc_grade_pct(g, a);
+                (if up { u } else { d }) > grade
+            })
+            .map(|&a| f64::from(g.length_m(a >> 1)))
+            .sum::<f64>()
+            / 1000.0
+    };
     Quality {
+        steep_up_km: steep(true),
+        steep_down_km: steep(false),
         water: along(&|e| g.water_share(e)),
         forest: along(&|e| g.forest_share(e)),
         km,
@@ -224,9 +240,18 @@ fn quality(g: &Graph, r: &RouteResult, shortest_km: f64) -> Quality {
     reason = "numbers for display; one report"
 )]
 pub(crate) fn compare(a: &Args) -> Result<(), Failure> {
-    a.only(&["--build", "--pairs", "--seed", "--profiles", "--km", "--out-dir"])?;
+    a.only(&[
+        "--build",
+        "--pairs",
+        "--seed",
+        "--profiles",
+        "--km",
+        "--out-dir",
+        "--grade",
+    ])?;
     let build = a.build()?;
     let n: usize = a.number("--pairs", 12)?;
+    let grade: f32 = a.number("--grade", 10.0)?;
     let seed: u64 = a.number("--seed", 0xc0_ffee)?;
     let profiles = profile_list(a, "gravel_explorer,paved_quiet")?;
     let (lo, hi) = a
@@ -270,7 +295,7 @@ pub(crate) fn compare(a: &Args) -> Result<(), Failure> {
         profiles
             .iter()
             .map(|p| format!(
-                "{}: km (detour) unpaved / unknown / main km / tracks / bike paths / ascent",
+                "{}: km (detour) unpaved / unknown / main km / tracks / bike paths / ascent / km up > {grade} %",
                 name(p)
             ))
             .collect::<Vec<_>>()
@@ -284,7 +309,7 @@ pub(crate) fn compare(a: &Args) -> Result<(), Failure> {
             .map_err(|e| Failure::Run(e.message))?;
         let sk = f64::from(base.summary.distance_m) / 1000.0;
         short_km.push(sk);
-        per_profile[profiles.len()].push(quality(planner.graph(), &base, sk));
+        per_profile[profiles.len()].push(quality(planner.graph(), &base, sk, grade));
         if let Some(d) = out_dir {
             let gj = crate::route::geojson(&base, &shortest, false);
             std::fs::write(d.join(format!("pair-{i:02}-shortest.geojson")), gj.to_string())?;
@@ -299,9 +324,9 @@ pub(crate) fn compare(a: &Args) -> Result<(), Failure> {
                     continue;
                 }
             };
-            let q = quality(planner.graph(), &r, sk);
+            let q = quality(planner.graph(), &r, sk, grade);
             cells.push(format!(
-                "{:.1} ({:.2}) {:.0} % / {:.0} % / {:.1} / {:.0} % / {:.0} % / {:.0} m",
+                "{:.1} ({:.2}) {:.0} % / {:.0} % / {:.1} / {:.0} % / {:.0} % / {:.0} m / {:.2}",
                 q.km,
                 q.detour,
                 q.unpaved * 100.0,
@@ -309,7 +334,8 @@ pub(crate) fn compare(a: &Args) -> Result<(), Failure> {
                 q.main_km,
                 q.track * 100.0,
                 q.bike_path * 100.0,
-                q.ascent
+                q.ascent,
+                q.steep_up_km
             ));
             if let Some(d) = out_dir {
                 let gj = crate::route::geojson(&r, p, true);
@@ -326,9 +352,9 @@ pub(crate) fn compare(a: &Args) -> Result<(), Failure> {
         v
     };
     println!(
-        "\n| profile | detour p50 / p90 / max | unpaved mean (min) | unknown surface mean | main road km mean / max | tracks mean | bike paths mean | ascent mean | water / forest |"
+        "\n| profile | detour p50 / p90 / max | unpaved mean (min) | unknown surface mean | main road km mean / max | tracks mean | bike paths mean | ascent mean | water / forest | km > {grade} % up / down mean |"
     );
-    println!("|---|---:|---:|---:|---:|---:|---:|---:|---:|");
+    println!("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
     let mut rows: Vec<String> = profiles.iter().map(name).collect();
     rows.push("(shortest)".into());
     for (k, label) in rows.iter().enumerate() {
@@ -337,7 +363,7 @@ pub(crate) fn compare(a: &Args) -> Result<(), Failure> {
         let unp: Vec<f64> = q.iter().map(|x| x.unpaved).collect();
         let main: Vec<f64> = q.iter().map(|x| x.main_km).collect();
         println!(
-            "| {label} | {:.2} / {:.2} / {:.2} | {:.0} % ({:.0} %) | {:.0} % | {:.1} / {:.1} | {:.0} % | {:.0} % | {:.0} m | {:.0} % / {:.0} % |",
+            "| {label} | {:.2} / {:.2} / {:.2} | {:.0} % ({:.0} %) | {:.0} % | {:.1} / {:.1} | {:.0} % | {:.0} % | {:.0} m | {:.0} % / {:.0} % | {:.2} / {:.2} |",
             percentile(&det, 0.5),
             percentile(&det, 0.9),
             percentile(&det, 1.0),
@@ -351,6 +377,8 @@ pub(crate) fn compare(a: &Args) -> Result<(), Failure> {
             mean(&q.iter().map(|x| x.ascent).collect::<Vec<_>>()),
             mean(&q.iter().map(|x| x.water).collect::<Vec<_>>()) * 100.0,
             mean(&q.iter().map(|x| x.forest).collect::<Vec<_>>()) * 100.0,
+            mean(&q.iter().map(|x| x.steep_up_km).collect::<Vec<_>>()),
+            mean(&q.iter().map(|x| x.steep_down_km).collect::<Vec<_>>()),
         );
     }
     for (k, p) in profiles.iter().enumerate() {

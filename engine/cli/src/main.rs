@@ -51,7 +51,7 @@ const USAGE: &str = "usage: kompass [--version | --help]
        kompass profile schema | catalogue [--build <dir>] | presets
        kompass schema --write <dir> | --check <dir> [--traffic <file>]
        kompass bench --build <dir> [--pairs <n>] [--seed <n>] [--profiles <a,b>]
-       kompass compare --build <dir> --profiles <a,b,...> [--pairs <n>] [--km <min-max>] [--seed <n>] [--out-dir <dir>]";
+       kompass compare --build <dir> --profiles <a,b,...> [--pairs <n>] [--km <min-max>] [--seed <n>] [--out-dir <dir>] [--grade <pct>]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
