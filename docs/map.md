@@ -68,39 +68,107 @@ force; the chrome reads the `dark` class and the map is given that theme, so a s
 in place (camera, layers and the route survive via `reapply()`). The control is "Appearance" at the
 bottom of the Map & rides panel.
 
-One style in a light and a dark theme (the theme in force: see below), built by `style.ts` from these parts,
-bottom to top:
+One style in a light and a dark theme, **"Bands"** (variant D of the second design round,
+[design/map-round-2.md](design/map-round-2.md); light is the product, dark is kept working). Built by
+`style.ts` from these parts, bottom to top:
 
 | part | from | code |
 |---|---|---|
-| land cover and land use, water | Protomaps tiles (`landuse`, `water`) | `basemap.ts` |
+| land cover and land use | Protomaps tiles (`landuse`) | `basemap.ts` |
 | hillshade, contour lines | the manifest's `terrain` | `style.ts` (`terrainLayers`) |
+| lakes and the sea (above the relief: flat water is not shaded and carries no contours) | Protomaps tiles | `basemap.ts` |
 | rivers, buildings | Protomaps tiles | `basemap.ts` |
 | band of signed cycle routes (from z9) | overlay | `ways.ts` (`routeLayer`) |
-| roads **below z13** | Protomaps tiles | `basemap.ts` (`lowZoomRoads`) |
-| roads, tracks and paths **from z13 on** | overlay | `ways.ts` (`wayLayers`) |
-| the information band, the explored band (between the ways' rims and their lines) | overlay | `style.ts`, `info.ts` |
+| the ways' halos and casings | overlay | `ways.ts` (`wayLayers().under`) |
+| the information band, the explored band, the cost layer | overlay | `style.ts`, `info.ts`, `cost.ts` |
+| the ways' lines and fills, bridge rails, ferries | overlay | `ways.ts` (`wayLayers().over`) |
 | motorways, railways, borders | Protomaps tiles | `basemap.ts` |
 | rides | GeoJSON | `style.ts` |
 | contour heights, summits, place and road names, POIs | Protomaps tiles, contours | `basemap.ts`, `@protomaps/basemaps` |
 
-- **Who draws the roads.** Never both. Below z13 the overlay does not carry every class, so the base
-  tiles draw the roads (and tracks from z12, as a hint). From z13 on the overlay has every edge and
-  draws them all; the base tiles' road layers stop there (`WAYS_MINZOOM`). Both use the same colours
-  and meet at the same widths. Motorways and railways are not in the overlay (not rideable): the base
-  tiles draw them at every zoom, above the ways. Bridges and tunnels are not told apart.
-- **The line vocabulary** (`ways.ts`, top comment): a paved road is a cased band (white to yellow by
-  class), a paved track the same but narrow with a brown rim. Everything unpaved is one brown line
-  whose dash is its firmness: solid = paved path, long dashes = compacted, short dashes = gravel,
-  dots = soft. Firmness comes from `surface_class`, else `tracktype`, else the kind of way (a track
-  is taken for gravel, a path for soft); such a guess is drawn in a lighter brown. Width is the kind
-  of way. Violet is cycling: separate cycle paths (lines) and signed routes (a soft band under the
-  way, wider for higher networks). Grey is private or no bicycle access. Paved paths running along
-  a road (`road_near_share` ≥ 60 %: pavements, roadside cycle tracks) show from z15 only.
+### The line system
+
+Every way a gravel bike rolls on is a road-like **band**, and its fill darkens with roughness; soft
+ground loses the band and breaks into a dark dashed line. Roads keep the familiar tiers. So the tier
+reads from the width and the road colours, the surface from the fill, without the key: the more a way
+looks like a road, the better it rolls. The fill ramp is ordered in lightness (it survives grey scale
+and colour blindness) and the worst grades change shape as well.
+
+Each edge gets a **tier** (the width), a **grade** and from both a **look** (`LOOK`, one row of `looks()`
+each, `ways.ts`):
+
+- **grade** 1 to 5 (0 = nothing mapped): the track grade where mapped (a paved surface always makes
+  it 1), else read off `surface_class` (compacted 2, gravel 3, soft 4); with neither, tracks and paths
+  are *unknown* and drawn as such (a fact, not a guess), roads, cycle paths and footways count as paved.
+- **look**: main and secondary roads always their tier's band; tertiary and smaller roads their tier's
+  band when paved, else the look of their grade at the road's width; tracks the look of their grade;
+  separate cycle paths violet; paths by grade.
+
+| look | light fill / casing | shape | for |
+|---|---|---|---|
+| main road | `#ffe45e` / `#9c8514` | band | trunk, primary |
+| secondary | `#fff1a1` / `#a8933a` | band | |
+| tertiary | `#ffffff` / `#7a7468` | band | |
+| road | `#ffffff` / `#8f897d` | band | minor road, street, service (paved) |
+| paved track | `#ffffff` / `#5e3b1b` | band | grade 1 track |
+| compacted | `#fbeecb` / `#5e3b1b` | band | grade 2 track or unpaved road |
+| gravel | `#e2a85a` / `#5e3b1b` | band | grade 3 track or unpaved road |
+| not mapped | `#e6e2da` / `#9a9186` | band | a track with neither surface nor grade |
+| mostly soft | `#6f4320` on a light halo | short dashes `2.2 / 1.6` | grade 4 |
+| soft ground | `#6f4320` on a light halo | dots `0.9 / 1.5` | grade 5 |
+| cycle path | `#5b54d6` | solid line | `cycleway`, a path signed as a separate cycle path |
+| paved path | `#93897a` | solid line | |
+| path | `#5f4732` | long dashes `3.2 / 1.7` (firm, grade 2–3), short dashes (soft, 4–5) | |
+| path, not mapped | `#a08c78` | long dashes | |
+| ferry | `#4b84b3` | dashes `3 / 2.5`, never a band | `highway` = ferry |
+
+Dashes are in line widths. **Widths** (px; a band's fill, the casing adds 1.0 / 1.4 / 1.6 / 1.8 /
+2.0 / 2.3 at z10 / 12 / 13 / 14 / 15 / 16, a track band's finer rim 0 / 0.6 / 1.0 / 1.2 / 1.4 / 1.6;
+a line's halo adds 0.8 / 1.2 / 1.6 / 1.9 / 2.2 / 2.6):
+
+| tier | z8 | z10 | z12 | z13 | z14 | z15 | z16 | z18 |
+|---|---|---|---|---|---|---|---|---|
+| main road (band) | 1.4 | 2.2 | 3.6 | 4.6 | 6.2 | 8.4 | 11.5 | 22 |
+| secondary | 0.9 | 1.7 | 3.1 | 4.0 | 5.4 | 7.4 | 10.2 | 19 |
+| tertiary | 0.5 | 1.1 | 2.4 | 3.3 | 4.6 | 6.4 | 8.8 | 17 |
+| minor road | 0.4 | 0.7 | 1.7 | 2.6 | 3.7 | 5.2 | 7.4 | 14 |
+| street | 0.3 | 0.6 | 1.4 | 2.2 | 3.2 | 4.6 | 6.6 | 13 |
+| service | 0.3 | 0.4 | 0.8 | 1.3 | 2.0 | 2.8 | 4.2 | 8.5 |
+| driveway, car-park aisle | 0.2 | 0.3 | 0.5 | 0.8 | 1.3 | 1.9 | 2.8 | 6 |
+| track (band) | 0.3 | 0.45 | 1.25 | 2.2 | 3.0 | 3.9 | 5.2 | 9 |
+| soft road (line) | 0.8 | 1.1 | 1.8 | 2.2 | 2.7 | 3.3 | 4.0 | 6 |
+| soft track (line) | 0.5 | 0.8 | 1.4 | 1.9 | 2.3 | 2.7 | 3.2 | 4.6 |
+| cycle path | 0.4 | 0.7 | 1.2 | 1.5 | 1.8 | 2.2 | 2.7 | 4 |
+| path | 0.3 | 0.5 | 0.9 | 1.1 | 1.35 | 1.6 | 2.0 | 3 |
+
+- **By zoom.** The overlay draws every way it carries at every zoom (the base tiles draw no road,
+  track or path): main roads and ferries from z8, secondary z9, tertiary and cycle paths z11, minor
+  roads and streets z12, tracks of grade 1–3 z11, all tracks z12, paths and the rest z13 (signed cycle
+  routes earlier; `MINZOOM` in `pipeline/tiles.py`). Tracks and paths fade in: half opacity up to z11,
+  full from z12.5, and a track band has no rim at z10 and barely one at z11, so the roads stay the skeleton of the
+  overview. Contour lines are faint at z11–12 for the same reason (they would read as tracks).
+  Driveways show from z14, car-park aisles from z15 (`service_kind`), paved paths along a road
+  (`road_near_share` ≥ 60 %: pavements, roadside cycle tracks) from z15.
+- **Crossings** (`bridge`, `tunnel`, `layer`): the bands are sorted by crossing level, then tier
+  (`line-sort-key`): a bridge is at least level 1, a tunnel at most −1. From z13 a bridge gets two
+  dark rails just outside its casing, above whatever passes underneath; a way in a tunnel is drawn at
+  40 % opacity. Overlays without these properties (`overlay.drawing` empty: built before they
+  existed) draw everything level, without rails, and the base tiles add plain tracks at z12.
+- **Faint:** private or no bicycle access (45 % opacity).
+- **What lies on top** (information band, explored band, cost layer): between the ways' casings and
+  their fills, wider than the casing by 1.6 to 4 px (`underlayWidth`, per tier), so it shows as a
+  coloured rim around the way's own fill. It covers only what the ways draw at that zoom (`shown`):
+  never a ferry (no rings on the lakes), no aisle or pavement before its way shows.
+- **The key** ("Map & rides", the Map tab, folded) draws `KEY_ROWS` with `keyStrokes`: the same
+  colours, widths and dashes as the layers, at z14, on land and on forest. Its tests check that each
+  row's sample edge is classified as the row says and that every look is in the key.
 - The classes are looked up **by enum label** in the manifest (`enumCodes`), never by code. A
   manifest lacking an attribute still gives a valid, simpler style.
-- **Dashes** are one layer per pattern with a constant `line-dasharray` (4 line layers), not a
-  data-driven dash: that keeps MapLibre on its plain line shader.
+- **Dashes** are one layer per pattern with a constant `line-dasharray` (solid, long, short, dots, the
+  ferry), not a data-driven dash: that keeps MapLibre on its plain line shader.
+- **Dark** keeps the same system with D's dark colours (lemon becomes a muted gold, the white roads
+  greys, the bands keep their ramp brighter than the land, the tracks a brown rim); it is kept working,
+  not polished.
 - **From `@protomaps/basemaps`** come only the label layers and earth, water and buildings, recoloured
   through a flavour (the tileset's schema version must match the package's major version). Label
   language: the browser's if supported, else English. **Glyphs and sprites are vendored** in
@@ -112,14 +180,17 @@ bottom to top:
 
 - Colours of the map, per theme: `carto.ts`, one table. Colours of what lies on top (information
   layers, explored, rides, selection): `palette.ts`. Neither are theme tokens: they are picked
-  against the map, not the chrome. The strong hues stay free for the route and the layers.
-- Widths: `ROAD_WIDTHS`, `LINE_WIDTHS` (px at z13, 15, 17, 19) and `DASHES` in `ways.ts`; the base
-  roads' widths below z13 in `basemap.ts` end where those start.
+  against the map, not the chrome. The strong hues stay free for the route and the layers; the ochre
+  gravel band is the route's nearest neighbour, which the route's white rim keeps apart.
+- Widths: `BAND_WIDTHS`, `CASING_WIDTHS`, `LINE_WIDTHS`, `HALO_WIDTHS` (px at `ZOOMS`) and `DASHES`
+  in `ways.ts`; the fade of tracks and paths: `TRACK_FADE`.
 - Which land use kind gets which fill: `landFills` in `basemap.ts`.
 - Relief strength: `hillshadeStrength`, `shade`, `highlight` in `carto.ts`; contour opacity and
   labels in `terrainLayers`.
-- Check a change in both themes at z10, z13 and z15–16 on the demo region (AGENTS.md), in a forest,
-  a village and a town: what is calm in the hills can be loud in a city, and the other way round.
+- Check a change on the demo region with `bun scripts/map-shots.ts` (a dev server on the demo region:
+  phone z10–z16, desktop z12 and z14, dark, a route, explored, surface, cost, traffic, the key), in a
+  forest, a village and a town: what is calm in the hills can be loud in a city, and the other way
+  round.
 
 ### Terrain
 
@@ -143,12 +214,14 @@ control; `?layer=<attribute key>|explored` in the URL), and toggles the relief a
   "Max grade" from 6 %. Ordered enums and numbers use a sequential ramp (viridis, trimmed per
   theme), other enums categorical hues (Okabe–Ito) or the rule's own colours. Missing values are not
   drawn. The legend names what is left out. A new attribute works without a rule (every value, or
-  every non-zero value): "Traffic alongside" (`road_near_traffic`, how loud the motor roads within
-  20 m are, [profile.md](profile.md#traffic)) has none yet and draws every way near a road.
+  every non-zero value). "Traffic alongside" (`road_near_traffic`, how loud the motor roads within
+  20 m are, [profile.md](profile.md#traffic)) draws from 25 % on (a tertiary road at country speed;
+  a 50 km/h street is about 7 %), from z12, like "Near a motor road"; on a road it includes the road
+  itself, so the main roads always show.
 - **Explored**: a teal band on ridden edges (`feature-state.ridden`); never ridden stays the map.
 - **Cost**: every visible edge coloured by the current profile's factor (below).
-- **Inspect**: tapping a way opens the panel with every attribute (from z13, where the ways are
-  drawn; a 14 px box around the tap, the nearest edge wins). In the planner a tap adds a waypoint, so
+- **Inspect**: tapping a way opens the panel with every attribute (a 14 px box around the tap, the
+  nearest edge wins; below z13 the overlay does not carry every way yet). In the planner a tap adds a waypoint, so
   inspecting is a mode ("Inspect a way" in Map & rides, with an information layer on);
   `RegionMap.setPicking` switches the map's own tap handling.
 
