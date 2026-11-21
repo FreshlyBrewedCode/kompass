@@ -61,7 +61,14 @@ manifest; the app validates it (`manifest.ts`):
 
 ## The outdoor style
 
-One style in a light and a dark theme (the system setting), built by `style.ts` from these parts,
+**Theme.** `lib/theme.ts` holds a three-way preference, system / light / dark, in localStorage
+(`kompass.theme`; absent = system). `index.html` applies it to `<html class="dark">` before the first
+paint (same key and rule), and "system" follows the OS setting live. `useTheme()` returns the theme in
+force; the chrome reads the `dark` class and the map is given that theme, so a switch swaps the style
+in place (camera, layers and the route survive via `reapply()`). The control is "Appearance" at the
+bottom of the Map & rides panel.
+
+One style in a light and a dark theme (the theme in force: see below), built by `style.ts` from these parts,
 bottom to top:
 
 | part | from | code |

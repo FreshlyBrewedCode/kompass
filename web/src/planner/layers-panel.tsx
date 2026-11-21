@@ -6,6 +6,8 @@
 import { cn } from "cn";
 import { Crosshair } from "lucide-react";
 import { useState } from "react";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { parsePreference, useThemePreference } from "@/lib/theme";
 import type { InfoLayer, Legend as LegendSpec } from "@/map/info";
 import { infoSpec } from "@/map/info";
 import type { OverlayAttribute } from "@/map/manifest";
@@ -118,6 +120,7 @@ type Mode = "none" | "attribute" | "explored";
 
 export function LayersPanel(p: LayersProps) {
   const store = usePlanner();
+  const [appearance, setAppearance] = useThemePreference();
   const lineBy = usePlan((s) => s.lineBy);
   const inspect = usePlan((s) => s.inspect);
   const mode: Mode = p.info.kind;
@@ -287,6 +290,28 @@ export function LayersPanel(p: LayersProps) {
             testid="toggle-routes"
             onClick={() => p.onRoutes(!p.routes)}
           />
+        </div>
+        <div className="flex items-center gap-3" data-testid="appearance">
+          <span className="min-w-0 flex-1 font-semibold text-sm">Appearance</span>
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            aria-label="Appearance"
+            value={appearance}
+            onValueChange={(v) => v && setAppearance(parsePreference(v))}
+          >
+            {(["system", "light", "dark"] as const).map((v) => (
+              <ToggleGroupItem
+                key={v}
+                value={v}
+                data-testid={`theme-${v}`}
+                className="capitalize data-[state=on]:bg-foreground data-[state=on]:text-background"
+              >
+                {v}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
         </div>
         <div className="flex items-center gap-3">
           <span className="min-w-0 flex-1 font-semibold text-sm">My rides on the map</span>

@@ -294,7 +294,7 @@ deliberately differs:
 - **The sixth compare metric** is "New to me" with a personal layer, else "Tracks & paths".
 - **Sheets**: dragging the grabber below half the first detent closes the sheet.
 - **Engine state**: a dot on the brand mark while the graph loads; the download state replaces the
-  summary card as designed. No theme toggle: the system setting decides.
+  summary card as designed. The theme choice (system / light / dark) was added later, in Map & rides (docs/map.md).
 
 ## Sandbox only
 
