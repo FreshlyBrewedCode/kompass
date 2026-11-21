@@ -27,6 +27,8 @@ export const GHOST_LINE = "planner-ghost-line";
 const MAIN_CASING = "planner-main-casing";
 const ALT_CASING = "planner-alt-casing";
 const CURSOR_DOT = "planner-cursor-dot";
+/** what the route toggle hides: every route line (the plan's, the ghost, a compared one, "why not") */
+export const ROUTE_LINES = [ALT_CASING, ALT_LINE, GHOST_LINE, MAIN_CASING, MAIN_LINE];
 
 type Padding = { top: number; right: number; bottom: number; left: number };
 type Feature = {
@@ -248,6 +250,13 @@ export class RouteLayer {
       if (map.getPaintProperty(MAIN_LINE, "line-opacity") !== opacity)
         map.setPaintProperty(MAIN_LINE, "line-opacity", opacity);
     }
+    // the route toggle: the lines go, the stops stay
+    if (ready) {
+      const visibility = s.routeHidden ? "none" : "visible";
+      for (const id of ROUTE_LINES)
+        if (map.getLayer(id) && map.getLayoutProperty(id, "visibility") !== visibility)
+          map.setLayoutProperty(id, "visibility", visibility);
+    }
     // ghost / compare / the route without the blocking limit
     const ghostResult = error
       ? (s.blame?.result ?? null)
@@ -386,7 +395,13 @@ export class RouteLayer {
 
   #syncNotes(s: PlanState) {
     const show =
-      this.#view.notes > 0 && this.#view.plain && !s.compareId && !s.whyNot && !s.main.error && !s.routing;
+      this.#view.notes > 0 &&
+      this.#view.plain &&
+      !s.compareId &&
+      !s.whyNot &&
+      !s.main.error &&
+      !s.routing &&
+      !s.routeHidden;
     const r = show ? s.main.result : null;
     const key = [r, s.catalogue, this.#view.notes];
     if (!changed(this.#applied.notes, key)) return;

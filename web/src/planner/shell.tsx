@@ -1,12 +1,13 @@
 // The planner shell on the consolidated design (docs/design/planner.md): one set of parts (parts.tsx),
 // one state model (store.ts); this file arranges them per breakpoint and wires the region map, the
 // engine and the ride library.
-// - phone (< 720 px wide, or < 560 px high): the map keeps the screen. Bottom stack: summary card,
-//   chip strip, agent bar. Everything larger than one row is a bottom sheet, one at a time.
+// - phone (< 720 px wide, or < 560 px high): the map keeps the screen. Bottom stack: the chip strip
+//   (one row that scrolls sideways), then the summary card. Everything larger than one row is a
+//   bottom sheet, one at a time. The agent bar is off on the phone for now (`AGENT_ON_PHONE`).
 // - tablet (720 … 1099 px): the desk's route card with the phone's strip; sheets become a side panel.
 // - desk (≥ 1100 px): route card left, profile card right; "Map & rides" is a popover.
 import { cn } from "cn";
-import { Bookmark, ChevronUp, Layers, Lock, Plus, SlidersHorizontal, X } from "lucide-react";
+import { Bookmark, ChevronUp, Eye, EyeOff, Layers, Lock, Plus, SlidersHorizontal, X } from "lucide-react";
 import type { Map as MapLibreMap } from "maplibre-gl";
 import {
   type CSSProperties,
@@ -67,7 +68,7 @@ import {
   useStatus,
 } from "./parts";
 import { type LayerView, RouteLayer } from "./route-layer";
-import { engineAdapter, PlannerContext, PlannerStore, usePlan, usePlanner } from "./store";
+import { engineAdapter, PlannerContext, PlannerStore, type PlanState, usePlan, usePlanner } from "./store";
 
 const MapView = lazy(() => import("@/components/map-view"));
 
@@ -79,6 +80,8 @@ const FAKE_COUNT = 400;
 const GEOMETRY: GeometryMode = params.get("geometry") === "lazy" ? "lazy" : "eager";
 /** `?terrain=0` / `?routes=0` start with a toggle off. */
 const flag = (name: string) => params.get(name) !== "0";
+/** The agent bar on the phone: off after playtest 1 (it took a row from the map and does nothing yet). */
+const AGENT_ON_PHONE = false;
 
 export type Mode = "phone" | "tablet" | "desk";
 
@@ -190,6 +193,7 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
     };
   }, [store]);
   useEffect(() => store.setEngineReady(engineState.status === "ready"), [store, engineState.status]);
+  useRouteShortcut(store);
   // the ride library hands the engine a new personal layer (ridden ways) after matching: route again
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -482,7 +486,8 @@ function TopBar({ wide, ridesCount }: { wide?: boolean; ridesCount: number }) {
         </EngineBadge>
         <Soon className={cn(card, "h-10 rounded-full border-dashed px-3.5 text-xs")}>Ride mode</Soon>
       </div>
-      <div className={cn(card, "flex h-10 items-center rounded-full px-1")}>
+      <div className={cn(card, "flex h-10 items-center gap-0.5 rounded-full px-1")}>
+        <RouteToggle shortcut={!!wide} />
         <button
           type="button"
           aria-label="Map & rides"
@@ -502,6 +507,56 @@ function TopBar({ wide, ridesCount }: { wide?: boolean; ridesCount: number }) {
         </button>
       </div>
     </div>
+  );
+}
+
+/** Whether `target` takes typing (a shortcut key must leave it alone). */
+const typing = (target: EventTarget | null) =>
+  target instanceof HTMLElement &&
+  (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+
+/** `H` hides and shows the route lines (not while typing, not with a modifier). */
+function useRouteShortcut(store: PlannerStore) {
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => {
+      if (e.key !== "h" && e.key !== "H") return;
+      if (e.ctrlKey || e.metaKey || e.altKey || e.repeat || typing(e.target)) return;
+      const s = store.getSnapshot();
+      if (!hasRoute(s)) return;
+      e.preventDefault();
+      store.setRouteHidden(!s.routeHidden);
+    };
+    window.addEventListener("keydown", on);
+    return () => window.removeEventListener("keydown", on);
+  }, [store]);
+}
+
+/** A line on the map the toggle can hide: the plan's route, or the one without the blocking limit. */
+const hasRoute = (s: PlanState) => s.waypoints.length >= 2 && !!(s.main.result || s.blame?.result);
+
+/** Hides the route lines so the map under them reads; the stops stay. Only while there is a route. */
+function RouteToggle({ shortcut }: { shortcut: boolean }) {
+  const store = usePlanner();
+  const route = usePlan(hasRoute);
+  const hidden = usePlan((s) => s.routeHidden);
+  if (!route) return null;
+  const text = hidden ? "Show the route" : "Hide the route";
+  return (
+    <button
+      type="button"
+      aria-label="Hide the route"
+      aria-pressed={hidden}
+      aria-keyshortcuts="H"
+      data-testid="route-toggle"
+      title={shortcut ? `${text} (H)` : text}
+      onClick={() => store.setRouteHidden(!hidden)}
+      className={cn(
+        "grid size-8 place-items-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        hidden && "bg-foreground text-background",
+      )}
+    >
+      {hidden ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+    </button>
   );
 }
 
@@ -586,10 +641,11 @@ const chipName = (id: string, short: string | undefined) => (id === "novel" ? "N
 
 /**
  * The profile as chips: the profile itself first (opens the whole list), then one chip per
- * preference, the limits as one chip, and "add". It never scrolls sideways: it wraps to two rows at
- * most, changed preferences first, and what does not fit collapses into "+N".
+ * preference (changed ones first), the limits as one chip, and "add". On the tablet it wraps to two
+ * rows at most and what does not fit collapses into "+N"; on the phone (`scroll`) it is one row that
+ * scrolls sideways, without a scrollbar, fading out at an edge with more behind it.
  */
-function Strip({ rows = 2 }: { rows?: number }) {
+function Strip({ rows = 2, scroll = false }: { rows?: number; scroll?: boolean }) {
   const store = usePlanner();
   const ref = useRef<HTMLDivElement>(null);
   const prefIds = usePlan((s) => s.prefIds);
@@ -606,16 +662,41 @@ function Strip({ rows = 2 }: { rows?: number }) {
   const ids = [...prefIds.filter((id) => changedIds.has(id)), ...prefIds.filter((id) => !changedIds.has(id))];
   const [n, setN] = useState(ids.length);
   const [width, setWidth] = useState(0);
+  // the scrolling row: which edges have more chips behind them
+  const [more, setMore] = useState({ left: false, right: false });
+  const edges = useCallback(() => {
+    const el = ref.current;
+    if (!el || !scroll) return;
+    const left = el.scrollLeft > 1;
+    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+    setMore((m) => (m.left === left && m.right === right ? m : { left, right }));
+  }, [scroll]);
   useEffect(() => {
     if (!ref.current) return;
-    const ro = new ResizeObserver(([e]) => e && setWidth(Math.round(e.contentRect.width)));
+    const ro = new ResizeObserver(([e]) => {
+      if (e) setWidth(Math.round(e.contentRect.width));
+      edges();
+    });
     ro.observe(ref.current);
     return () => ro.disconnect();
-  }, []);
+  }, [edges]);
+  // an opened chip scrolls into the row (a fresh preference opens as a chip at its end)
+  useEffect(() => {
+    const el = ref.current;
+    if (!scroll || !el || !chip) return;
+    const c = el.querySelector<HTMLElement>(`[data-testid="chip-${chip}"]`);
+    if (!c) return;
+    const pad = 28;
+    if (c.offsetLeft < el.scrollLeft + pad) el.scrollTo({ left: c.offsetLeft - pad, behavior: "smooth" });
+    else if (c.offsetLeft + c.offsetWidth > el.scrollLeft + el.clientWidth - pad)
+      el.scrollTo({ left: c.offsetLeft + c.offsetWidth - el.clientWidth + pad, behavior: "smooth" });
+  }, [chip, scroll]);
+  useEffect(edges);
   // fit: start from all chips whenever the set or the width changes, then drop from the end until it fits
   const key = `${ids.join()}|${width}|${presetName(base)}|${changes.length}|${rows}`;
   const last = useRef("");
   useLayoutEffect(() => {
+    if (scroll) return;
     if (last.current !== key) {
       last.current = key;
       if (n !== ids.length) return setN(ids.length);
@@ -638,11 +719,25 @@ function Strip({ rows = 2 }: { rows?: number }) {
   };
   const dot = <i className="size-1.5 shrink-0 rounded-full bg-signal" />;
   const inert = engine.status === "downloading";
+  const shown = scroll ? ids.length : n;
+  const edge = (on: boolean) => (on ? "transparent" : "#000");
+  const mask = scroll
+    ? `linear-gradient(to right, ${edge(more.left)}, #000 28px, #000 calc(100% - 28px), ${edge(more.right)})`
+    : undefined;
   return (
     <div
       ref={ref}
       data-testid="strip"
-      className={cn("flex flex-wrap gap-1.5", inert && "pointer-events-none opacity-50")}
+      data-scroll={scroll || undefined}
+      onScroll={scroll ? edges : undefined}
+      style={mask ? { maskImage: mask, WebkitMaskImage: mask } : undefined}
+      className={cn(
+        "flex gap-1.5",
+        scroll
+          ? "no-scrollbar -my-1.5 touch-pan-x flex-nowrap overflow-x-auto overscroll-x-contain py-1.5"
+          : "flex-wrap",
+        inert && "pointer-events-none opacity-50",
+      )}
     >
       <button
         type="button"
@@ -660,7 +755,7 @@ function Strip({ rows = 2 }: { rows?: number }) {
         )}
         <ChevronUp className="size-3.5 opacity-60" />
       </button>
-      {ids.slice(0, n).map((id) => {
+      {ids.slice(0, shown).map((id) => {
         const v = weights[id] ?? 0;
         const pref = catalogue?.preferences.find((p) => p.id === id);
         return (
@@ -683,7 +778,7 @@ function Strip({ rows = 2 }: { rows?: number }) {
           </button>
         );
       })}
-      {ids.length > n && (
+      {ids.length > shown && (
         <button
           type="button"
           onClick={() => store.open("profile")}
@@ -1190,9 +1285,9 @@ function Phone({
         )}
         aria-hidden={covered || undefined}
       >
+        <Strip scroll />
         {picked ? inspectCard : <SummaryCard mode="phone" onRetry={onRetry} />}
-        <Strip rows={short ? 1 : 2} />
-        {!short && <AgentBar />}
+        {AGENT_ON_PHONE && !short && <AgentBar />}
       </div>
       <Sheets side={side} vh={h} onHeight={setSheetH} layers={layers} />
     </>
