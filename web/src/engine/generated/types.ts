@@ -5,7 +5,7 @@
 /**
  * A soft preference of the catalogue (`catalogue().preferences`).
  */
-export type PrefId = "unpaved" | "paved_smooth" | "paved_rough" | "fine_gravel" | "soft_ground" | "unknown_surface" | "tracktype" | "smoothness" | "track" | "path" | "cycleway_sep" | "cycleway_road" | "residential" | "service" | "minor" | "main" | "quiet" | "speed" | "lanes" | "near_road" | "forest" | "forest_edge" | "water" | "open" | "built" | "climb" | "steep" | "bike_routes" | "mtb_routes" | "access" | "sketchy" | "mtb" | "visibility" | "novel" | "stale" | "familiar";
+export type PrefId = "unpaved" | "paved_smooth" | "paved_rough" | "fine_gravel" | "soft_ground" | "unknown_surface" | "tracktype" | "smoothness" | "track" | "path" | "cycleway_sep" | "cycleway_road" | "residential" | "service" | "minor" | "main" | "quiet" | "speed" | "lanes" | "near_road" | "forest" | "forest_edge" | "water" | "open" | "built" | "climb" | "steep" | "ramps_over_6" | "ramps_over_8" | "ramps_over_10" | "ramps_over_12" | "ramps_over_15" | "bike_routes" | "mtb_routes" | "access" | "sketchy" | "mtb" | "visibility" | "novel" | "stale" | "familiar";
 
 /**
  * A hard limit of the catalogue (`catalogue().limits`).

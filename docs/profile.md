@@ -141,11 +141,39 @@ forest vs ~3.5 in the open). So:
   is the ascent the cost, the time model and the result's totals use.
 - **Grades** (steepest 50 m) are capped by what the arc's average climb allows (`2.5 × average + 5`
   %, against canopy spikes inside an otherwise flat edge) and lowered by 5 points in full forest.
-  `steep` and `max_grade` use this tamed grade.
+  `steep`, the "steeper than X %" family and `max_grade` use this tamed grade.
 - With noisy data a hard grade limit cuts forest networks into pieces: on the real region a 10 %
   limit left 5 of 12 random routes without a way and made one 10× longer, so no shipped preset uses
   `max_grade`; "River valley" avoids ramps and climbing softly instead. A DTM (DGM1) would change
   this.
+
+### Grade thresholds
+
+"From X % on it gets expensive" without the hard limit's cuts: `ramps_over_6`, `_8`, `_10`, `_12`
+and `_15` ("Steeper than X %", group Terrain). Each is a ramp over the tamed grade of the arc,
+membership 0 up to X and rising by a third per point to 1 at X + 3, so a threshold means what it
+says but has no cliff (a noisy 10.4 % is not a wall). A descent counts at half the rate (0.5 at
+X + 3, 1 at X + 6): steep descents on loose gravel are unpleasant too, but rideable, and the half
+share makes a route climb the gentle side and come down the steep one rather than the reverse; a
+separate "steep descents" family would double the entries for little gain. Penalty 4× at −100 on a
+full match (bonus 0.85 when sought: quality, not gated, like `steep`).
+
+- **They stack.** Several active at once multiply: 8 % at −40 and 12 % at −100 cost 1.7× from 11 % and
+  1.7 × 4 = 7× from 15 %. With `steep` too it is one more factor. The clamp
+  (`bounds.max_factor`, default 20) caps the product, so all five at −100 on a 25 % wall are 20×,
+  not 1000×: a strong avoid, still routable.
+- **`steep` stays**, now one ramp of the same family (8 → 16 %, descents half): the gentle, wide
+  version. Its membership is pinned to the old formula by a test, and no preset names the new ids,
+  so the presets route as before.
+- **Cost.** One ramp and one table per active threshold, evaluated on the per-arc pass the grades
+  already need (no per-arc table per threshold). Demo region (101 850 arcs): Gravel explorer
+  1.1–1.2 ms, with `steep` 1.5–1.7 ms, with 8 % and 12 % 1.8–1.9 ms.
+- **Effect** (demo region, 12 pairs of 10–25 km, `kompass compare --grade 10`): Gravel explorer
+  vs the same with "Steeper than 10 %" at −100: length on arcs whose tamed steepest 50 m exceed
+  10 % uphill 6.3 → 4.0 km per route (over 13 %: 4.9 → 2.1 km), ascent 755 → 640 m, median detour
+  1.18 → 1.37. The rest is mostly unavoidable on the Black Forest's valley sides, and the surface
+  model sets the floor: forest grades are lowered by 5 points against canopy noise, so a real 14 %
+  forest ramp reads as 9 % and goes unpunished while a canopy step in the open can read as steep.
 
 ### Personal layer
 
@@ -185,6 +213,7 @@ catalogue).
 | `open` | 1 − forest − built-up | 0.85 / 1.5 |
 | `climb` | seek: average grade after the deadband, full at 5 %; avoid: additive, above | 0.7 / 25 m per m |
 | `steep` | tamed grade up, 0 at 8 %, 1 at 16 %; downhill half | 0.85 / 3.0 |
+| `ramps_over_6` … `_15` | tamed grade up, 0 at X %, 1 at X + 3 %; downhill half (above) | 0.85 / 4.0 |
 | `bike_routes` | lcn 0.7, rcn 0.85, ncn/icn 1 | 0.8 / 1.5 |
 | `mtb_routes` | member of an MTB route | 0.8 / 1.5 |
 | `access` | foot only, private, use-the-sidepath 1; agricultural 0.7; dismount 0.6; destination 0.3 | 0.9 / 3.0 |

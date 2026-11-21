@@ -188,6 +188,21 @@
             "quiet": {
               "$ref": "#/$defs/Weight"
             },
+            "ramps_over_10": {
+              "$ref": "#/$defs/Weight"
+            },
+            "ramps_over_12": {
+              "$ref": "#/$defs/Weight"
+            },
+            "ramps_over_15": {
+              "$ref": "#/$defs/Weight"
+            },
+            "ramps_over_6": {
+              "$ref": "#/$defs/Weight"
+            },
+            "ramps_over_8": {
+              "$ref": "#/$defs/Weight"
+            },
             "residential": {
               "$ref": "#/$defs/Weight"
             },

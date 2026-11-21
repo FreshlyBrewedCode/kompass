@@ -192,6 +192,14 @@ fn cases() -> Vec<Case> {
         max_grade_bwd_pct: 16.0,
         ..res
     };
+    // 20 % both ways: full membership for every threshold of the family
+    let steeper = EdgeAttrs {
+        ascent_fwd_m: 90.0,
+        ascent_bwd_m: 90.0,
+        max_grade_fwd_pct: 20.0,
+        max_grade_bwd_pct: 20.0,
+        ..res
+    };
     vec![
         case(PrefId::Unpaved, track(SurfaceClass::Gravel), res),
         case(PrefId::PavedSmooth, res, track(SurfaceClass::Gravel)),
@@ -282,6 +290,11 @@ fn cases() -> Vec<Case> {
             ..case(PrefId::Climb, climbing, res)
         },
         case(PrefId::Steep, steep, res),
+        case(PrefId::RampsOver6, steeper, res),
+        case(PrefId::RampsOver8, steeper, res),
+        case(PrefId::RampsOver10, steeper, res),
+        case(PrefId::RampsOver12, steeper, res),
+        case(PrefId::RampsOver15, steeper, res),
         case(
             PrefId::BikeRoutes,
             EdgeAttrs {
@@ -1468,6 +1481,128 @@ fn the_clamp_and_the_gate_are_explained() {
         .unwrap();
     assert!(x.along.quality >= 2.2 && x.along.gate == 0.0);
     assert!((x.along.raw_factor - x.along.quality).abs() < 1e-5);
+}
+
+/// The explanation of the top way's first arc (uphill: `grade_up`, downhill: `grade_down`).
+fn ramp_terms(grade_up: f32, grade_down: f32, p: &Profile) -> kompass_core::explain::ArcCostExplanation {
+    use kompass_core::explain::ExplainEdgeRequest;
+    let way = EdgeAttrs {
+        // a steady climb: the taming cap (2.5 × average + 5) stays above the grades
+        ascent_fwd_m: 0.08 * HALF_M,
+        ascent_bwd_m: 0.08 * HALF_M,
+        max_grade_fwd_pct: grade_up,
+        max_grade_bwd_pct: grade_down,
+        ..residential()
+    };
+    let d = diamond(way, HALF_M, residential(), HALF_M, None);
+    let mut planner = Planner::new(d.built.graph.clone());
+    let edge = d.built.edge(d.top[0]);
+    planner
+        .explain_edge(&ExplainEdgeRequest {
+            profile: p.clone(),
+            edge,
+        })
+        .unwrap()
+        .along
+}
+
+#[test]
+fn the_grade_thresholds_ramp_up_stack_and_clamp() {
+    use kompass_core::cost::grade_ramp;
+    let penalty = |id: PrefId| {
+        kompass_core::catalogue()
+            .preferences
+            .iter()
+            .find(|m| m.id == id)
+            .unwrap()
+            .max_penalty
+    };
+    let term = |x: &kompass_core::explain::ArcCostExplanation, id: PrefId| {
+        *x.preferences.iter().find(|t| t.id == id).unwrap()
+    };
+    // the ramp: 0 at the threshold, a third per point, 1 three points above; descents half
+    let ten = weights(&[(PrefId::RampsOver10, -100)]);
+    for (up, down, m) in [
+        (8.0, 0.0, 0.0),
+        (10.0, 0.0, 0.0),
+        (11.0, 0.0, 1.0 / 3.0),
+        (12.0, 0.0, 2.0 / 3.0),
+        (13.0, 0.0, 1.0),
+        (19.0, 0.0, 1.0),
+        (0.0, 13.0, 0.5),
+        (0.0, 16.0, 1.0),
+        (11.0, 13.0, 0.5),
+    ] {
+        // quantised to fifteenths like every membership (a half rounds up to 8/15)
+        let m: f32 = ((m * 15.0_f32) + 15.5).floor() / 15.0 - 1.0;
+        let x = ramp_terms(up, down, &ten);
+        let t = term(&x, PrefId::RampsOver10);
+        assert!((t.membership - m).abs() < 1e-6, "{up}/{down}: {}", t.membership);
+        let want = penalty(PrefId::RampsOver10).powf(m);
+        assert!(
+            (t.factor - want).abs() < 1e-4,
+            "{up}/{down}: {} vs {want}",
+            t.factor
+        );
+    }
+    let r = grade_ramp(PrefId::RampsOver15).unwrap();
+    assert!((r.from_pct - 15.0).abs() < 1e-6 && (r.full_pct - 18.0).abs() < 1e-6);
+    // stacking: 8 % mildly and 12 % strongly multiply; on 14 % both act, on 10 % only 8 %
+    let both = weights(&[(PrefId::RampsOver8, -40), (PrefId::RampsOver12, -100)]);
+    let x = ramp_terms(14.0, 0.0, &both);
+    let (a, b) = (term(&x, PrefId::RampsOver8), term(&x, PrefId::RampsOver12));
+    assert!((a.factor - 4f32.powf(0.4)).abs() < 1e-4 && (b.factor - 4f32.powf(2.0 / 3.0)).abs() < 1e-3);
+    assert!((x.quality - a.factor * b.factor).abs() < 1e-4);
+    let x = ramp_terms(10.0, 0.0, &both);
+    assert!(
+        term(&x, PrefId::RampsOver8).factor > 1.0
+            && (term(&x, PrefId::RampsOver12).factor - 1.0).abs() < 1e-6
+    );
+    // with `steep` too, and the clamp caps the product
+    let mut all = weights(&[(PrefId::Steep, -100)]);
+    for id in [
+        PrefId::RampsOver6,
+        PrefId::RampsOver8,
+        PrefId::RampsOver10,
+        PrefId::RampsOver12,
+        PrefId::RampsOver15,
+    ] {
+        all.set_weight(id, Some(-100));
+    }
+    let x = ramp_terms(25.0, 0.0, &all);
+    assert!(x.quality > 1000.0, "{}", x.quality);
+    assert!((x.factor - all.bounds().max_factor).abs() < 1e-4);
+    assert_eq!(x.clamp, Some(kompass_core::cost::Clamp::Max));
+    // seeking one: a mild bonus, quality like `steep`
+    let x = ramp_terms(20.0, 0.0, &weights(&[(PrefId::RampsOver12, 100)]));
+    assert!((term(&x, PrefId::RampsOver12).factor - 0.85).abs() < 1e-4);
+}
+
+#[test]
+fn steep_keeps_its_ramp() {
+    // `steep` is now one ramp of the grade family: the same membership as its old formula
+    // (0 at 8 %, 1 at 16 %, downhill at half the rate), at every whole grade
+    let steep = weights(&[(PrefId::Steep, -100)]);
+    for up in 0..=25u8 {
+        for down in (0..=25u8).step_by(3) {
+            let (u, d) = (f32::from(up), f32::from(down));
+            let old = ((u - 8.0) / 8.0).max(0.5 * (d - 8.0) / 8.0).clamp(0.0, 1.0);
+            let old = ((old * 15.0) + 0.5).floor() / 15.0;
+            let x = ramp_terms(u, d, &steep);
+            let t = x.preferences.iter().find(|t| t.id == PrefId::Steep).unwrap();
+            assert!(
+                (t.membership - old).abs() < 1e-6,
+                "{up}/{down}: {} vs {old}",
+                t.membership
+            );
+        }
+    }
+    // the shipped presets name none of the new thresholds: their costs are unchanged
+    for p in kompass_core::presets() {
+        for id in p.profile.weights.keys() {
+            assert!(!id.id().starts_with("ramps_over_"), "{}: {id}", p.id);
+        }
+    }
 }
 
 #[test]
