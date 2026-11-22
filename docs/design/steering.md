@@ -56,7 +56,8 @@ Widgets are views on groups of preferences; the profile JSON stays the source of
   "steeper than X %" family, `steep` and `climb`. One **loose ground modifier** goes with it: "on
   loose ground, grades count N % steeper".
 - **Prototype first.** A design round with mock-ups, then a build behind a switch, then a playtest:
-  the rider decides by trying whether these replace the sliders. Before the curve is designed, a
+  the rider decides by trying whether these replace the sliders. The engine side is built (#66):
+  [profile.md](../profile.md#the-structured-model-prototype-behind-a-switch). Before the curve is designed, a
   spike checks what the per-edge grade data supports (#60).
 
 ## 4. Saturation
