@@ -414,7 +414,11 @@ fn a_star_finds_what_dijkstra_finds_under_the_structured_model() {
         let g = built.graph.clone();
         let mut planner = Planner::new(g.clone());
         for _ in 0..5 {
-            let p = random_structured(&mut rng);
+            // (turns free: the reference is a node Dijkstra; the turn search has its own tests)
+            let p = Profile {
+                turn_m: Some(0.0),
+                ..random_structured(&mut rng)
+            };
             let costs = planner.arc_costs(&p).unwrap().0.to_vec();
             for _ in 0..8 {
                 let s = rng.below(g.node_count() as u64) as NodeId;

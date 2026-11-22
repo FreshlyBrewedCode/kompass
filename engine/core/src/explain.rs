@@ -21,8 +21,8 @@ use crate::overrides::{self, EdgeOverride, OverrideKind, Overrides};
 use crate::personal::PersonalLayer;
 use crate::profile::{BoardId, BoardRow, Bounds, LimitId, PrefId, Profile};
 use crate::route::{Part, Planner, Reason, RouteError, Span, SurfaceKind, diff, invalid_request};
-use crate::turns::{Headings, line_turns};
 use crate::structured::StructuredParts;
+use crate::turns::{Headings, line_turns};
 
 /// What closes an arc: a limit of the profile (the catalogue's limit ids) or a rule that holds
 /// whatever the profile. In typed arrays as [`ClosedBy::code`].
@@ -677,7 +677,11 @@ fn add_turns(c: &mut StretchCost, g: &Graph, h: &Headings, turn_m: f32, route: &
 
 /// A stretch of a route costed under a compiled profile (and the plan's overrides), its `why` cut to
 /// `why_max`.
-#[allow(clippy::too_many_arguments, reason = "the stretch and what costs it")]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "the stretch and what costs it, every part of it"
+)]
 fn stretch_cost(
     g: &Graph,
     model: &CostModel,

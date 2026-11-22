@@ -85,7 +85,11 @@ fn name(p: &Profile) -> String {
 }
 
 /// `kompass bench`.
-#[allow(clippy::cast_precision_loss, reason = "timings and counts for display")]
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::too_many_lines,
+    reason = "timings and counts for display; one report"
+)]
 pub(crate) fn bench(a: &Args) -> Result<(), Failure> {
     a.only(&["--build", "--pairs", "--seed", "--profiles"])?;
     let build = a.build()?;
