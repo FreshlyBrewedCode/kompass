@@ -35,7 +35,8 @@
       "$ref": "#/$defs/RouteOptions",
       "default": {
         "snap_radius_m": 250.0,
-        "geometry": true
+        "geometry": true,
+        "avoid_reuse": true
       }
     },
     "via_zones": {
@@ -346,9 +347,46 @@
           "description": "Whether to return the geometry (coordinates, elevation, distances per vertex).",
           "type": "boolean",
           "default": true
+        },
+        "avoid_reuse": {
+          "description": "Don't ride the same way twice (default on): legs are routed in order, and riding an edge an\nearlier leg rode (either direction) or leaving a via back the way it was reached costs\nextra. Finite costs: an out-and-back the waypoints ask for still routes.",
+          "type": "boolean",
+          "default": true
+        },
+        "reuse_cost": {
+          "description": "The costs of `avoid_reuse` (for tools tuning them; absent: the defaults).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReuseCost"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false
+    },
+    "ReuseCost": {
+      "description": "The route-shape costs of `avoid_reuse`, metres-equivalent (added to the profile's cost, which\nstays compiled and cached).",
+      "type": "object",
+      "properties": {
+        "per_m": {
+          "description": "Extra metres per metre ridden again (0..=10, default 1: [`REUSE_PER_M`]).",
+          "type": "number",
+          "format": "float"
+        },
+        "u_turn_m": {
+          "description": "Extra metres for leaving a via back along the way it was reached (0..=10 000, default\n600: [`U_TURN_M`]).",
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "per_m",
+        "u_turn_m"
+      ]
     },
     "Zone": {
       "description": "An area of a via or avoid zone (reserved: accepted, not used yet).",

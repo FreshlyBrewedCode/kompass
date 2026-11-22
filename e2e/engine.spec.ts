@@ -30,7 +30,7 @@ const route = (page: Page, preset: string, points: [number, number][]) =>
       return (await engine.call("route", {
         waypoints: points.map(([lon, lat]) => ({ lon, lat })),
         profile,
-        options: { snap_radius_m: 250, geometry: true },
+        options: { snap_radius_m: 250, geometry: true, avoid_reuse: true },
       })) as { ok: boolean; result?: { summary: { distance_m: number }; arcs: number[] } };
     },
     { preset, points },

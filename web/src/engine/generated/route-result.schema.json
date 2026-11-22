@@ -98,6 +98,17 @@
           "format": "float"
         },
         "cost": {
+          "description": "The profile's cost of the route (metres-equivalent): the compiled cost of every arc ridden.",
+          "type": "number",
+          "format": "float"
+        },
+        "reused_m": {
+          "description": "Metres ridden twice: on ways an earlier leg rode (either direction).",
+          "type": "number",
+          "format": "float"
+        },
+        "shape_cost": {
+          "description": "The route-shape costs on top of `cost` (`avoid_reuse`): the search minimised\n`cost + shape_cost` per leg.",
           "type": "number",
           "format": "float"
         },
@@ -129,6 +140,8 @@
         "descent_m",
         "duration_s",
         "cost",
+        "reused_m",
+        "shape_cost",
         "unpaved_share",
         "unknown_surface_share",
         "main_road_m"
@@ -447,6 +460,16 @@
           "type": "number",
           "format": "float"
         },
+        "reused_m": {
+          "description": "Metres of it on ways earlier legs rode.",
+          "type": "number",
+          "format": "float"
+        },
+        "shape_cost": {
+          "description": "The route-shape costs the search added on top of `cost` (riding again, a U-turn at the via\nit starts from), metres-equivalent.",
+          "type": "number",
+          "format": "float"
+        },
         "arcs": {
           "description": "`[first, end)` into `arcs` and `segments`.",
           "type": "array",
@@ -481,6 +504,8 @@
         "descent_m",
         "duration_s",
         "cost",
+        "reused_m",
+        "shape_cost",
         "arcs",
         "segments",
         "settled"

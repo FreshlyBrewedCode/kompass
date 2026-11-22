@@ -101,7 +101,7 @@ describe("engine store", () => {
     const request = {
       waypoints: [],
       profile: { weights: {}, limits: {} },
-      options: { snap_radius_m: 1, geometry: false },
+      options: { snap_radius_m: 1, geometry: false, avoid_reuse: true },
     };
     const r1 = store.routeLatest(request);
     expect(store.getSnapshot().busy).toBe(true);

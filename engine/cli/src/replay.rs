@@ -556,6 +556,7 @@ pub fn run(args: &[String]) -> Result<(), Failure> {
                     options: RouteOptions {
                         snap_radius_m: 50.0,
                         geometry: false,
+                        ..RouteOptions::default()
                     },
                     via_zones: None,
                     avoid_zones: None,
