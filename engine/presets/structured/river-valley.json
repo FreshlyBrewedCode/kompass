@@ -1,0 +1,49 @@
+{
+  "id": "river_valley_structured",
+  "blurb": "Flat, along the water, easy legs",
+  "profile": {
+    "name": "River valley",
+    "weights": {
+      "quiet": 40,
+      "water": 90,
+      "novel": -10
+    },
+    "limits": {
+      "no_stairs": true
+    },
+    "boards": {
+      "surface": {
+        "paved": "fine",
+        "rough_paved": "fine",
+        "compacted": "fine",
+        "gravel": "fine",
+        "soft": "fine",
+        "unknown": "fine"
+      },
+      "way": {
+        "main": "fine",
+        "country_road": "fine",
+        "residential": "fine",
+        "service": "fine",
+        "track": "fine",
+        "path": "fine",
+        "cycle_path": "fine",
+        "cycle_path_roadside": "fine"
+      }
+    },
+    "hills": {
+      "up": {
+        "3": 1.39,
+        "6": 1.84,
+        "10": 2.67,
+        "15": 4.14
+      },
+      "down": {
+        "8": 1.0,
+        "15": 1.43
+      },
+      "loose_pct": 0.0
+    },
+    "detours": 1.0
+  }
+}

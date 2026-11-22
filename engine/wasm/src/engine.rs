@@ -486,6 +486,18 @@ pub fn presets_json() -> String {
     to_json(&kompass_core::presets())
 }
 
+/// The structured twins of the shipped presets (JSON list of presets; the prototype's switch).
+#[must_use]
+pub fn structured_presets_json() -> String {
+    to_json(&kompass_core::presets::structured_presets())
+}
+
+/// A profile (JSON) in the structured form (`kompass_core::structured::to_structured`), JSON.
+pub fn to_structured_json(profile: &str) -> Result<String, String> {
+    let p = kompass_core::Profile::from_json(profile).map_err(|e| e.0)?;
+    Ok(to_json(&kompass_core::structured::to_structured(&p)))
+}
+
 /// What the codes of `EdgeCosts::closed` name (JSON list, `codes[code - 1]`).
 #[must_use]
 pub fn closed_codes_json() -> String {
@@ -678,7 +690,8 @@ mod tests {
         assert_eq!(cmp["a"]["cost"], cmp["b"]["cost"]);
         let codes: Vec<String> = serde_json::from_str(&super::closed_codes_json()).unwrap();
         assert_eq!(codes[0], "no_main_roads");
-        assert_eq!(codes.last().map(String::as_str), Some("oneway"));
+        assert!(codes.iter().any(|c| c == "oneway"));
+        assert_eq!(codes.last().map(String::as_str), Some("avoided_way"));
         let c: Value = serde_json::from_str(&e.catalogue().unwrap()).unwrap();
         assert!(c["preferences"].as_array().is_some_and(|p| !p.is_empty()));
         let n = e.graph().unwrap().node(0);
@@ -741,6 +754,19 @@ mod tests {
     fn presets_and_catalogue_without_a_graph() {
         let p: Value = serde_json::from_str(&presets_json()).unwrap();
         assert!(p.as_array().unwrap().iter().any(|x| x["id"] == "gravel_explorer"));
+        let t: Value = serde_json::from_str(&structured_presets_json()).unwrap();
+        assert!(
+            t.as_array()
+                .unwrap()
+                .iter()
+                .any(|x| x["id"] == "gravel_explorer_structured")
+        );
+        let s: Value =
+            serde_json::from_str(&to_structured_json(r#"{"weights":{"unpaved":80,"climb":-50}}"#).unwrap())
+                .unwrap();
+        assert_eq!(s["boards"]["surface"]["gravel"], "love");
+        assert!(s["weights"].get("unpaved").is_none() && s["hills"]["up"]["10"].as_f64().unwrap() > 1.0);
+        assert!(to_structured_json(r#"{"weights":{"nope":1}}"#).is_err());
         let c: Value = serde_json::from_str(&catalogue_json()).unwrap();
         assert!(c["limits"].is_array());
         let _ = EdgeAttrs::default();

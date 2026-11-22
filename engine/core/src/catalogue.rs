@@ -3,7 +3,7 @@
 //! agent's tool all read it; nothing about the set of preferences is hard-coded elsewhere. What each
 //! one matches on the graph is [`crate::cost`]; `docs/profile.md` explains both.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "schema")]
 use ts_rs::TS;
@@ -15,7 +15,7 @@ use crate::profile::{Bounds, LimitId, PrefId};
 pub const CATALOGUE_VERSION: u32 = 1;
 
 /// A group of the picker.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema, TS))]
 pub enum Group {
@@ -149,6 +149,10 @@ pub struct Catalogue {
     pub bounds: BoundsInfo,
     /// The range of `turn_m`, what a right-angle turn at a junction costs (metres-equivalent).
     pub turn_m: BoundRange,
+    /// The structured controls (boards, tiers, the hills curve, detours; a prototype). Always
+    /// present.
+    #[cfg_attr(feature = "schema", ts(optional))]
+    pub structured: Option<crate::structured::StructuredInfo>,
 }
 
 /// The static facts of a preference.
@@ -785,6 +789,7 @@ pub fn catalogue() -> Catalogue {
             max: crate::profile::TURN_M_RANGE.1,
             default: crate::profile::TURN_M,
         },
+        structured: Some(crate::structured::info()),
     }
 }
 

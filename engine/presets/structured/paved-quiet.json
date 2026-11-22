@@ -1,0 +1,48 @@
+{
+  "id": "paved_quiet_structured",
+  "blurb": "Bike paths and small roads, no surprises",
+  "profile": {
+    "name": "Paved & quiet",
+    "weights": {
+      "quiet": 60
+    },
+    "limits": {
+      "no_stairs": true,
+      "legal_only": true
+    },
+    "boards": {
+      "surface": {
+        "paved": "fine",
+        "rough_paved": "dislike",
+        "compacted": "avoid",
+        "gravel": "avoid",
+        "soft": "avoid",
+        "unknown": "avoid"
+      },
+      "way": {
+        "main": "dislike",
+        "country_road": "fine",
+        "residential": "fine",
+        "service": "fine",
+        "track": "fine",
+        "path": "fine",
+        "cycle_path": "love",
+        "cycle_path_roadside": "fine"
+      }
+    },
+    "hills": {
+      "up": {
+        "3": 1.2,
+        "6": 1.42,
+        "10": 1.72,
+        "15": 2.1
+      },
+      "down": {
+        "8": 1.0,
+        "15": 1.0
+      },
+      "loose_pct": 0.0
+    },
+    "detours": 1.0
+  }
+}

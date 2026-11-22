@@ -11,8 +11,9 @@
 //!   `--out`).
 //! - `kompass explain --build <dir> --profile <file|preset> --edge <id> [--json] | --time`: one
 //!   edge's cost, every step, both directions; `--time` times the bulk edge costs.
-//! - `kompass profile schema | catalogue [--build <dir>] | presets`: the profile's JSON Schema, the
-//!   catalogue (with coverage shares of a region), the shipped presets.
+//! - `kompass profile schema | catalogue [--build <dir>] | presets [--structured] | convert
+//!   <file|preset>`: the profile's JSON Schema, the catalogue (with coverage shares of a region), the
+//!   shipped presets (or their structured twins), a profile in the structured form.
 //! - `kompass schema --write <dir> | --check <dir> [--traffic <file>]`: the generated JSON Schemas and TypeScript types (and the traffic model for the pipeline).
 //! - `kompass bench --build <dir>`: seeded random routes at ~10/50/100 km under the main presets.
 //! - `kompass compare --build <dir> --profiles a,b`: route quality of profiles on seeded random pairs;
@@ -55,7 +56,7 @@ const USAGE: &str = "usage: kompass [--version | --help]
        kompass route --build <dir> --profile <file|preset> --from <lon,lat> [--via <lon,lat>]... --to <lon,lat>
                      [--out <file>] [--segments] [--radius <m>] [--explain] [--why-not <lon,lat>] [--reuse off|<per_m>/<u_turn_m>]
        kompass explain --build <dir> --profile <file|preset> (--edge <id> [--json] | --time)
-       kompass profile schema | catalogue [--build <dir>] | presets
+       kompass profile schema | catalogue [--build <dir>] | presets [--structured] | convert <file|preset>
        kompass schema --write <dir> | --check <dir> [--traffic <file>]
        kompass bench --build <dir> [--pairs <n>] [--seed <n>] [--profiles <a,b>]
        kompass compare --build <dir> --profiles <a,b,...> [--pairs <n>] [--km <min-max>] [--seed <n>] [--out-dir <dir>] [--grade <pct>]
@@ -424,15 +425,28 @@ fn profile(rest: &[String]) -> Result<(), Failure> {
             Ok(())
         }
         Some("presets") => {
-            Args::parse(&rest[1..], &[])?.only(&[])?;
-            println!(
-                "{}",
-                json(&serde_json::to_value(kompass_core::presets()).unwrap_or_default())
-            );
+            let a = Args::parse(&rest[1..], &["--structured"])?;
+            a.only(&["--structured"])?;
+            let list = if a.switch("--structured") {
+                kompass_core::presets::structured_presets()
+            } else {
+                kompass_core::presets()
+            };
+            println!("{}", json(&serde_json::to_value(list).unwrap_or_default()));
+            Ok(())
+        }
+        Some("convert") => {
+            let [spec] = &rest[1..] else {
+                return Err(Failure::Usage("profile convert takes one <file|preset>".into()));
+            };
+            let p = crate::route::load_profile(spec)?;
+            let s = kompass_core::structured::to_structured(&p);
+            // (straight from the f32s: no f64 detour, 0.96 stays 0.96)
+            println!("{}", serde_json::to_string_pretty(&s).unwrap_or_default());
             Ok(())
         }
         _ => Err(Failure::Usage(
-            "profile needs one of: schema, catalogue, presets".into(),
+            "profile needs one of: schema, catalogue, presets [--structured], convert <file|preset>".into(),
         )),
     }
 }

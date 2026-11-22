@@ -16,11 +16,18 @@ use crate::explain::{
 };
 use crate::overrides::{EdgeOverride, EdgeRun, OverrideKind, OverrideUse};
 use crate::presets::Preset;
-use crate::profile::{Bounds, LimitId, LimitValue, PrefId, Profile, Weight};
+use crate::profile::{
+    BoardId, BoardRow, Boards, Bounds, DownHandles, Hills, LimitId, LimitValue, PrefId, Profile,
+    SurfaceBoard, Tier, UpHandles, WayBoard, Weight,
+};
 use crate::route::{
-    ArcExplanation, Breakdown, Coord, DiffRequest, ErrorCode, Leg, Part, Reason, ReuseCost, RiddenParts,
-    RouteDiff, RouteError, RouteGeometry, RouteOptions, RouteRequest, RouteResult, Segment, Sketch, Snapped,
-    Span, Stretch, Summary, SurfaceKind, Waypoint, Zone,
+    ArcExplanation, Breakdown, Coord, DiffRequest, ErrorCode, GradeHistogram, Leg, Part, Reason, ReuseCost,
+    RiddenParts, RouteDiff, RouteError, RouteGeometry, RouteOptions, RouteRequest, RouteResult, RowTier,
+    Segment, Sketch, Snapped, Span, Stretch, Summary, SurfaceKind, Waypoint, Zone,
+};
+use crate::structured::{
+    BoardInfo, BoardPart, CurvePreset, GroupPart, HandleInfo, HillsInfo, HillsPart, RowInfo, StructuredInfo,
+    StructuredParts, TierInfo,
 };
 
 /// A generated file: its name in the output directory and its contents.
@@ -63,6 +70,15 @@ pub fn typescript() -> String {
         decl::<Weight>(&cfg),
         decl::<LimitValue>(&cfg),
         decl::<Bounds>(&cfg),
+        decl::<Tier>(&cfg),
+        decl::<BoardId>(&cfg),
+        decl::<BoardRow>(&cfg),
+        decl::<SurfaceBoard>(&cfg),
+        decl::<WayBoard>(&cfg),
+        decl::<Boards>(&cfg),
+        decl::<UpHandles>(&cfg),
+        decl::<DownHandles>(&cfg),
+        decl::<Hills>(&cfg),
         decl::<Profile>(&cfg),
         decl::<Preset>(&cfg),
         decl::<Group>(&cfg),
@@ -74,6 +90,13 @@ pub fn typescript() -> String {
         decl::<Limit>(&cfg),
         decl::<BoundRange>(&cfg),
         decl::<BoundsInfo>(&cfg),
+        decl::<RowInfo>(&cfg),
+        decl::<BoardInfo>(&cfg),
+        decl::<TierInfo>(&cfg),
+        decl::<HandleInfo>(&cfg),
+        decl::<CurvePreset>(&cfg),
+        decl::<HillsInfo>(&cfg),
+        decl::<StructuredInfo>(&cfg),
         decl::<Catalogue>(&cfg),
         decl::<Coord>(&cfg),
         decl::<Waypoint>(&cfg),
@@ -89,11 +112,13 @@ pub fn typescript() -> String {
         decl::<WayKind>(&cfg),
         decl::<Snapped>(&cfg),
         decl::<Reason>(&cfg),
+        decl::<RowTier>(&cfg),
         decl::<Segment>(&cfg),
         decl::<Leg>(&cfg),
         decl::<Summary>(&cfg),
         decl::<Part<ts_rs::Dummy>>(&cfg),
         decl::<RiddenParts>(&cfg),
+        decl::<GradeHistogram>(&cfg),
         decl::<Breakdown>(&cfg),
         decl::<RouteGeometry>(&cfg),
         decl::<RouteResult>(&cfg),
@@ -116,6 +141,10 @@ pub fn typescript() -> String {
         decl::<AdditiveKind>(&cfg),
         decl::<Additive>(&cfg),
         decl::<Closure>(&cfg),
+        decl::<BoardPart>(&cfg),
+        decl::<GroupPart>(&cfg),
+        decl::<HillsPart>(&cfg),
+        decl::<StructuredParts>(&cfg),
         decl::<ArcCostExplanation>(&cfg),
         decl::<EdgeExplanation>(&cfg),
         decl::<CompareRequest>(&cfg),
