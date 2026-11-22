@@ -2,8 +2,8 @@ import { expect, type Page, test } from "@playwright/test";
 import { node } from "../web/test/synthetic";
 import { edgePoint, engineReady, openMap, screenshot, waitIdle } from "./helpers";
 
-// The cost debug view (docs/planner.md, "Cost") on the synthetic fixture region: the Cost layer, a tap
-// for one way's breakdown, and "why not through here?" against a planned route. Both viewports.
+// The cost debug view (docs/planner.md, "Cost") on the synthetic fixture region: the Cost layer, and a
+// tap on it opening the segment inspector ("why not this" against a planned route). Both viewports.
 
 const phone = (page: Page) => (page.viewportSize()?.width ?? 1000) < 720;
 
@@ -90,27 +90,20 @@ test("the Cost layer: edges coloured by the profile, a tap explains one, why not
   await expect.poll(() => coloured(page)).toBeGreaterThan(20);
   await screenshot(page, testInfo, "cost-layer");
 
-  // tap a way: the breakdown, verdict first
+  // tap a way: the segment inspector (its "why not this" is e2e/inspector.spec.ts)
   const { point } = await edgeOffRoute(page);
+  const before = (await planner(page)).arcs;
   await page.mouse.click(point.x, point.y);
-  await expect(page.getByTestId("cost-panel")).toBeVisible();
-  await expect(page.getByTestId("cost-verdict")).toHaveText(/^(Preferred|Neutral|Avoided|Closed)/);
-  await expect(page.getByTestId("cost-arithmetic").first()).toBeVisible();
+  const inspector = page.getByTestId("inspector");
+  await expect(inspector).toBeVisible();
+  await expect(inspector).toHaveAttribute("data-mode", /^(whynot|closed)$/);
+  await expect(page.getByTestId("inspector-headline")).toBeVisible();
+  await expect(page.getByTestId("cost-arithmetic").first()).toBeAttached();
   // a tap explains, it does not add a stop
   expect((await planner(page)).waypoints).toBe(2);
   await screenshot(page, testInfo, "cost-tap");
-
-  // why not through here: a second line, the comparison, the plan untouched
-  const before = (await planner(page)).arcs;
-  await page.getByTestId("why-not").click();
-  await expect(page.getByTestId("cost-panel")).toHaveCount(0);
-  await expect(page.getByTestId("whynot-headline")).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByTestId("whynot-via")).toBeVisible();
-  await expect.poll(() => altKinds(page)).toEqual(["compare"]);
-  expect(await planner(page)).toEqual({ arcs: before, waypoints: 2 });
-  await screenshot(page, testInfo, "cost-whynot");
-  await page.getByTestId("whynot-back").click();
-  await expect(page.getByTestId("whynot-card")).toHaveCount(0);
+  await page.getByTestId("inspector-close").click();
+  await expect(inspector).toHaveCount(0);
   await expect.poll(() => altKinds(page)).toEqual([]);
   expect(await planner(page)).toEqual({ arcs: before, waypoints: 2 });
 });

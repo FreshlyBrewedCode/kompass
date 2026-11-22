@@ -188,7 +188,7 @@ Native: every edge of the demo region (51 k) in 1.3 ms, 25 k listed in 0.5 ms, a
 (so ~60 ms for 2.34 M); the browser worker: 2.2 ms for the 51 k, 1.2 ms for 25 k listed (round trip
 included, `?bench`).
 
-**`explainEdge`: the tap panel.** `{ profile, edge }` → `EdgeExplanation`: the way type, the reported
+**`explainEdge`: the segment inspector** ([planner.md](planner.md#the-segment-inspector)). `{ profile, edge }` → `EdgeExplanation`: the way type, the reported
 surface and the one the cost uses (`tagged`, `strong_guess`, `weak_guess`), the traffic level `quiet`
 penalises and where it comes from (`traffic_from`: `way`, or `alongside` for the roads beside it), every
 attribute by its `edges.parquet` column (shares in percent), the bounds, and per direction (`along`,

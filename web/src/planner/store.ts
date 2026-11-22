@@ -533,15 +533,15 @@ export class PlannerStore {
 
   // ---------------------------------------------------------------- the cost debug view
 
-  /** The profile the plan routes with (the cost layer and the tap panel use the same). */
+  /** The profile the plan routes with, the detours included (the cost layer and the inspector use the same). */
   profile(): Profile {
     const s = this.#state;
-    return planProfile(s.base, s.weights, s.limits);
+    return planProfile(s.base, s.weights, s.limits, s.minFactor);
   }
 
-  /** One edge's cost, explained under the plan's profile (latest wins). */
-  explainEdge(edge: number): Promise<EdgeExplanation | Superseded> {
-    return this.#engine.explainEdge({ profile: this.profile(), edge }, "explain");
+  /** One edge's cost, explained under the plan's profile (or another one, on its own lane; latest wins). */
+  explainEdge(edge: number, profile?: Profile, lane = "explain"): Promise<EdgeExplanation | Superseded> {
+    return this.#engine.explainEdge({ profile: profile ?? this.profile(), edge }, lane);
   }
 
   /** The visible edges' factors for the cost layer (latest wins, its own lane). */

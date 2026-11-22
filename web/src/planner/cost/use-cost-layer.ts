@@ -7,7 +7,7 @@ import { CostLayer, type CostStatus } from "@/map/cost-layer";
 import { devEnabled } from "@/map/dev";
 import type { PlannerStore, PlanState } from "../store";
 
-const profileOf = (s: PlanState) => [s.base, s.weights, s.limits] as const;
+const profileOf = (s: PlanState) => [s.base, s.weights, s.limits, s.minFactor] as const;
 
 export function useCostLayer(
   map: MapLibreMap | null,
