@@ -228,8 +228,9 @@ pub struct PrefPart {
     /// through the gate; an `additive` one (avoiding climbs) has none, its metres are in `additive`.
     pub factor: f32,
     pub role: Role,
-    /// Structured model: whether it counts (only the strongest bonus and penalty of its group do).
-    /// Absent in the slider model, where every preference counts.
+    /// Structured model: whether it counts (only the strongest bonus and penalty of its group do;
+    /// one with factor 1 here counts for nothing either way). Absent in the slider model, where every
+    /// preference counts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "schema", ts(optional))]
     pub counted: Option<bool>,

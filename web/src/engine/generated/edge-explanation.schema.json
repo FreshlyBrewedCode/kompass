@@ -411,7 +411,7 @@
           "$ref": "#/$defs/Role"
         },
         "counted": {
-          "description": "Structured model: whether it counts (only the strongest bonus and penalty of its group do).\nAbsent in the slider model, where every preference counts.",
+          "description": "Structured model: whether it counts (only the strongest bonus and penalty of its group do;\none with factor 1 here counts for nothing either way). Absent in the slider model, where every\npreference counts.",
           "type": [
             "boolean",
             "null"

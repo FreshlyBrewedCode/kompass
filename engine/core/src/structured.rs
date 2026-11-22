@@ -101,7 +101,8 @@ pub fn curve_points(h: &Hills) -> Vec<(f32, f32)> {
 pub struct HillsSplit {
     /// The arc's mean value: what a metre of it counts relative to flat.
     pub value: f32,
-    /// The wall: the steepest 50 m (the whole arc when shorter), at the steeper of up and down.
+    /// The wall: the steepest 50 m (the whole arc when shorter), up or down, whichever the curve
+    /// values furthest from flat.
     pub wall_pct: f32,
     pub wall_m: f32,
     /// The rest's climbing part and descending part (`descent_pct` ≤ 0).
@@ -153,7 +154,9 @@ impl Curve {
         let l = len.max(1.0);
         let w = (WALL_M / l).min(1.0);
         let (cu, cd) = (self.at(up_max * k), self.at(-down_max * k));
-        let up_wall = cu >= cd;
+        // the wall the curve cares most about: the dearer one, or for a curve that seeks climbs the
+        // one furthest from flat
+        let up_wall = (cu - 1.0).abs() >= (cd - 1.0).abs();
         let (wall, wall_pct) = if up_wall {
             (cu, up_max * k)
         } else {

@@ -818,8 +818,9 @@ membership: number,
  */
 factor: number, role: Role, 
 /**
- * Structured model: whether it counts (only the strongest bonus and penalty of its group do).
- * Absent in the slider model, where every preference counts.
+ * Structured model: whether it counts (only the strongest bonus and penalty of its group do;
+ * one with factor 1 here counts for nothing either way). Absent in the slider model, where every
+ * preference counts.
  */
 counted?: boolean, };
 
