@@ -293,6 +293,14 @@ impl Engine {
         Ok(to_json(&out))
     }
 
+    /// `tradeoffs`: a `TradeoffRequest` as JSON → `Tradeoffs` as JSON.
+    pub fn tradeoffs(&mut self, request: &str) -> Result<String, String> {
+        let req: kompass_core::tradeoffs::TradeoffRequest =
+            serde_json::from_str(request).map_err(|e| format!("tradeoffs request: {e}"))?;
+        let out = self.planner()?.tradeoffs(&req).map_err(|e| e.message)?;
+        Ok(to_json(&out))
+    }
+
     /// `edgeRun`: the run of edges between the junctions around `edge` (an `EdgeRun` as JSON).
     pub fn edge_run(&mut self, edge: u32) -> Result<String, String> {
         let out = self.planner()?.edge_run(edge).map_err(|e| e.message)?;

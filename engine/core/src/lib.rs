@@ -16,7 +16,8 @@
 //! - [`route`]: the `route` query and the route diff ([`Planner`]), [`personal`]: the rider's
 //!   history per edge; [`explain`]: the cost debug queries (edge costs for a map layer, one edge
 //!   explained, two routes compared); [`overrides`]: a plan's exceptions by edge (avoid, prefer,
-//!   allow) on top of the compiled profile, and the run of edges a rider means by "this segment".
+//!   allow) on top of the compiled profile, and the run of edges a rider means by "this segment";
+//!   [`tradeoffs`]: the hard limits as trade-offs (where breaking one on a short bit saves distance).
 //! - [`testing`]: tiny graphs built in code, for tests here and in the other crates.
 #![allow(
     clippy::missing_errors_doc,
@@ -48,6 +49,7 @@ pub mod search;
 pub mod spatial;
 pub mod structured;
 pub mod testing;
+pub mod tradeoffs;
 pub mod traffic;
 pub mod turns;
 

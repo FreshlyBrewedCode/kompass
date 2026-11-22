@@ -17,7 +17,8 @@
 //! - `kompass schema --write <dir> | --check <dir> [--traffic <file>]`: the generated JSON Schemas and TypeScript types (and the traffic model for the pipeline).
 //! - `kompass bench --build <dir>`: seeded random routes at ~10/50/100 km under the main presets.
 //! - `kompass compare --build <dir> --profiles a,b`: route quality of profiles on seeded random pairs;
-//!   `--loop <corners>`: seeded loops of waypoints, how much is ridden twice per `--reuse` variant.
+//!   `--loop <corners>`: seeded loops of waypoints, how much is ridden twice per `--reuse` variant;
+//!   `--tradeoffs`: how many routes get a hard-limit trade-off per threshold, what it saves.
 //! - `kompass match --build <dir> [--geojson <dir>] [--explored <file>] <gpx files or directories>`:
 //!   map-matches recorded tracks, prints aggregate numbers (`docs/matching.md`).
 //! - `kompass replay --build <dir> --profiles <a,b> [--ref name=dir]... <gpx files>`: route quality
@@ -64,7 +65,8 @@ const USAGE: &str = "usage: kompass [--version | --help]
        kompass bench --build <dir> [--pairs <n>] [--seed <n>] [--profiles <a,b>]
        kompass sensitivity --build <dir> [--profiles <a,b,...>] [--pairs <n>] [--km <min-max>] [--seed <n>] [--personal <explored.json>]
        kompass compare --build <dir> --profiles <a,b,...> [--pairs <n>] [--km <min-max>] [--seed <n>] [--out-dir <dir>] [--grade <pct>]
-       kompass compare --build <dir> --loop <corners> [--profiles <a,b,...>] [--reuse off,on,<per_m>/<u_turn_m>,...] [--corners through|any] [--pairs <n>] [--km <min-max>] [--seed <n>]";
+       kompass compare --build <dir> --loop <corners> [--profiles <a,b,...>] [--reuse off,on,<per_m>/<u_turn_m>,...] [--corners through|any] [--pairs <n>] [--km <min-max>] [--seed <n>]
+       kompass compare --build <dir> --tradeoffs [--profiles <a,b,...>] [--pairs <n>] [--km <min-max>] [--seed <n>]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -87,6 +89,9 @@ fn main() -> ExitCode {
         Some("profile") => profile(rest),
         Some("schema") => Args::parse(rest, &[]).and_then(|a| schema(&a)),
         Some("bench") => Args::parse(rest, &[]).and_then(|a| bench::bench(&a)),
+        Some("compare") if rest.iter().any(|x| x == "--tradeoffs") => {
+            Args::parse(rest, &["--tradeoffs"]).and_then(|a| bench::tradeoffs(&a))
+        }
         Some("compare") => Args::parse(rest, &[]).and_then(|a| bench::compare(&a)),
         Some("sensitivity") => Args::parse(rest, &[]).and_then(|a| sensitivity::run(&a)),
         Some(other) => Err(Failure::Usage(format!("unknown command `{other}`"))),

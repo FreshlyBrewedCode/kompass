@@ -587,6 +587,9 @@ pub struct Planner {
     search: Search,
     compiled: Vec<Compiled>,
     personal: Option<PersonalLayer>,
+    /// Route with every limit softened: excluded ways anywhere at `max_factor` per metre (never
+    /// against one-way or a bicycle ban), for [`Planner::tradeoffs`].
+    soften: bool,
     /// Profiles compiled since creation (for tests and stats).
     pub compiles: usize,
 }
@@ -652,6 +655,7 @@ impl Planner {
             search,
             compiled: Vec::new(),
             personal: None,
+            soften: false,
             compiles: 0,
         }
     }
@@ -1044,6 +1048,15 @@ impl Planner {
         Ok(result)
     }
 
+    /// Routes a request with every limit softened (`soften`): what [`Planner::tradeoffs`] compares
+    /// the strict route with.
+    pub(crate) fn route_softened(&mut self, req: &RouteRequest) -> Result<RouteResult, RouteError> {
+        self.soften = true;
+        let r = self.route(req);
+        self.soften = false;
+        r
+    }
+
     /// The turns between consecutive pieces (riding on along one arc through a via is none): how
     /// many cost something and what (`turn_m` per right-angle turn).
     fn piece_turns(&self, pieces: &[Piece], turn_m: f32) -> (u32, f32) {
@@ -1263,11 +1276,15 @@ impl Planner {
             .filter(|t| t.cost.is_finite())
             .map(|t| t.node)
             .collect();
+        // (softened: excluded ways are open everywhere, no pocket to check)
+        let soften = self.soften;
         let pocket_a = !xa
+            && !soften
             && self
                 .search
                 .cut_off(g, &c.costs, ov, &starts, &ends, POCKET_NODES, true);
         let pocket_b = !xb
+            && !soften
             && self
                 .search
                 .cut_off(g, &c.costs, ov, &ends, &starts, POCKET_NODES, false);
@@ -1277,6 +1294,21 @@ impl Planner {
             .map(|(ep, _)| ep.snap.point.to_e7())
             .collect();
         let both = [a.snap.point.to_e7(), b.snap.point.to_e7()];
+        let exempt = if soften {
+            Some(Exempt {
+                plane: self.plane,
+                points: &both,
+                radius_m: f32::INFINITY,
+                max_factor: c.model.max_factor,
+            })
+        } else {
+            (!exempt_points.is_empty()).then_some(Exempt {
+                plane: self.plane,
+                points: &exempt_points,
+                radius_m: EXEMPT_RADIUS_M,
+                max_factor: c.model.max_factor,
+            })
+        };
         let mut query = Query {
             costs: &c.costs,
             plane: self.plane,
@@ -1286,12 +1318,7 @@ impl Planner {
             targets: &targets,
             target,
             best: direct,
-            exempt: (!exempt_points.is_empty()).then_some(Exempt {
-                plane: self.plane,
-                points: &exempt_points,
-                radius_m: EXEMPT_RADIUS_M,
-                max_factor: c.model.max_factor,
-            }),
+            exempt,
             overlay: shape.overlay,
             uturn: shape.back.map(|(back, cost)| UTurn {
                 node: g.tail(back),
@@ -1308,7 +1335,7 @@ impl Planner {
         };
         let mut found = self.search.run(g, &query);
         let mut settled_all = self.search.settled;
-        if found.is_none() && direct_piece.is_none() && exempt_points.len() < 2 {
+        if found.is_none() && direct_piece.is_none() && !soften && exempt_points.len() < 2 {
             // a waypoint in a pocket the limits cut off: let both ends get away over excluded ways
             query.exempt = Some(Exempt {
                 plane: self.plane,

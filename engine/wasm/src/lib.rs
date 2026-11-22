@@ -296,6 +296,12 @@ impl Engine {
         self.0.compare(request).map_err(js)
     }
 
+    /// A `TradeoffRequest` (JSON) → `Tradeoffs` (JSON): where breaking a limit on a short bit saves
+    /// real distance.
+    pub fn tradeoffs(&mut self, request: &str) -> Result<String, JsError> {
+        self.0.tradeoffs(request).map_err(js)
+    }
+
     /// The run of edges between the junctions around `edge` (an `EdgeRun`, JSON): "this segment".
     #[wasm_bindgen(js_name = edgeRun)]
     pub fn edge_run(&mut self, edge: u32) -> Result<String, JsError> {
