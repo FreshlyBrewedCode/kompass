@@ -69,6 +69,10 @@ import {
 import { exceptionsCount, overrideText } from "./overrides";
 import { SURFACE, WAY } from "./palette";
 import { type PlanState, usePlan, usePlanner } from "./store";
+import { boardLine, TierBoard, TierGlyph } from "./structured/board";
+import { PrototypeNote, SpreadRow } from "./structured/controls";
+import { HillsCurve, HillsGlyph } from "./structured/hills";
+import { hillsSummary, replaced } from "./structured/model";
 
 /** A card floating over the map. */
 export const card = "rounded-card border border-border bg-glass shadow-float backdrop-blur-xl";
@@ -285,7 +289,7 @@ export function KnobSlider({
 }
 
 /** A mark on a `KnobSlider`'s track: the base profile's value. */
-function BaseRing({ at }: { at: number }) {
+export function BaseRing({ at }: { at: number }) {
   return (
     <i
       title="The base profile's value"
@@ -341,7 +345,7 @@ export function Dial({
 }
 
 /** The marker of "changed against the base": the accent's main job. Tap it to put the row back. */
-function ChangeDot({ on, onClick }: { on: boolean; onClick: () => void }) {
+export function ChangeDot({ on, onClick }: { on: boolean; onClick: () => void }) {
   if (!on) return null;
   return (
     <button
@@ -634,6 +638,10 @@ const DialLegend = () => (
  * One group of the profile (the catalogue's, as in the picker): collapsed to a line of what is set
  * in it, opened to its sliders. Says so when nothing in it applies to the route.
  */
+/** A group the structured controls draw (#66): a board or the hills curve in place of its sliders. */
+type Widget = "surface" | "way" | "hills";
+const WIDGET: Partial<Record<Group, Widget>> = { surface: "surface", ways: "way", terrain: "hills" };
+
 function PrefGroupBlock({
   group,
   open,
@@ -642,6 +650,7 @@ function PrefGroupBlock({
   held,
   onGrab,
   onRelease,
+  widget,
 }: {
   group: PrefGroup;
   open: boolean;
@@ -651,19 +660,52 @@ function PrefGroupBlock({
   held?: string | null;
   onGrab?: (id: string) => void;
   onRelease?: () => void;
+  /** structured controls: the group is a tier board or the hills curve, its other sliders below */
+  widget?: Widget | undefined;
 }) {
   const weights = usePlan((s) => s.weights);
-  const changed = usePlan((s) => group.ids.some((id) => isChanged(s, id)));
+  const changed = usePlan(
+    (s) =>
+      group.ids.some((id) => isChanged(s, id)) ||
+      (widget === "hills"
+        ? isChanged(s, "hills")
+        : !!widget && s.changes.some((c) => c.kind === "row" && boardRowOf(c.id) === widget)),
+  );
+  const widgetLine = usePlan((s) =>
+    widget === "hills"
+      ? s.structured
+        ? hillsSummary(
+            s.structured.hills,
+            s.catalogue?.structured,
+            s.baseParts ? { name: presetName(s.base), hills: s.baseParts.hills } : undefined,
+          )
+        : ""
+      : widget
+        ? boardLine(s.structured?.boards[widget] as Parameters<typeof boardLine>[0], widget)
+        : "",
+  );
   // nothing in the group applies to the route (known only once the route has its figures)
   const none = usePlan((s) => {
     const r = mainResult(s);
+    if (widget) return false;
     return group.ids.every((id) => {
       const m = touchedM(r, id);
       return m !== null && m < TOUCH_MIN_M;
     });
   });
   const Icon = GROUP_ICON[group.id];
-  const summary = groupSummary(group.ids, weights);
+  const summary = widget
+    ? [widgetLine, group.ids.length ? groupSummary(group.ids, weights, 1) : ""].filter(Boolean).join("; ")
+    : groupSummary(group.ids, weights);
+  const sliders = group.ids.map((id) => (
+    <PrefRow
+      key={id}
+      id={id}
+      held={held === id}
+      {...(onGrab ? { onGrab } : {})}
+      {...(onRelease ? { onRelease } : {})}
+    />
+  ));
   return (
     <section data-testid={`group-${group.id}`} data-open={open || undefined} className="rounded-control">
       <button
@@ -685,9 +727,16 @@ function PrefGroupBlock({
             {changed && (
               <i className="size-1.5 shrink-0 rounded-full bg-signal" title="Changed against the base" />
             )}
-            <span className="font-medium text-2xs text-muted-foreground tabular-nums">
-              {group.ids.length}
-            </span>
+            {!widget && (
+              <span className="font-medium text-2xs text-muted-foreground tabular-nums">
+                {group.ids.length}
+              </span>
+            )}
+            {widget && (
+              <span className="ml-auto">
+                {widget === "hills" ? <HillsGlyph /> : <TierGlyph id={widget} />}
+              </span>
+            )}
             {none && (
               <span className="ml-auto truncate text-2xs text-muted-foreground" data-testid="group-none">
                 nothing on this route
@@ -705,18 +754,21 @@ function PrefGroupBlock({
           )}
         />
       </button>
-      {open && (
+      {open && widget && (
+        <div id={`kp-group-${group.id}`} className="pt-1">
+          {widget === "hills" ? (
+            <HillsCurve>{sliders.length > 0 && <div className="space-y-0.5 pt-1">{sliders}</div>}</HillsCurve>
+          ) : (
+            <TierBoard id={widget}>
+              {sliders.length > 0 && <div className="space-y-0.5 pt-1">{sliders}</div>}
+            </TierBoard>
+          )}
+        </div>
+      )}
+      {open && !widget && (
         <div id={`kp-group-${group.id}`} className="space-y-0.5 pb-2 pl-1">
           {legend && <DialLegend />}
-          {group.ids.map((id) => (
-            <PrefRow
-              key={id}
-              id={id}
-              held={held === id}
-              {...(onGrab ? { onGrab } : {})}
-              {...(onRelease ? { onRelease } : {})}
-            />
-          ))}
+          {sliders}
         </div>
       )}
     </section>
@@ -743,6 +795,22 @@ function EmptyProfile() {
   );
 }
 
+/** A change's board (`row:<row>`), for the group's change dot. */
+function boardRowOf(id: string): "surface" | "way" | null {
+  if (!id.startsWith("row:")) return null;
+  const row = id.slice(4);
+  return ["paved", "rough_paved", "compacted", "gravel", "soft", "unknown"].includes(row) ? "surface" : "way";
+}
+
+/** The groups under the structured controls: the boards and the curve always, the rest with rows. */
+function widgetGroups(ids: readonly PrefId[], catalogue: PlanState["catalogue"]): PrefGroup[] {
+  const groups = prefGroups(ids, catalogue);
+  if (!catalogue) return groups;
+  return catalogue.groups
+    .map((g) => groups.find((x) => x.id === g.id) ?? { id: g.id, label: g.label, ids: [] })
+    .filter((g) => g.ids.length > 0 || WIDGET[g.id]);
+}
+
 /** The whole profile as a list: the preferences by group (collapsed), add, detours, limits. */
 export function ProfileList({
   held,
@@ -757,7 +825,8 @@ export function ProfileList({
   const limitIds = usePlan((s) => s.limitIds);
   const catalogue = usePlan((s) => s.catalogue);
   const fresh = usePlan((s) => s.fresh);
-  const groups = prefGroups(prefIds, catalogue);
+  const structured = usePlan((s) => s.controls === "structured" && !!s.structured);
+  const groups = structured ? widgetGroups(prefIds, catalogue) : prefGroups(prefIds, catalogue);
   const [opened, setOpened] = useState<ReadonlySet<Group>>(() => new Set());
   // a row just added (or flashed from the cost view) opens its group, and it stays open
   const freshGroup = groups.find((g) => g.ids.includes(fresh as PrefId))?.id;
@@ -765,7 +834,7 @@ export function ProfileList({
     if (freshGroup) setOpened((o) => (o.has(freshGroup) ? o : new Set([...o, freshGroup])));
   }, [freshGroup]);
   const isOpen = (id: Group) => opened.has(id) || freshGroup === id;
-  const firstOpen = groups.find((g) => isOpen(g.id))?.id;
+  const firstOpen = groups.find((g) => isOpen(g.id) && !(structured && WIDGET[g.id]))?.id;
   const toggle = (id: Group) =>
     setOpened((o) => {
       const next = new Set(o);
@@ -775,6 +844,7 @@ export function ProfileList({
     });
   return (
     <div>
+      {structured && <PrototypeNote />}
       {groups.length === 0 ? (
         <EmptyProfile />
       ) : (
@@ -787,6 +857,7 @@ export function ProfileList({
                 open={isOpen(g.id)}
                 legend={g.id === firstOpen}
                 onToggle={() => toggle(g.id)}
+                widget={structured ? WIDGET[g.id] : undefined}
                 held={held ?? null}
                 {...(onGrab ? { onGrab } : {})}
                 {...(onRelease ? { onRelease } : {})}
@@ -798,7 +869,7 @@ export function ProfileList({
           </div>
         </>
       )}
-      <DetoursRow />
+      {structured ? <SpreadRow /> : <DetoursRow />}
       <div data-fade id="kp-limits" className="mt-4">
         <div className={cn(label, "flex items-center gap-1.5")}>
           <Lock className="size-3" />
@@ -1102,8 +1173,11 @@ export function Picker({ className }: { className?: string }) {
   const catalogue = usePlan((s) => s.catalogue);
   const weights = usePlan((s) => s.weights);
   const limits = usePlan((s) => s.limits);
+  const structured = usePlan((s) => s.controls === "structured");
   const [q, setQ] = useState("");
   if (!catalogue) return null;
+  // under the structured controls the boards and the curve replace some: never offered (the engine rejects them)
+  const hidden = structured ? replaced(catalogue) : { prefs: new Set<string>(), limits: new Set<string>() };
   const coverage = (share: number | undefined, note: string | undefined, personal: boolean) => {
     if (personal) return "Needs your imported rides.";
     if (share !== undefined && share < 0.6)
@@ -1111,26 +1185,30 @@ export function Picker({ className }: { className?: string }) {
     return note && share === undefined ? undefined : undefined;
   };
   const all: Item[] = [
-    ...catalogue.preferences.map((p) => {
-      const note = coverage(p.coverage?.share, p.coverage?.note, p.personal);
-      return {
-        kind: "pref" as const,
-        id: p.id,
-        group: p.group,
-        label: p.label,
-        hint: p.hint,
-        ...(note ? { note } : {}),
-        has: p.id in weights,
-      };
-    }),
-    ...catalogue.limits.map((l) => ({
-      kind: "limit" as const,
-      id: l.id,
-      group: l.group,
-      label: l.label,
-      hint: l.hint,
-      has: limits[l.id] !== undefined && limits[l.id] !== false,
-    })),
+    ...catalogue.preferences
+      .filter((p) => !hidden.prefs.has(p.id))
+      .map((p) => {
+        const note = coverage(p.coverage?.share, p.coverage?.note, p.personal);
+        return {
+          kind: "pref" as const,
+          id: p.id,
+          group: p.group,
+          label: p.label,
+          hint: p.hint,
+          ...(note ? { note } : {}),
+          has: p.id in weights,
+        };
+      }),
+    ...catalogue.limits
+      .filter((l) => !hidden.limits.has(l.id))
+      .map((l) => ({
+        kind: "limit" as const,
+        id: l.id,
+        group: l.group,
+        label: l.label,
+        hint: l.hint,
+        has: limits[l.id] !== undefined && limits[l.id] !== false,
+      })),
   ];
   const needle = q.trim().toLowerCase();
   const groupLabel = (g: Group) => catalogue.groups.find((x) => x.id === g)?.label ?? g;

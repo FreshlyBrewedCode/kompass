@@ -83,6 +83,13 @@ const FAKE_COUNT = 400;
 const GEOMETRY: GeometryMode = params.get("geometry") === "lazy" ? "lazy" : "eager";
 /** `?terrain=0` / `?routes=0` start with a toggle off. */
 const flag = (name: string) => params.get(name) !== "0";
+/** `?controls=structured` (or `=sliders`): the structured controls prototype on or off, remembered (#66) */
+const CONTROLS =
+  params.get("controls") === "structured"
+    ? ("structured" as const)
+    : params.get("controls") === "sliders"
+      ? ("sliders" as const)
+      : undefined;
 /** The agent bar on the phone: off after playtest 1 (it took a row from the map and does nothing yet). */
 const AGENT_ON_PHONE = false;
 
@@ -169,6 +176,7 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
       new PlannerStore(engineAdapter(engine), {
         bounds: manifest.bounds,
         build: manifest.graph?.buildId ?? manifest.buildId,
+        ...(CONTROLS ? { controls: CONTROLS } : {}),
       }),
     [engine, manifest],
   );

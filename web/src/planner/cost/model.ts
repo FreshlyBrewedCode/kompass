@@ -56,6 +56,8 @@ export const wayName = (w: WayKind) => WAY_NAME[w];
 export function closureName(by: ClosedBy, catalogue: Catalogue | null): string {
   if (by === "no_bikes") return "no bicycles allowed";
   if (by === "oneway") return "one-way";
+  if (by === "avoided_surface") return "avoided on the Surface board";
+  if (by === "avoided_way") return "avoided on the Way type board";
   const label = catalogue?.limits.find((l) => l.id === by)?.label ?? by.replace(/_/g, " ");
   return label.charAt(0).toLowerCase() + label.slice(1);
 }

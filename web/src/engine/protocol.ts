@@ -143,6 +143,10 @@ export type PersonalParams = { rides: Uint16Array; lastRidden: Uint32Array; toda
 export interface EngineMethods {
   version: { params: undefined; result: string };
   presets: { params: undefined; result: Preset[] };
+  /** the structured twins of the shipped presets (#66, the prototype behind a switch) */
+  structuredPresets: { params: undefined; result: Preset[] };
+  /** a slider profile in the structured form (boards, hills, detours); a structured one unchanged */
+  toStructured: { params: Profile; result: Profile };
   /** with the loaded region's coverage, else the plain catalogue */
   catalogue: { params: undefined; result: Catalogue };
   load: { params: LoadParams; result: LoadStats };

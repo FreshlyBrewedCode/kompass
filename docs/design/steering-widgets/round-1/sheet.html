@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Steering widgets, round 1: contact sheet</title>
+    <link rel="stylesheet" href="mock.css" />
+    <style>
+      body { width: 1250px; padding: 22px 20px 20px; background: #fff; }
+      h1 { font-size: 26px; line-height: 32px; font-weight: 800; }
+      p { font-size: 15px; line-height: 22px; color: var(--muted-foreground); margin: 2px 0 16px; max-width: 1100px; }
+      .row { display: flex; gap: 20px; }
+      figure { width: 390px; }
+      figcaption { font-size: 14px; font-weight: 700; margin-bottom: 8px; }
+      iframe { width: 390px; height: 844px; border: 0; border-radius: 18px; box-shadow: 0 0 0 1px var(--input); display: block; }
+    </style>
+  </head>
+  <body>
+    <h1 id="t"></h1>
+    <p id="s"></p>
+    <div class="row" id="row"></div>
+    <script>
+      const TEXT = {
+        A: ["A · Lanes", "A tier list: one lane per tier, the ways as chips. Drag a chip to another lane, or tap it and pick. The hills curve is a chart with handles to drag, the route's grades behind it."],
+        B: ["B · Matrix", "A grid of ways × tiers: one tap moves a way. The hills curve as an equalizer: one vertical slider per grade, evenly spaced, the route's kilometres per grade behind."],
+        C: ["C · Ladder", "One ordered list from love down to the never line; rows move up and down a tier. Hills: pick a preset, tune it with two sliders, the curve is only a read-out."],
+        D: ["D · Route first", "The route's own make-up, biggest share first: select ways, then pick the tier in a bar at the thumb. Hills are the same rows: one per grade, with a stepper."],
+      };
+      const d = new URLSearchParams(location.search).get("d") ?? "A";
+      document.getElementById("t").textContent = TEXT[d][0];
+      document.getElementById("s").textContent = TEXT[d][1];
+      const caps = ["1 · collapsed, among the other groups", "2 · the road-type board open", "3 · the hills curve open"];
+      document.getElementById("row").innerHTML = [1, 2, 3]
+        .map((n) => `<figure><figcaption>${caps[n - 1]}</figcaption><iframe src="index.html?f=${d}-${n}"></iframe></figure>`)
+        .join("");
+    </script>
+  </body>
+</html>

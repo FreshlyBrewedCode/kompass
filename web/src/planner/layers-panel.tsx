@@ -16,6 +16,7 @@ import { MapKey } from "./map-key";
 import { MapStyleOptions } from "./map-style";
 import { label, pill, Switch } from "./parts";
 import { usePlan, usePlanner } from "./store";
+import { ControlsSwitch } from "./structured/controls";
 
 /** The attributes worth a chip first; the rest behind "more". */
 const FIRST = [
@@ -347,6 +348,7 @@ export function LayersPanel(p: LayersProps) {
             ))}
           </ToggleGroup>
         </div>
+        <ControlsSwitch />
         <div className="flex items-center gap-3">
           <span className="min-w-0 flex-1 font-semibold text-sm">My rides on the map</span>
           <Switch

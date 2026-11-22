@@ -30,6 +30,8 @@ import {
 import { weightWord } from "../model";
 import { Dial, label, pill } from "../parts";
 import { usePlan, usePlanner } from "../store";
+import { AvoidedRow, StructuredLines } from "../structured/inspect";
+import { replaced } from "../structured/model";
 import {
   ActionsHint,
   AllowButton,
@@ -105,6 +107,8 @@ export function Inspector({
   const base = usePlan((s) => s.base);
   const minFactor = usePlan((s) => s.minFactor);
   const overrides = usePlan((s) => s.overrides);
+  // the structured controls (#66): their boards, curve and spread are part of the profile too
+  const structured = usePlan((s) => s.structured);
   const exception = useException(target.id);
   const routed = usePlan((s) => s.waypoints.length >= 2 && !!s.main.result && !s.main.error);
   const arcs = usePlan((s) =>
@@ -133,7 +137,7 @@ export function Inspector({
     return () => {
       live = false;
     };
-  }, [target.id, weights, limits, base, minFactor, overrides, store]);
+  }, [target.id, weights, limits, base, minFactor, overrides, structured, store]);
   const fresh = x?.edge === target.id ? x : null;
   // a way closed both ways is never routed through (a via snaps to an open way nearby): no comparison
   const closedWay = !!fresh && !isOpen(fresh.along) && !isOpen(fresh.against);
@@ -179,10 +183,15 @@ export function Inspector({
   const arc = fresh ? focusArc(fresh, arcs) : null;
   const probeArc =
     probe?.edge === target.id && arc ? (arc === fresh?.along ? probe.along : probe.against) : null;
-  const all = useMemo(
-    () => (fresh && arc ? lines(fresh, arc, probeArc, weights, catalogue) : null),
-    [fresh, arc, probeArc, weights, catalogue],
-  );
+  const all = useMemo(() => {
+    if (!fresh || !arc) return null;
+    const l = lines(fresh, arc, probeArc, weights, catalogue);
+    if (!structured) return l;
+    // the boards and the curve have their own lines (below); what they replace is no slider here
+    const hidden = replaced(catalogue).prefs;
+    const keep = (x: Line) => x.key !== "fixed:hills" && !(x.pref && hidden.has(x.pref));
+    return { lowers: l.lowers.filter(keep), raises: l.raises.filter(keep), neutral: l.neutral.filter(keep) };
+  }, [fresh, arc, probeArc, weights, catalogue, structured]);
   const shown = all ? arrange(all, open ? frozen.current : null) : null;
   const toggle = (l: Line) => {
     if (!l.pref || !all) return;
@@ -309,6 +318,7 @@ export function Inspector({
               {mode === "way" && <ActionsHint x={fresh} use={false} />}
             </div>
           )}
+          {structured && arc && isOpen(arc) && <StructuredLines x={fresh} arc={arc} />}
           {shown && (
             <div className="mt-2.5 space-y-2" data-testid="inspector-groups">
               <LineGroup
@@ -479,6 +489,18 @@ function Closed({ x }: { x: EdgeExplanation }) {
   const catalogue = usePlan((s) => s.catalogue);
   const by = [...x.along.closed_by, ...x.against.closed_by].map((c) => c.by);
   const limit = catalogue?.limits.find((l) => by.includes(l.id));
+  const avoided = by.includes("avoided_surface") || by.includes("avoided_way");
+  if (avoided && !limit)
+    return (
+      <>
+        <AvoidedRow x={x} />
+        {allowable(x) && (
+          <div className="mt-2 flex flex-wrap gap-1.5" data-testid="inspector-actions">
+            <AllowButton x={x} />
+          </div>
+        )}
+      </>
+    );
   if (!limit)
     return (
       <p data-testid="inspector-noslider" className="mt-1 font-semibold text-xs leading-snug">
@@ -524,6 +546,7 @@ function WhyNotVerdictBlock({
 }) {
   const w = usePlan((s) => s.whyNot);
   const catalogue = usePlan((s) => s.catalogue);
+  const structured = usePlan((s) => s.structured);
   if (!w || w.line.error)
     return (
       <p className="text-muted-foreground text-xs" data-testid="inspector-verdict">
@@ -536,7 +559,7 @@ function WhyNotVerdictBlock({
         Routing through here…
       </p>
     );
-  const v = whyNotVerdict(w.comparison, minFactor, catalogue);
+  const v = whyNotVerdict(w.comparison, minFactor, catalogue, structured);
   return (
     <div data-testid="inspector-whynot" data-state={v.state}>
       <div className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 font-semibold text-xs">
@@ -683,6 +706,54 @@ function Arithmetic({ arc, x, title }: { arc: ArcCostExplanation; x: EdgeExplana
             <span className="text-muted-foreground">{closureTag(c)}</span>
           </div>
         ))
+      ) : arc.structured ? (
+        <>
+          <div className={row}>
+            <span className="text-muted-foreground">
+              Boards ({arc.structured.boards.map((b) => `${b.row.replace(/_/g, " ")} ${b.tier}`).join(", ")})
+            </span>
+            <span className="tabular-nums">{formatFactor(arc.structured.board_factor)}</span>
+          </div>
+          {arc.structured.groups.map((g) => (
+            <div key={g.group} className={row}>
+              <span className="text-muted-foreground">
+                × {g.group}:{" "}
+                {[g.bonus, g.penalty, g.gated_bonus]
+                  .filter(Boolean)
+                  .map((r) => r?.id)
+                  .join(", ") || "—"}
+              </span>
+              <span className="tabular-nums">
+                {formatFactor([g.bonus, g.penalty, g.gated_bonus].reduce((f, r) => f * (r?.factor ?? 1), 1))}
+              </span>
+            </div>
+          ))}
+          <div className={row}>
+            <span className="text-muted-foreground">
+              ÷ the profile's best ({formatFactor(arc.structured.best)})
+            </span>
+            <span className="tabular-nums">{formatFactor(arc.structured.relative)}</span>
+          </div>
+          <div className={cn(row, "font-semibold")}>
+            <span>^ detours {arc.structured.detours}</span>
+            <span className="tabular-nums">{formatFactor(arc.factor)}</span>
+          </div>
+          {arc.additive.map((a) => (
+            <div key={a.kind} className={row}>
+              <span className="text-muted-foreground">+ {a.kind}</span>
+              <span className="tabular-nums">
+                {a.metres < 0 ? "−" : "+"}
+                {metresText(Math.abs(a.metres))}
+              </span>
+            </div>
+          ))}
+          {arc.cost !== undefined && (
+            <div className={row}>
+              <span className="text-muted-foreground">The router counts {metresText(x.length_m)} as</span>
+              <span className="tabular-nums">{metresText(arc.cost)}</span>
+            </div>
+          )}
+        </>
       ) : (
         <>
           <div className={row}>
