@@ -113,8 +113,9 @@ test("the layers control: one information layer at a time, with its legend; the 
   await pick(page, "surface_class");
   expect(await visibility(page, "info-line")).toBe("visible");
   expect(await filter(page, "info-line")).toContain('"in",["get","surface_class"]');
+  // the layer is drawn a frame or two after the switch
+  await expect.poll(() => drawn(page, ["info-line"])).toBeGreaterThan(0);
   const shown = await drawn(page, ["info-line"]);
-  expect(shown).toBeGreaterThan(0);
   expect(shown).toBeLessThan(await drawn(page, PICK));
   await expect(page.getByTestId("info-surface_class")).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("legend-entry")).toHaveCount(6);
