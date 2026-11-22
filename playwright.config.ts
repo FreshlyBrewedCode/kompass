@@ -15,7 +15,10 @@ const launchOptions = {
 
 export default defineConfig({
   testDir: "e2e",
-  fullyParallel: false,
+  // One worker: the map renders WebGL on the CPU (SwiftShader), so a test already keeps several cores
+  // busy and more workers on one machine time out. CI splits the suite across runners instead
+  // (`--shard`), by test rather than by file.
+  fullyParallel: true,
   workers: 1,
   reporter: process.env.CI ? "line" : "list",
   timeout: 30_000,
