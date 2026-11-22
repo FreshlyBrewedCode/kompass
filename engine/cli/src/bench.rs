@@ -126,7 +126,13 @@ pub(crate) fn bench(a: &Args) -> Result<(), Failure> {
     }
     drop(buf);
     drop(classes);
+    let t = Instant::now();
     let mut planner = Planner::new(graph);
+    println!(
+        "planner (snapping grid, edge classes, turn headings, search state): {:.0} ms, headings {}",
+        t.elapsed().as_secs_f64() * 1e3,
+        mb(planner.headings().heap_bytes() as u64)
+    );
     let mut rng = Rng(seed | 1);
     println!(
         "\n| profile | straight line | pairs | route km p50 | ms p50 / p95 / max | settled p50 / p95 | result JSON p50 |"
@@ -188,6 +194,10 @@ struct Quality {
     /// Km whose tamed grade exceeds `--grade` uphill, and downhill.
     steep_up_km: f64,
     steep_down_km: f64,
+    /// Turns (≥ 45° at junctions), zigzags and short excursions (`replay`'s measures).
+    turns: u32,
+    zigzags: u32,
+    excursions: u32,
 }
 
 fn quality(g: &Graph, r: &RouteResult, shortest_km: f64, grade: f32) -> Quality {
@@ -219,7 +229,12 @@ fn quality(g: &Graph, r: &RouteResult, shortest_km: f64, grade: f32) -> Quality 
             .sum::<f64>()
             / 1000.0
     };
+    let line: Vec<(kompass_core::ArcId, f32)> = r.arcs.iter().map(|&a| (a, 1.0)).collect();
+    let (turns, zigzags) = crate::replay::turns(g, &line);
     Quality {
+        turns,
+        zigzags,
+        excursions: crate::replay::excursions(g, &r.arcs),
         steep_up_km: steep(true),
         steep_down_km: steep(false),
         water: along(&|e| g.water_share(e)),
@@ -269,11 +284,14 @@ pub(crate) fn compare(a: &Args) -> Result<(), Failure> {
     if let Some(d) = out_dir {
         std::fs::create_dir_all(d)?;
     }
-    let (graph, _) = kompass_compile::build::load(&build, out_dir.is_some())?;
+    // (with the geometry: the turn costs read its headings)
+    let (graph, _) = kompass_compile::build::load(&build, true)?;
     let mut planner = Planner::new(graph);
-    let shortest = kompass_core::preset("blank_slate")
+    // the shortest way: the blank slate, turns free
+    let mut shortest = kompass_core::preset("blank_slate")
         .map(|p| p.profile)
         .ok_or_else(|| Failure::Run("no blank slate preset".into()))?;
+    shortest.turn_m = Some(0.0);
     let all = vec![shortest.clone()];
     let mut rng = Rng(seed | 1);
     // pairs whose shortest route is lo..hi km (straight line a bit below)
@@ -357,9 +375,9 @@ pub(crate) fn compare(a: &Args) -> Result<(), Failure> {
         v
     };
     println!(
-        "\n| profile | detour p50 / p90 / max | unpaved mean (min) | unknown surface mean | main road km mean / max | tracks mean | bike paths mean | ascent mean | water / forest | km > {grade} % up / down mean |"
+        "\n| profile | detour p50 / p90 / max | unpaved mean (min) | unknown surface mean | main road km mean / max | tracks mean | bike paths mean | ascent mean | water / forest | km > {grade} % up / down mean | turns / km | zigzags | excursions |"
     );
-    println!("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
+    println!("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
     let mut rows: Vec<String> = profiles.iter().map(name).collect();
     rows.push("(shortest)".into());
     for (k, label) in rows.iter().enumerate() {
@@ -368,7 +386,7 @@ pub(crate) fn compare(a: &Args) -> Result<(), Failure> {
         let unp: Vec<f64> = q.iter().map(|x| x.unpaved).collect();
         let main: Vec<f64> = q.iter().map(|x| x.main_km).collect();
         println!(
-            "| {label} | {:.2} / {:.2} / {:.2} | {:.0} % ({:.0} %) | {:.0} % | {:.1} / {:.1} | {:.0} % | {:.0} % | {:.0} m | {:.0} % / {:.0} % | {:.2} / {:.2} |",
+            "| {label} | {:.2} / {:.2} / {:.2} | {:.0} % ({:.0} %) | {:.0} % | {:.1} / {:.1} | {:.0} % | {:.0} % | {:.0} m | {:.0} % / {:.0} % | {:.2} / {:.2} | {:.2} | {} | {} |",
             percentile(&det, 0.5),
             percentile(&det, 0.9),
             percentile(&det, 1.0),
@@ -384,6 +402,9 @@ pub(crate) fn compare(a: &Args) -> Result<(), Failure> {
             mean(&q.iter().map(|x| x.forest).collect::<Vec<_>>()) * 100.0,
             mean(&q.iter().map(|x| x.steep_up_km).collect::<Vec<_>>()),
             mean(&q.iter().map(|x| x.steep_down_km).collect::<Vec<_>>()),
+            f64::from(q.iter().map(|x| x.turns).sum::<u32>()) / q.iter().map(|x| x.km).sum::<f64>().max(1e-6),
+            q.iter().map(|x| x.zigzags).sum::<u32>(),
+            q.iter().map(|x| x.excursions).sum::<u32>(),
         );
     }
     for (k, p) in profiles.iter().enumerate() {
@@ -534,7 +555,8 @@ fn loops(a: &Args) -> Result<(), Failure> {
         .split_once('-')
         .and_then(|(x, y)| Some((x.parse::<f64>().ok()?, y.parse::<f64>().ok()?)))
         .ok_or_else(|| Failure::Usage("--km must be <min>-<max>".into()))?;
-    let (graph, _) = kompass_compile::build::load(&build, false)?;
+    // (with the geometry: the turn costs read its headings)
+    let (graph, _) = kompass_compile::build::load(&build, true)?;
     let mut planner = Planner::new(graph);
     let mut rng = Rng(seed | 1);
     let nodes = planner.graph().node_count() as u64;

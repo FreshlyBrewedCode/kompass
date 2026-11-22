@@ -45,6 +45,8 @@ const TURN_DEG: f64 = 45.0;
 /// A leg whose end points are closer than this share of its ridden length is a loop in itself: no
 /// A→B router reproduces it, so it is skipped (`--min-straight`).
 const MIN_STRAIGHTNESS: f64 = 0.55;
+/// A short excursion: leaving an OSM way and rejoining the same way within this many metres.
+const EXCURSION_M: f32 = 500.0;
 /// Divergent stretches shorter than this (either side) are noise (parallel ways, junction shapes).
 const MIN_STRETCH_M: f32 = 300.0;
 /// The way types of the mix table.
@@ -210,7 +212,7 @@ fn lnglat((lng, lat): (f64, f64)) -> LngLat {
 
 /// Turns of a line: heading changes of [`TURN_DEG`] or more at junctions, and of those the ones
 /// within 300 m of the previous turn the other way (a zigzag).
-fn turns(g: &Graph, l: &[(ArcId, f32)]) -> (u32, u32) {
+pub(crate) fn turns(g: &Graph, l: &[(ArcId, f32)]) -> (u32, u32) {
     let (mut n, mut zig) = (0u32, 0u32);
     let mut last: Option<(f64, f64)> = None; // (signed change, distance at it)
     let mut dist = 0.0f64;
@@ -239,6 +241,71 @@ fn turns(g: &Graph, l: &[(ArcId, f32)]) -> (u32, u32) {
     (n, zig)
 }
 
+/// Short excursions of a line (arcs in riding order): it leaves a way, rides at most
+/// [`EXCURSION_M`] elsewhere, and rejoins it where that way, followed straight on from where the
+/// line left it (the same way type, no turn of 45° or more), gets in at most 1.5 times the
+/// excursion's length: a road left for a bit of a parallel way and rejoined at once.
+pub(crate) fn excursions(g: &Graph, arcs: &[ArcId]) -> u32 {
+    let mut n = 0;
+    let mut i = 0;
+    while i + 1 < arcs.len() {
+        // the way on from arcs[i], straight on: its nodes up to 1.5 × EXCURSION_M (and the
+        // distance along it)
+        let road = follow(g, arcs[i], 1.5 * EXCURSION_M);
+        let on_road = |v: NodeId| road.iter().skip(1).find(|&&(w, _)| w == v).map(|&(_, m)| m);
+        let mut len = 0.0f32;
+        let mut found = None;
+        // (the line goes on along the way itself: no excursion)
+        if on_road(g.head(arcs[i + 1])).is_none() {
+            for (j, &a) in arcs.iter().enumerate().skip(i + 1) {
+                len += g.length_m(edge_of(a));
+                if len > EXCURSION_M {
+                    break;
+                }
+                if on_road(g.head(a)).is_some_and(|along| along <= 1.5 * len) {
+                    found = Some(j);
+                    break;
+                }
+            }
+        }
+        if let Some(j) = found {
+            n += 1;
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    n
+}
+
+/// The nodes of the way on from arc `a` (its head first), followed straight on: at each node the
+/// way of the same type with the smallest heading change, if below 45°; up to `max_m` metres.
+fn follow(g: &Graph, a: ArcId, max_m: f32) -> Vec<(NodeId, f32)> {
+    let kind = cost::way_kind(g, edge_of(a));
+    let mut out = vec![(g.head(a), 0.0)];
+    let (mut cur, mut along) = (a, 0.0f32);
+    while along <= max_m && out.len() < 64 {
+        let v = g.head(cur);
+        let Some(h0) = heading(g, cur, true) else { break };
+        let mut best: Option<(ArcId, f64)> = None;
+        for &b in g.arcs_at(v).0 {
+            if b == cur ^ 1 || cost::way_kind(g, edge_of(b)) != kind {
+                continue;
+            }
+            let Some(h1) = heading(g, b, false) else { continue };
+            let d = ((h1 - h0 + 540.0).rem_euclid(360.0) - 180.0).abs();
+            if d < 45.0 && best.is_none_or(|(_, x)| d < x) {
+                best = Some((b, d));
+            }
+        }
+        let Some((b, _)) = best else { break };
+        along += g.length_m(edge_of(b));
+        cur = b;
+        out.push((g.head(b), along));
+    }
+    out
+}
+
 #[derive(Default, Clone)]
 struct Measures {
     km: f64,
@@ -256,6 +323,7 @@ struct Measures {
     cost: f64,
     turns: u32,
     zigzag: u32,
+    excursions: u32,
     /// Km by way type, in [`WAYS`] order.
     ways: [f64; WAYS.len()],
     /// Km of paved tracks (farm roads).
@@ -279,6 +347,7 @@ impl Measures {
         self.cost += o.cost;
         self.turns += o.turns;
         self.zigzag += o.zigzag;
+        self.excursions += o.excursions;
         for (a, b) in self.ways.iter_mut().zip(o.ways) {
             *a += b;
         }
@@ -356,6 +425,7 @@ fn measure(
     m.closed_km = judged.closed.iter().map(|c| f64::from(c.length_m)).sum::<f64>() / 1e3;
     m.cost = f64::from(judged.cost);
     (m.turns, m.zigzag) = turns(g, l);
+    m.excursions = excursions(g, &arcs(l));
     m
 }
 
@@ -711,9 +781,9 @@ pub fn run(args: &[String]) -> Result<(), Failure> {
         skipped.1
     );
     println!(
-        "| line | legs | km / ridden (median) | reproduced (all / median leg) | on ridden | ascent m/100 km | unpaved | main road km | roadside cycle path km | beside busy road km | at clamp | closed km | cost / ridden | turns / km | zigzags |"
+        "| line | legs | km / ridden (median) | reproduced (all / median leg) | on ridden | ascent m/100 km | unpaved | main road km | roadside cycle path km | beside busy road km | at clamp | closed km | cost / ridden | turns / km | zigzags | excursions |"
     );
-    println!("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
+    println!("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
     let ridden_cost = kinds[0].total.cost;
     let ridden_km = kinds[0].total.km;
     for k in &mut kinds {
@@ -722,7 +792,7 @@ pub fn run(args: &[String]) -> Result<(), Failure> {
         let t = &k.total;
         let km = t.km.max(1e-6);
         println!(
-            "| {} | {}{} | {:.2} ({:.2}) | {:.0} % / {:.0} % | {:.0} % | {:.0} | {:.0} % | {:.1} | {:.1} | {:.1} | {:.0} % | {:.1} | {:.2} | {:.2} | {} |",
+            "| {} | {}{} | {:.2} ({:.2}) | {:.0} % / {:.0} % | {:.0} % | {:.0} | {:.0} % | {:.1} | {:.1} | {:.1} | {:.0} % | {:.1} | {:.2} | {:.2} | {} | {} |",
             k.name,
             k.legs,
             if k.missing > 0 {
@@ -744,7 +814,8 @@ pub fn run(args: &[String]) -> Result<(), Failure> {
             t.closed_km,
             t.cost / ridden_cost.max(1e-6),
             f64::from(t.turns) / km,
-            t.zigzag
+            t.zigzag,
+            t.excursions
         );
     }
     println!(
