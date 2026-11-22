@@ -34,11 +34,12 @@ limits, bounds: not the name), so dragging a slider costs one compile plus one s
 { "waypoints": [{ "lon": 0.001, "lat": 0.002, "name": "Start" }, { "lon": 0.03, "lat": 0.01 }],
   "profile": { "weights": { "unpaved": 70 }, "limits": { "legal_only": true } },
   "leg_profiles": [null],
-  "options": { "snap_radius_m": 250, "geometry": true } }
+  "options": { "snap_radius_m": 250, "geometry": true, "avoid_reuse": true } }
 ```
 
 Two or more waypoints, a profile, optionally a profile per leg (`null` keeps the main one; API only,
-the planner sends one), options. Reserved and accepted but not used yet (the result says so in
+the planner sends one), options (`avoid_reuse`, on by default: [below](#dont-ride-the-same-way-twice);
+`reuse_cost` tunes it for tools, the planner sends none). Reserved and accepted but not used yet (the result says so in
 `notes`): `via_zones` and `avoid_zones` (`{ "type": "circle", "center", "radius_m" }` or `{ "type":
 "polygon", "ring" }`) and `sketch` (`{ "points": [...] }`). Loops (start, distance, bearing or a sketch)
 will be their own query, not a variant of this one.
@@ -57,6 +58,59 @@ end where the rider is, so:
   notes how many metres of it there are.
 - If even that finds nothing: `excluded` (naming the limit) or `no_route`; no way within the radius:
   `no_way_near`. Errors carry the waypoint or leg index.
+
+## Don't ride the same way twice
+
+Legs are routed in order, and each leg's search pays for the route's shape on top of the compiled
+profile (which stays compiled and cached: the costs are a per-request layer, `search::Overlay` and
+`search::UTurn`, read beside the compiled arc costs):
+
+- **Riding again:** every metre of an edge an earlier leg rode, in either direction, costs
+  `reuse_cost.per_m` metres more (default **1**). Only the part ridden before counts (a leg that starts
+  or ends mid-edge marks only its piece). So a new way is taken where it is up to about twice the
+  cost of the stretch it saves riding again; a longer one is not.
+- **A U-turn at a via:** leaving a via back along the arc it was reached by costs
+  `reuse_cost.u_turn_m` metres (default **600**): mid-edge (the partial back), from the node the
+  arrival reached (the arc back), and riding on to the next node and back along the target edge.
+  So a via on a through road is ridden through where a loop round the block is less than ~600 m
+  longer than turning.
+
+Both are finite and only add, so the A* bound stays valid, and an out-and-back the waypoints ask for
+(a via at a dead end, a waypoint reachable one way only) routes as before, just dearer. A U-turn at a
+dead end elsewhere in a leg is free: a node-labelled search cannot ride one (each node settles once),
+except into the target, which the turn cost (#64) will charge. Each leg is the cheapest given the
+legs before it (greedy, not a joint optimum; a test checks every leg against Dijkstra with the shape
+costs). The result says what it did: `summary.reused_m` and `legs[i].reused_m`, the metres on ways an
+earlier leg rode (counted with `avoid_reuse` off too), and `shape_cost`, what the search added. `cost`
+stays the profile's cost of the line (the compiled cost of every arc ridden), so `compare` and the
+segments read the same numbers as before; the search minimised `cost + shape_cost` per leg. A
+single-leg route has no overlay and pays nothing for it.
+
+Per-plan edge overrides (#59: avoid, prefer, allow an edge) fit the same layer: more entries, each
+with its own term (a prefer or an allow below the compiled cost then has to lower the bound).
+
+**The strengths, from seeded loops on the real region** (`kompass compare --loop 3|4 --reuse …`:
+40 loops each, 30–60 km polygons, corners mid-edge on ways that are not dead ends for any profile;
+Gravel explorer, triangles / squares):
+
+| `per_m` / `u_turn_m` | ridden twice | U-turns at vias | km vs off p50 / p90 | cost vs off p50 / p90 |
+|---|---:|---:|---:|---:|
+| off | 5.5 % / 3.3 % | 59 of 80 / 72 of 120 | 1 | 1 |
+| 0.5 / 600 | 1.4 % / 1.1 % | 17 / 26 | 1.003 / 1.023 · 1.004 / 1.018 | 1.009 / 1.019 · 1.007 / 1.020 |
+| 1 / 0 | 0.8 % / 0.8 % | 40 / 48 | 1.006 / 1.027 · 1.002 / 1.022 | 1.008 / 1.031 · 1.004 / 1.019 |
+| 1 / 300 | 0.6 % / 0.7 % | 21 / 32 | 1.009 / 1.033 · 1.004 / 1.022 | 1.011 / 1.036 · 1.007 / 1.022 |
+| **1 / 600** | **0.5 % / 0.7 %** | **12 / 27** | **1.011 / 1.045 · 1.004 / 1.022** | **1.015 / 1.038 · 1.008 / 1.026** |
+| 2 / 600 | 0.3 % / 0.3 % | 9 / 21 | 1.011 / 1.045 · 1.008 / 1.026 | 1.019 / 1.043 · 1.010 / 1.036 |
+| 1 / 1000 | 0.4 % / 0.6 % | 7 / 18 | 1.014 / 1.045 · 1.009 / 1.026 | 1.019 / 1.042 · 1.011 / 1.028 |
+
+`per_m` 1 is the knee: it cuts what is ridden twice by a factor of 6–10 for about 1 % more length at
+the median; 2 halves the rest at twice the price. Without a U-turn cost two thirds of the vias are
+still left the way they were reached (mostly mid-edge, where riding back is cheap); 600 m leaves
+about a fifth, and 1000 m buys little more for more length. Paved & quiet rides more twice with any
+setting (12.8 % → 4.1 % on triangles, 6.9 % → 2.7 % on squares): with `paved_only` its network is
+sparse and many corners sit on stretches with no paved way round. With corners anywhere (often on a
+dead-end spur, where reuse is forced) every loop still routes. Multi-leg routes are as fast as
+before (the overlay is a bit per edge, 290 KB for the region, and a map for the few marked ones).
 
 ## Search
 
@@ -84,8 +138,9 @@ and a 6×-throttled phone estimate ~7×.
 
 - `summary`: distance, ascent and descent (beyond the noise deadband, [profile.md](profile.md)), a
   rough duration (speed by surface, slower on narrow paths, walking on `dismount`, carrying on steps,
-  faster downhill, plus 1 h per 900 m climbed), cost, unpaved and unknown-surface shares, main-road
-  metres, and the never-ridden share with a personal layer.
+  faster downhill, plus 1 h per 900 m climbed), cost (the profile's), the metres ridden twice and the
+  shape costs on top ([above](#dont-ride-the-same-way-twice)), unpaved and unknown-surface shares,
+  main-road metres, and the never-ridden share with a personal layer.
 - `geometry` (unless `options.geometry` is false): `[lon, lat]` per vertex (1e-6°), the distance
   from the start per vertex, and the elevation per vertex (from the graph's node elevations, linear
   along each edge) for the elevation profile.

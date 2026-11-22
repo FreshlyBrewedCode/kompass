@@ -8,11 +8,16 @@
 //! on a plane that never overestimates (longitudes scaled by the cosine of the region's highest
 //! latitude, minus 1 % for the lengths' projection), so it is consistent and every node settles
 //! once.
+//!
+//! Per-request costs ride on top of the compiled ones without touching them (the compiled profile
+//! stays cached): an [`Overlay`] adds metres to edges (today the reuse penalty on the edges earlier
+//! legs rode, in either direction), a [`UTurn`] to leaving a via back the way it was reached. Both
+//! only add, so the bound stays valid.
 
 use std::cmp::Reverse;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashMap};
 
-use crate::graph::{ArcId, Graph, NodeId};
+use crate::graph::{ArcId, EdgeId, Graph, NodeId, arc_edge};
 
 const NONE: u32 = u32::MAX;
 
@@ -47,6 +52,93 @@ impl Plane {
     }
 }
 
+/// Costs on top of the compiled profile for one request, by edge and in either direction: the
+/// reuse penalty, `per_m` extra metres per metre of an edge ridden again (only the part ridden
+/// before counts: a leg that starts or ends mid-edge marks only that part).
+///
+/// A bit per edge says whether it has an entry, so an edge without one costs one bit test (the
+/// map is looked at only for the few marked edges). Per-plan edge overrides (avoid, prefer, allow
+/// an edge) fit the same shape: more entries, each with its own term; the bound then has to take
+/// the smallest factor an override allows.
+#[derive(Debug, Clone)]
+pub struct Overlay {
+    mask: Vec<u64>,
+    /// Per marked edge: the ridden part `[lo, hi]`, fractions along its geometry (a hull when
+    /// several pieces of one edge were ridden).
+    ridden: HashMap<EdgeId, (f32, f32)>,
+    /// Extra metres per metre ridden again.
+    pub per_m: f32,
+}
+
+impl Overlay {
+    #[must_use]
+    pub fn new(edges: usize, per_m: f32) -> Overlay {
+        Overlay {
+            mask: vec![0; edges.div_ceil(64)],
+            ridden: HashMap::new(),
+            per_m,
+        }
+    }
+
+    /// Whether nothing is marked.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.ridden.is_empty()
+    }
+
+    /// Marks the part `t0..t1` (either order) of edge `e` as ridden.
+    pub fn mark(&mut self, e: EdgeId, t0: f32, t1: f32) {
+        let (lo, hi) = (t0.min(t1), t0.max(t1));
+        self.mask[e as usize >> 6] |= 1 << (e & 63);
+        self.ridden
+            .entry(e)
+            .and_modify(|r| *r = (r.0.min(lo), r.1.max(hi)))
+            .or_insert((lo, hi));
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn marked(&self, e: EdgeId) -> bool {
+        self.mask[e as usize >> 6] & (1 << (e & 63)) != 0
+    }
+
+    /// Metres of riding `t0..t1` of edge `e` that were ridden before.
+    #[must_use]
+    pub fn reused_m(&self, g: &Graph, e: EdgeId, t0: f32, t1: f32) -> f32 {
+        if !self.marked(e) {
+            return 0.0;
+        }
+        let Some(&(lo, hi)) = self.ridden.get(&e) else {
+            return 0.0;
+        };
+        let overlap = t0.max(t1).min(hi) - t0.min(t1).max(lo);
+        if overlap <= 0.0 {
+            0.0
+        } else {
+            overlap * g.length_m(e)
+        }
+    }
+
+    /// The extra cost of riding `t0..t1` of edge `e`.
+    #[inline]
+    #[must_use]
+    pub fn extra(&self, g: &Graph, e: EdgeId, t0: f32, t1: f32) -> f32 {
+        self.reused_m(g, e, t0, t1) * self.per_m
+    }
+}
+
+/// Leaving a via back along the arc it was reached by costs extra: `arc` (the reverse of the
+/// arrival) taken first from `node`, a source of the search, as a full arc or as the partial arc
+/// of target `target` (the index into [`Query::targets`] whose tail rides `arc`, if any): riding
+/// on to the next node and back is a U-turn too.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UTurn {
+    pub node: NodeId,
+    pub arc: ArcId,
+    pub target: Option<usize>,
+    pub cost: f32,
+}
+
 /// What one search found.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Found {
@@ -77,6 +169,10 @@ pub struct Query<'a> {
     pub best: f32,
     /// Excluded ways usable near some points.
     pub exempt: Option<Exempt<'a>>,
+    /// Costs on top of the compiled ones (`None`: nothing marked).
+    pub overlay: Option<&'a Overlay>,
+    /// The U-turn at the via this leg starts from.
+    pub uturn: Option<UTurn>,
 }
 
 /// Near a waypoint whose way a limit excludes, excluded arcs may be ridden at `max_factor` per
@@ -264,9 +360,15 @@ impl Search {
             self.stamp[v as usize] |= 1;
             self.settled += 1;
             let dv = self.dist[v as usize];
-            for &(t, tail) in q.targets {
-                if t == v && dv + tail < best {
-                    best = dv + tail;
+            // the via's node, still as the source labelled it
+            let uturn = q.uturn.filter(|u| u.node == v && self.parent[v as usize] == NONE);
+            for (i, &(t, tail)) in q.targets.iter().enumerate() {
+                let d = match uturn {
+                    Some(u) if u.target == Some(i) => dv + tail + u.cost,
+                    _ => dv + tail,
+                };
+                if t == v && d < best {
+                    best = d;
                     best_end = Some(v);
                 }
             }
@@ -281,6 +383,17 @@ impl Search {
                         },
                         None => continue,
                     }
+                }
+                if let Some(o) = q.overlay {
+                    let e = arc_edge(a);
+                    if o.marked(e) {
+                        c += o.extra(g, e, 0.0, 1.0);
+                    }
+                }
+                if let Some(u) = uturn
+                    && u.arc == a
+                {
+                    c += u.cost;
                 }
                 let d = dv + c;
                 if d < self.dist(w) && !self.closed(w) {
@@ -304,5 +417,41 @@ impl Search {
             end,
             arcs,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Overlay;
+    use crate::attrs::EdgeAttrs;
+    use crate::testing::GraphBuilder;
+
+    #[test]
+    fn the_overlay_counts_only_the_part_ridden_before() {
+        let mut b = GraphBuilder::new();
+        let m = 1.0 / 111_195.0;
+        let (x, y, z) = (
+            b.node(0.07, 0.08),
+            b.node(0.07 + 100.0 * m, 0.08),
+            b.node(0.07, 0.081),
+        );
+        let e = b.edge(x, y, EdgeAttrs::default());
+        let other = b.edge(x, z, EdgeAttrs::default());
+        let built = b.build();
+        let (g, e, other) = (&built.graph, built.edge(e), built.edge(other));
+        let mut o = Overlay::new(g.edge_count(), 2.0);
+        assert!(o.is_empty());
+        o.mark(e, 0.6, 0.2);
+        assert!(o.marked(e) && !o.marked(other));
+        let len = g.length_m(e);
+        // either direction, only the overlap
+        assert!((o.reused_m(g, e, 0.0, 1.0) - 0.4 * len).abs() < 1e-3);
+        assert!((o.reused_m(g, e, 1.0, 0.5) - 0.1 * len).abs() < 1e-3);
+        assert_eq!(o.reused_m(g, e, 0.7, 1.0), 0.0);
+        assert_eq!(o.reused_m(g, other, 0.0, 1.0), 0.0);
+        assert!((o.extra(g, e, 0.0, 1.0) - 0.8 * len).abs() < 1e-3);
+        // a second piece widens it to the hull
+        o.mark(e, 0.9, 1.0);
+        assert!((o.reused_m(g, e, 0.0, 1.0) - 0.8 * len).abs() < 1e-3);
     }
 }

@@ -20,7 +20,9 @@ use kompass_core::attrs::{
 };
 use kompass_core::cost::{CostModel, EdgeClasses};
 use kompass_core::graph::arc_edge;
-use kompass_core::route::{DiffRequest, ErrorCode, RouteOptions, Waypoint, Zone};
+use kompass_core::route::{
+    DiffRequest, ErrorCode, REUSE_PER_M, ReuseCost, RouteOptions, U_TURN_M, Waypoint, Zone,
+};
 use kompass_core::testing::{Built, GraphBuilder};
 use kompass_core::{
     ArcId, EdgeId, Graph, LimitId, LimitValue, NodeId, PersonalLayer, Planner, PrefId, Profile, RouteRequest,
@@ -901,18 +903,317 @@ fn legs_join_at_the_waypoints() {
     assert_eq!(ele.len(), geo.coordinates.len());
     assert!((geo.distance_m.last().unwrap() - via.summary.distance_m).abs() < 0.2);
     assert_eq!(via.arc_vertex.len(), via.arcs.len());
-    // a waypoint back and forth: the second leg turns around
-    let back = planner
+    // a waypoint back and forth: the second leg turns around, and then takes the gravel detour
+    // (283 m) rather than ride 200 m of the line again
+    let mut req = request(
+        vec![
+            wp(pts[1].0, pts[1].1),
+            wp(pts[5].0, pts[5].1),
+            wp(pts[2].0, pts[2].1),
+        ],
+        &p,
+    );
+    let back = planner.route(&req).unwrap();
+    assert!(
+        (back.summary.distance_m - 783.0).abs() < 2.0,
+        "{}",
+        back.summary.distance_m
+    );
+    assert!(
+        (back.summary.reused_m - 100.0).abs() < 1.0,
+        "{}",
+        back.summary.reused_m
+    );
+    assert!((back.legs[1].reused_m - back.summary.reused_m).abs() < 1e-3);
+    req.options.avoid_reuse = false;
+    let free = planner.route(&req).unwrap();
+    assert!((free.summary.distance_m - 700.0).abs() < 1.0);
+    assert!((free.summary.reused_m - 300.0).abs() < 1.0);
+    assert_eq!(free.summary.shape_cost, 0.0);
+}
+
+/// A rectangle 300 × 100 m: P0 (south-west), P1, P2, P3 anticlockwise, residential.
+fn rectangle() -> (Built, [(f64, f64); 4]) {
+    let mut b = GraphBuilder::new();
+    let m = 1.0 / 111_195.0;
+    let pts = [
+        (0.07, 0.08),
+        (0.07 + 300.0 * m, 0.08),
+        (0.07 + 300.0 * m, 0.08 + 100.0 * m),
+        (0.07, 0.08 + 100.0 * m),
+    ];
+    let n: Vec<usize> = pts.iter().map(|&(x, y)| b.node(x, y)).collect();
+    for i in 0..4 {
+        b.edge(n[i], n[(i + 1) % 4], residential());
+    }
+    (b.build(), pts)
+}
+
+#[test]
+fn a_via_on_a_through_road_is_ridden_through() {
+    let (built, pts) = rectangle();
+    let mut planner = Planner::new(built.graph.clone());
+    let p = Profile::default();
+    let start = wp(pts[0].0, pts[0].1);
+    // a via mid-edge on the south side, 200 m from the start; back to the start
+    let via = wp(pts[0].0 + (pts[1].0 - pts[0].0) * 2.0 / 3.0, pts[0].1);
+    let mut req = request(vec![start.clone(), via, start], &p);
+    let r = planner.route(&req).unwrap();
+    // on round the block (800 m) rather than back (400 m), nor on to the corner and back along
+    // the south side (600 m: a U-turn at the corner is a U-turn too)
+    assert!(
+        (r.summary.distance_m - 800.0).abs() < 1.0,
+        "{}",
+        r.summary.distance_m
+    );
+    assert!(r.summary.reused_m < 1.0);
+    assert_eq!(r.summary.shape_cost, 0.0);
+    // the reuse penalty alone does not do it: back is 400 m + 200 m ridden again, < 800 m
+    req.options.reuse_cost = Some(ReuseCost {
+        per_m: 1.0,
+        u_turn_m: 0.0,
+    });
+    let no_u = planner.route(&req).unwrap();
+    assert!((no_u.summary.distance_m - 400.0).abs() < 1.0);
+    assert!((no_u.summary.reused_m - 200.0).abs() < 1.0);
+    assert!((no_u.summary.shape_cost - 200.0).abs() < 1.0);
+    // and off: straight back
+    req.options.reuse_cost = None;
+    req.options.avoid_reuse = false;
+    let off = planner.route(&req).unwrap();
+    assert!((off.summary.distance_m - 400.0).abs() < 1.0);
+    assert!((off.summary.reused_m - 200.0).abs() < 1.0);
+    // the costs are the profile's, the shape costs on top
+    for x in [&r, &no_u, &off] {
+        let legs: f32 = x.legs.iter().map(|l| l.cost).sum();
+        assert!((legs - x.summary.cost).abs() < 1e-2);
+        assert!(
+            (x.summary.cost - x.summary.distance_m).abs() < 1.0,
+            "{}",
+            x.summary.cost
+        );
+    }
+    // a via near a corner: the U-turn is a full arc from the via's node
+    let near = wp(pts[1].0, pts[1].1);
+    let r = planner
+        .route(&request(
+            vec![wp(pts[0].0, pts[0].1), near, wp(pts[0].0, pts[0].1)],
+            &p,
+        ))
+        .unwrap();
+    assert!(
+        (r.summary.distance_m - 800.0).abs() < 1.0,
+        "{}",
+        r.summary.distance_m
+    );
+}
+
+#[test]
+fn an_out_and_back_the_waypoints_ask_for_still_routes() {
+    let (built, pts) = line();
+    let mut planner = Planner::new(built.graph.clone());
+    let p = Profile::default();
+    // the via at the dead end (the line's east end), then back to the middle
+    let r = planner
         .route(&request(
             vec![
-                wp(pts[1].0, pts[1].1),
-                wp(pts[5].0, pts[5].1),
-                wp(pts[2].0, pts[2].1),
+                wp(pts[0].0, pts[0].1),
+                wp(pts[6].0, pts[6].1),
+                wp(pts[3].0, pts[3].1),
             ],
             &p,
         ))
         .unwrap();
-    assert!((back.summary.distance_m - 700.0).abs() < 1.0);
+    assert!(
+        (r.summary.distance_m - 900.0).abs() < 1.0,
+        "{}",
+        r.summary.distance_m
+    );
+    assert!((r.summary.reused_m - 300.0).abs() < 1.0);
+    // ridden again (300 m) and the U-turn at the dead end
+    let want = 300.0 * REUSE_PER_M + U_TURN_M;
+    assert!(
+        (r.summary.shape_cost - want).abs() < 1.0,
+        "{}",
+        r.summary.shape_cost
+    );
+    assert!((r.legs[1].shape_cost - want).abs() < 1.0);
+    // a via in the middle of a dead-end edge: back the same way, mid-edge
+    let r = planner
+        .route(&request(
+            vec![
+                wp(pts[4].0, pts[4].1),
+                wp(pts[5].0 + (pts[6].0 - pts[5].0) * 0.5, pts[5].1),
+                wp(pts[4].0, pts[4].1),
+            ],
+            &p,
+        ))
+        .unwrap();
+    assert!(
+        (r.summary.distance_m - 300.0).abs() < 1.0,
+        "{}",
+        r.summary.distance_m
+    );
+    assert!((r.summary.reused_m - 150.0).abs() < 1.0);
+    assert!((r.summary.shape_cost - (150.0 * REUSE_PER_M + U_TURN_M)).abs() < 1.0);
+    // the same point twice (a via on the start): nothing to ride, nothing ridden twice
+    let r = planner
+        .route(&request(
+            vec![
+                wp(pts[2].0, pts[2].1),
+                wp(pts[2].0, pts[2].1),
+                wp(pts[4].0, pts[4].1),
+            ],
+            &p,
+        ))
+        .unwrap();
+    assert!((r.summary.distance_m - 200.0).abs() < 1.0);
+    assert_eq!(r.summary.reused_m, 0.0);
+    // out of range
+    let mut req = request(vec![wp(pts[0].0, pts[0].1), wp(pts[6].0, pts[6].1)], &p);
+    req.options.reuse_cost = Some(ReuseCost {
+        per_m: -1.0,
+        u_turn_m: 0.0,
+    });
+    assert_eq!(planner.route(&req).unwrap_err().code, ErrorCode::InvalidRequest);
+}
+
+/// Dijkstra from node to node over arc costs given per arc and per first arc (the reference with
+/// the shape costs).
+fn dijkstra_by(g: &Graph, s: NodeId, t: NodeId, cost: &dyn Fn(ArcId, bool) -> f32) -> f32 {
+    let mut dist = vec![f32::INFINITY; g.node_count()];
+    let mut heap = BinaryHeap::new();
+    dist[s as usize] = 0.0;
+    heap.push(Reverse((0u32, s)));
+    while let Some(Reverse((d, v))) = heap.pop() {
+        let d = f32::from_bits(d);
+        if d > dist[v as usize] {
+            continue;
+        }
+        if v == t {
+            return d;
+        }
+        for a in g.out_arcs(v) {
+            let c = cost(a, v == s);
+            let w = g.head(a);
+            if c.is_finite() && d + c < dist[w as usize] {
+                dist[w as usize] = d + c;
+                heap.push(Reverse(((d + c).to_bits(), w)));
+            }
+        }
+    }
+    f32::INFINITY
+}
+
+#[test]
+fn every_leg_is_the_cheapest_with_the_shape_costs() {
+    let mut rng = Rng(0x0b5e_55ed_100b_5eed);
+    let mut compared = 0;
+    for _ in 0..6 {
+        let built = random_grid(&mut rng, 10);
+        let g = built.graph.clone();
+        let mut planner = Planner::new(g.clone());
+        for _ in 0..4 {
+            let p = random_profile(&mut rng);
+            let costs = planner.arc_costs(&p).unwrap().0.to_vec();
+            for _ in 0..6 {
+                let nodes: Vec<NodeId> = (0..4)
+                    .map(|_| rng.below(g.node_count() as u64) as NodeId)
+                    .collect();
+                let wps: Vec<Waypoint> = nodes
+                    .iter()
+                    .map(|&v| {
+                        let x = g.node(v);
+                        wp(x.lng, x.lat)
+                    })
+                    .collect();
+                let Ok(r) = planner.route(&request(wps, &p)) else {
+                    continue;
+                };
+                if r.arcs.is_empty()
+                    || !r.notes.is_empty()
+                    || r.waypoints
+                        .iter()
+                        .any(|w| w.excluded_by.is_some() || w.distance_m >= 0.01)
+                {
+                    continue;
+                }
+                // the length ridden of each arc (a waypoint "at a node" may sit a sliver into an
+                // edge: its first or last piece is that sliver)
+                let geo = r.geometry.as_ref().unwrap();
+                let ridden_m: Vec<f32> = (0..r.arcs.len())
+                    .map(|i| {
+                        let v0 = r.arc_vertex[i] as usize;
+                        let end = r
+                            .arc_vertex
+                            .get(i + 1)
+                            .map_or(geo.distance_m.len() - 1, |&v| v as usize);
+                        geo.distance_m[end] - geo.distance_m[v0]
+                    })
+                    .collect();
+                let piece = |i: usize| ridden_m[i] / g.length_m(arc_edge(r.arcs[i])).max(1e-3);
+                // the route's cost is its arcs' compiled cost; the shape costs come on top
+                let arcs_cost: f32 = r
+                    .arcs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &a)| costs[a as usize] * piece(i))
+                    .sum();
+                assert!(
+                    (arcs_cost - r.summary.cost).abs() <= 1e-3 * arcs_cost.max(1.0),
+                    "{arcs_cost} vs {}",
+                    r.summary.cost
+                );
+                // each leg is the cheapest given the legs before it
+                let mut ridden: Vec<EdgeId> = Vec::new();
+                let mut reused = 0.0f32;
+                let mut back: Option<ArcId> = None;
+                for (l, leg) in r.legs.iter().enumerate() {
+                    let range = leg.arcs[0] as usize..leg.arcs[1] as usize;
+                    let leg_arcs = &r.arcs[range.clone()];
+                    // the arcs ridden in full (not a sliver at a waypoint)
+                    let full: Vec<ArcId> = range.filter(|&i| piece(i) > 0.5).map(|i| r.arcs[i]).collect();
+                    let marked = ridden.clone();
+                    let price = |a: ArcId, first: bool| {
+                        let c = costs[a as usize];
+                        let e = arc_edge(a);
+                        let mut extra = 0.0;
+                        if marked.contains(&e) {
+                            extra += g.length_m(e) * REUSE_PER_M;
+                        }
+                        if first && back == Some(a) {
+                            extra += U_TURN_M;
+                        }
+                        c + extra
+                    };
+                    let want = dijkstra_by(&g, nodes[l], nodes[l + 1], &price);
+                    let got = leg.cost + leg.shape_cost;
+                    assert!(
+                        (got - want).abs() <= 1e-3 * want.max(1.0),
+                        "leg {l}: {got} vs Dijkstra {want}"
+                    );
+                    let leg_reused: f32 = full
+                        .iter()
+                        .filter(|&&a| marked.contains(&arc_edge(a)))
+                        .map(|&a| g.length_m(arc_edge(a)))
+                        .sum();
+                    assert!(
+                        (leg_reused - leg.reused_m).abs() < 0.5,
+                        "{leg_reused} {}",
+                        leg.reused_m
+                    );
+                    reused += leg_reused;
+                    ridden.extend(full.iter().map(|&a| arc_edge(a)));
+                    if let Some(&a) = leg_arcs.last() {
+                        back = Some(a ^ 1);
+                    }
+                    compared += 1;
+                }
+                assert!((reused - r.summary.reused_m).abs() < 1.0);
+            }
+        }
+    }
+    assert!(compared > 100, "only {compared} legs compared");
 }
 
 #[test]
@@ -927,6 +1228,8 @@ fn leg_profiles_route_each_leg_their_way() {
         wp(pts[0].0, pts[0].1),
     ];
     let mut req = request(wps, &plain);
+    // (the way back on the line itself: this is about leg profiles, not about riding again)
+    req.options.avoid_reuse = false;
     let both_plain = planner.route(&req).unwrap();
     assert!(both_plain.summary.unpaved_share < 1e-6);
     req.leg_profiles = Some(vec![None, Some(gravel.clone())]);

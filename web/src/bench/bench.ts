@@ -164,7 +164,7 @@ export async function runBench(
         const { result, ms } = await call("route", {
           waypoints,
           profile,
-          options: { snap_radius_m: 50, geometry: true },
+          options: { snap_radius_m: 50, geometry: true, avoid_reuse: true },
         });
         const roundTrip = performance.now() - t;
         if (Number.isNaN(firstRouteMs)) firstRouteMs = roundTrip;

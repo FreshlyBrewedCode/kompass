@@ -158,7 +158,7 @@ export type PlanState = {
 const PLAN_KEY = "kompass.plan.v1";
 const PRESETS_KEY = "kompass.presets.v1";
 export const DEFAULT_BASE = "gravel_explorer";
-const OPTIONS = { snap_radius_m: 250, geometry: true };
+const OPTIONS = { snap_radius_m: 250, geometry: true, avoid_reuse: true };
 /** how long the main route may take before the shell says "Routing…" */
 const BUSY_AFTER_MS = 250;
 

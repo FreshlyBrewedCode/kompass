@@ -28,6 +28,7 @@ fn request(g: &Graph, a: NodeId, b: NodeId, profile: &Profile, geometry: bool) -
         options: RouteOptions {
             snap_radius_m: 50.0,
             geometry,
+            ..RouteOptions::default()
         },
         via_zones: None,
         avoid_zones: None,
@@ -240,6 +241,9 @@ fn quality(g: &Graph, r: &RouteResult, shortest_km: f64, grade: f32) -> Quality 
     reason = "numbers for display; one report"
 )]
 pub(crate) fn compare(a: &Args) -> Result<(), Failure> {
+    if a.get("--loop").is_some() {
+        return loops(a);
+    }
     a.only(&[
         "--build",
         "--pairs",
@@ -387,5 +391,283 @@ pub(crate) fn compare(a: &Args) -> Result<(), Failure> {
         }
     }
     let _ = mean(&short_km);
+    Ok(())
+}
+
+/// One loop routed under one variant.
+struct LoopRun {
+    km: f64,
+    reused_km: f64,
+    cost: f64,
+    /// Vias left back along the arc they were reached by.
+    uturns: usize,
+    ms: f64,
+}
+
+/// The waypoints of a seeded loop: `start`, then `corners − 1` points around a circle through it
+/// (jittered in angle and radius), then `start` again; the polygon's perimeter is `km`. With
+/// `through`, each corner moves onto the nearest way within 500 m that is not a dead end (both
+/// ends at junctions) that every profile rides both ways (`open`, compiled costs per profile),
+/// mid-edge: a via where a rider would put one, where no U-turn is forced.
+fn loop_waypoints(
+    planner: &Planner,
+    open: &[Vec<f32>],
+    start: NodeId,
+    corners: usize,
+    km: f64,
+    through: bool,
+    rng: &mut Rng,
+) -> Option<Vec<Waypoint>> {
+    use std::f64::consts::PI;
+    let g = planner.graph();
+    #[allow(clippy::cast_precision_loss, reason = "a corner count")]
+    let n = corners as f64;
+    let r = km * 1000.0 / (2.0 * n * (PI / n).sin());
+    let p = g.node(start);
+    let m_lat = 111_195.0;
+    let m_lon = m_lat * p.lat.to_radians().cos();
+    let theta = rng.signed() * PI;
+    let (cx, cy) = (r * theta.cos(), r * theta.sin());
+    let mut out = vec![waypoint(g, start)];
+    for k in 1..corners {
+        #[allow(clippy::cast_precision_loss, reason = "a corner index")]
+        let ang = theta + PI + 2.0 * PI * k as f64 / n + rng.signed() * 0.25;
+        let rr = r * (1.0 + rng.signed() * 0.15);
+        let at = kompass_core::LngLat {
+            lng: p.lng + (cx + rr * ang.cos()) / m_lon,
+            lat: p.lat + (cy + rr * ang.sin()) / m_lat,
+        };
+        let at = if through {
+            // two more ways every profile rides at least one way
+            let junction = |v: NodeId| {
+                g.arcs_at(v)
+                    .0
+                    .iter()
+                    .filter(|&&a| {
+                        let e = a as usize & !1;
+                        open.iter().all(|c| c[e].is_finite() || c[e + 1].is_finite())
+                    })
+                    .count()
+                    >= 3
+            };
+            let s = planner.grid().snap(g, at, 500.0, 64).into_iter().find(|s| {
+                (0.2..=0.8).contains(&s.fraction)
+                    && g.length_m(s.edge) >= 50.0
+                    && junction(g.from(s.edge))
+                    && junction(g.to(s.edge))
+                    && open.iter().all(|c| {
+                        let e = s.edge as usize * 2;
+                        c[e].is_finite() && c[e + 1].is_finite()
+                    })
+            })?;
+            s.point
+        } else {
+            at
+        };
+        out.push(Waypoint {
+            lon: at.lng,
+            lat: at.lat,
+            name: None,
+        });
+    }
+    out.push(waypoint(g, start));
+    Some(out)
+}
+
+/// U-turns at the vias of a result: a leg whose first arc is the reverse of the last arc before it.
+fn uturns(r: &RouteResult) -> usize {
+    let mut n = 0;
+    let mut last: Option<u32> = None;
+    for (l, leg) in r.legs.iter().enumerate() {
+        let [a0, a1] = leg.arcs;
+        if a1 > a0 {
+            if l > 0 && last.is_some_and(|x| r.arcs[a0 as usize] == x ^ 1) {
+                n += 1;
+            }
+            last = Some(r.arcs[a1 as usize - 1]);
+        }
+    }
+    n
+}
+
+/// `kompass compare --loop <corners>`: seeded loops of waypoints (a triangle, a square, …) routed
+/// per profile under each `--reuse` variant: how much is ridden twice, U-turns at the vias, and the
+/// price in length and in the profile's cost against the first variant.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::too_many_lines,
+    reason = "numbers for display; one report"
+)]
+fn loops(a: &Args) -> Result<(), Failure> {
+    a.only(&[
+        "--build",
+        "--loop",
+        "--pairs",
+        "--seed",
+        "--profiles",
+        "--km",
+        "--reuse",
+        "--corners",
+    ])?;
+    let through = match a.get("--corners").unwrap_or("through") {
+        "through" => true,
+        "any" => false,
+        _ => return Err(Failure::Usage("--corners must be through or any".into())),
+    };
+    let build = a.build()?;
+    let corners: usize = a.number("--loop", 3)?;
+    if !(3..=8).contains(&corners) {
+        return Err(Failure::Usage("--loop takes 3..8 corners".into()));
+    }
+    let n: usize = a.number("--pairs", 40)?;
+    let seed: u64 = a.number("--seed", 0x100b)?;
+    let profiles = profile_list(a, "gravel_explorer,paved_quiet")?;
+    let specs: Vec<&str> = a.get("--reuse").unwrap_or("off,on").split(',').collect();
+    let variants = specs
+        .iter()
+        .map(|s| crate::reuse(s))
+        .collect::<Result<Vec<_>, _>>()?;
+    let (lo, hi) = a
+        .get("--km")
+        .unwrap_or("30-60")
+        .split_once('-')
+        .and_then(|(x, y)| Some((x.parse::<f64>().ok()?, y.parse::<f64>().ok()?)))
+        .ok_or_else(|| Failure::Usage("--km must be <min>-<max>".into()))?;
+    let (graph, _) = kompass_compile::build::load(&build, false)?;
+    let mut planner = Planner::new(graph);
+    let mut rng = Rng(seed | 1);
+    let nodes = planner.graph().node_count() as u64;
+    let req =
+        |wps: &[Waypoint], p: &Profile, v: (bool, Option<kompass_core::route::ReuseCost>)| RouteRequest {
+            waypoints: wps.to_vec(),
+            profile: p.clone(),
+            leg_profiles: None,
+            options: RouteOptions {
+                snap_radius_m: 500.0,
+                geometry: false,
+                avoid_reuse: v.0,
+                reuse_cost: v.1,
+            },
+            via_zones: None,
+            avoid_zones: None,
+            sketch: None,
+        };
+    let open = profiles
+        .iter()
+        .map(|p| {
+            Ok(planner
+                .arc_costs(p)
+                .map_err(|e| Failure::Run(e.message))?
+                .0
+                .to_vec())
+        })
+        .collect::<Result<Vec<_>, Failure>>()?;
+    // loops every profile routes under the first variant
+    let mut set: Vec<Vec<Waypoint>> = Vec::new();
+    let mut tries = 0;
+    while set.len() < n && tries < n * 200 {
+        tries += 1;
+        #[allow(clippy::cast_possible_truncation, reason = "node ids fit u32")]
+        let start = (rng.next_u64() % nodes) as NodeId;
+        let km = lo + (hi - lo) * (rng.signed() + 1.0) / 2.0;
+        let Some(wps) = loop_waypoints(&planner, &open, start, corners, km, through, &mut rng) else {
+            continue;
+        };
+        let ok = profiles
+            .iter()
+            .all(|p| planner.route(&req(&wps, p, variants[0])).is_ok());
+        if ok {
+            set.push(wps);
+        }
+    }
+    println!(
+        "{} loops of {corners} corners ({}), polygon {lo:.0}–{hi:.0} km; length and cost against `{}`\n",
+        set.len(),
+        if through { "on through ways" } else { "anywhere" },
+        specs[0]
+    );
+    println!(
+        "| profile | reuse | km p50 | ridden twice: share of km all / p50 / p90 / max | loops with > 5 % twice | U-turns at vias | km vs {0} p50 / p90 / max | cost vs {0} p50 / p90 | ms p50 / max |",
+        specs[0]
+    );
+    println!("|---|---|---:|---:|---:|---:|---:|---:|---:|");
+    for p in &profiles {
+        planner.prepare(p).map_err(|e| Failure::Run(e.message))?;
+        let mut runs: Vec<Vec<LoopRun>> = (0..variants.len()).map(|_| Vec::new()).collect();
+        let mut failed = vec![0usize; variants.len()];
+        for wps in &set {
+            let mut one = Vec::with_capacity(variants.len());
+            for (k, &v) in variants.iter().enumerate() {
+                let t = Instant::now();
+                let Ok(r) = planner.route(&req(wps, p, v)) else {
+                    failed[k] += 1;
+                    continue;
+                };
+                let ms = t.elapsed().as_secs_f64() * 1e3;
+                one.push(LoopRun {
+                    km: f64::from(r.summary.distance_m) / 1000.0,
+                    reused_km: f64::from(r.summary.reused_m) / 1000.0,
+                    cost: f64::from(r.summary.cost),
+                    uturns: uturns(&r),
+                    ms,
+                });
+            }
+            // compared only where every variant routes
+            if one.len() == variants.len() {
+                for (k, r) in one.into_iter().enumerate() {
+                    runs[k].push(r);
+                }
+            }
+        }
+        let sorted = |mut v: Vec<f64>| {
+            v.sort_by(f64::total_cmp);
+            v
+        };
+        for (k, spec) in specs.iter().enumerate() {
+            let rs = &runs[k];
+            let km = sorted(rs.iter().map(|r| r.km).collect());
+            let share = sorted(rs.iter().map(|r| r.reused_km / r.km.max(1e-3)).collect());
+            let all =
+                rs.iter().map(|r| r.reused_km).sum::<f64>() / rs.iter().map(|r| r.km).sum::<f64>().max(1e-3);
+            let over = share.iter().filter(|&&s| s > 0.05).count();
+            let ut: usize = rs.iter().map(|r| r.uturns).sum();
+            let dkm = sorted(
+                rs.iter()
+                    .zip(&runs[0])
+                    .map(|(r, b)| r.km / b.km.max(1e-3))
+                    .collect(),
+            );
+            let dcost = sorted(
+                rs.iter()
+                    .zip(&runs[0])
+                    .map(|(r, b)| r.cost / b.cost.max(1e-3))
+                    .collect(),
+            );
+            let ms = sorted(rs.iter().map(|r| r.ms).collect());
+            println!(
+                "| {} | {spec} | {:.1} | {:.1} % / {:.1} % / {:.1} % / {:.1} % | {over} / {} | {ut} of {} | {:.3} / {:.3} / {:.3} | {:.3} / {:.3} | {:.0} / {:.0} |",
+                name(p),
+                percentile(&km, 0.5),
+                all * 100.0,
+                percentile(&share, 0.5) * 100.0,
+                percentile(&share, 0.9) * 100.0,
+                percentile(&share, 1.0) * 100.0,
+                rs.len(),
+                rs.len() * (corners - 1),
+                percentile(&dkm, 0.5),
+                percentile(&dkm, 0.9),
+                percentile(&dkm, 1.0),
+                percentile(&dcost, 0.5),
+                percentile(&dcost, 0.9),
+                percentile(&ms, 0.5),
+                percentile(&ms, 1.0),
+            );
+        }
+        for (k, spec) in specs.iter().enumerate() {
+            if failed[k] > 0 {
+                println!("{} with {spec}: no route for {} loops", name(p), failed[k]);
+            }
+        }
+    }
     Ok(())
 }

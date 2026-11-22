@@ -15,7 +15,8 @@
 //!   catalogue (with coverage shares of a region), the shipped presets.
 //! - `kompass schema --write <dir> | --check <dir> [--traffic <file>]`: the generated JSON Schemas and TypeScript types (and the traffic model for the pipeline).
 //! - `kompass bench --build <dir>`: seeded random routes at ~10/50/100 km under the main presets.
-//! - `kompass compare --build <dir> --profiles a,b`: route quality of profiles on seeded random pairs.
+//! - `kompass compare --build <dir> --profiles a,b`: route quality of profiles on seeded random pairs;
+//!   `--loop <corners>`: seeded loops of waypoints, how much is ridden twice per `--reuse` variant.
 //! - `kompass match --build <dir> [--geojson <dir>] [--explored <file>] <gpx files or directories>`:
 //!   map-matches recorded tracks, prints aggregate numbers (`docs/matching.md`).
 //! - `kompass replay --build <dir> --profiles <a,b> [--ref name=dir]... <gpx files>`: route quality
@@ -52,12 +53,13 @@ const USAGE: &str = "usage: kompass [--version | --help]
                       [--leg ride<k>-leg<j>] [--out-dir <dir>]
                       <gpx files or directories>
        kompass route --build <dir> --profile <file|preset> --from <lon,lat> [--via <lon,lat>]... --to <lon,lat>
-                     [--out <file>] [--segments] [--radius <m>] [--explain] [--why-not <lon,lat>]
+                     [--out <file>] [--segments] [--radius <m>] [--explain] [--why-not <lon,lat>] [--reuse off|<per_m>/<u_turn_m>]
        kompass explain --build <dir> --profile <file|preset> (--edge <id> [--json] | --time)
        kompass profile schema | catalogue [--build <dir>] | presets
        kompass schema --write <dir> | --check <dir> [--traffic <file>]
        kompass bench --build <dir> [--pairs <n>] [--seed <n>] [--profiles <a,b>]
-       kompass compare --build <dir> --profiles <a,b,...> [--pairs <n>] [--km <min-max>] [--seed <n>] [--out-dir <dir>] [--grade <pct>]";
+       kompass compare --build <dir> --profiles <a,b,...> [--pairs <n>] [--km <min-max>] [--seed <n>] [--out-dir <dir>] [--grade <pct>]
+       kompass compare --build <dir> --loop <corners> [--profiles <a,b,...>] [--reuse off,on,<per_m>/<u_turn_m>,...] [--corners through|any] [--pairs <n>] [--km <min-max>] [--seed <n>]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -186,6 +188,25 @@ impl Args {
             Some(v) => v
                 .parse()
                 .map_err(|_| Failure::Usage(format!("{flag} must be a number"))),
+        }
+    }
+}
+
+/// `--reuse`: `off`, `on` (the defaults) or `<per_m>/<u_turn_m>` → `avoid_reuse`, `reuse_cost`.
+pub(crate) fn reuse(spec: &str) -> Result<(bool, Option<kompass_core::route::ReuseCost>), Failure> {
+    match spec {
+        "off" => Ok((false, None)),
+        "on" => Ok((true, None)),
+        _ => {
+            let bad = || Failure::Usage(format!("--reuse {spec}: off, on or <per_m>/<u_turn_m>"));
+            let (k, u) = spec.split_once('/').ok_or_else(bad)?;
+            Ok((
+                true,
+                Some(kompass_core::route::ReuseCost {
+                    per_m: k.parse().map_err(|_| bad())?,
+                    u_turn_m: u.parse().map_err(|_| bad())?,
+                }),
+            ))
         }
     }
 }
