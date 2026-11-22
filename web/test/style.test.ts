@@ -75,6 +75,9 @@ describe("buildStyle", () => {
       "hillshade",
       "contour-line",
       "water",
+      "water_ditch",
+      "water_stream",
+      "water_river",
       "buildings",
       "way-route",
       "way-halo",
@@ -97,6 +100,18 @@ describe("buildStyle", () => {
       [...sequence.map((id) => order.indexOf(id))].sort((a, b) => a - b),
     );
     expect(sequence.every((id) => order.includes(id))).toBe(true);
+  });
+
+  test("waterways: rivers and canals, streams from z13, ditches and drains from z15", () => {
+    const style = buildStyle({ manifest, ...base });
+    const kinds = (id: string) => {
+      const l = layer(style, id);
+      return { minzoom: l?.minzoom, filter: JSON.stringify(l?.filter) };
+    };
+    expect(kinds("water_stream").minzoom).toBe(13);
+    expect(kinds("water_ditch").minzoom).toBe(15);
+    expect(kinds("water_ditch").filter).toContain("drain");
+    expect(kinds("water_river").filter).toContain("canal");
   });
 
   test("the overlay draws every road, track and path at every zoom; the base tiles none of them", () => {

@@ -10,7 +10,12 @@ import {
   LOOK,
   type LookId,
   looks,
+  RIM_DASH,
+  RIM_DASH_FINE,
+  RIM_DASH_MINZOOM,
+  RIM_DASH_OPACITY,
   TIER,
+  underDashColour,
   WAY_BAND,
   WAY_CASING,
   WAY_CASING_DASHED,
@@ -185,14 +190,30 @@ describe("the layers", () => {
     expect(rim({ highway: "path", surface_class: "gravel" })).toEqual([]);
   });
 
-  test("below z15 an unpaved band's rim is plain; from z15 the casing is its fill under the dashes", () => {
+  test("below z13 an unpaved band's rim is plain; from z13 the casing is its fill under the dashes", () => {
     const casing = byId.get(WAY_CASING) as { paint: Record<string, unknown> };
     const colour = (labels: Record<string, string>, zoom: number) =>
       value(casing.paint["line-color"], edge(labels), zoom);
     const c = CARTO.light;
-    expect(colour({ highway: "track", tracktype: "grade3" }, 14)).toBe(c.trackRimUnpaved);
-    expect(colour({ highway: "track", tracktype: "grade3" }, 15)).toBe(c.gravel);
+    // a zoom step in a data expression is taken per tile, at a whole zoom
+    expect(Number.isInteger(RIM_DASH_MINZOOM)).toBe(true);
+    expect(colour({ highway: "track", tracktype: "grade3" }, RIM_DASH_MINZOOM - 1)).toBe(c.trackRimUnpaved);
+    // from there the band's fill, tinted towards the rim: a continuous edge under soft dashes
+    expect(colour({ highway: "track", tracktype: "grade3" }, RIM_DASH_MINZOOM)).toBe(
+      underDashColour(c.gravel, c.trackRimUnpaved),
+    );
+    expect(underDashColour("#ffffff", "#000000")).toBe("#b3b3b3");
     expect(colour({ highway: "track", tracktype: "grade1" }, 15)).toBe(c.trackCasing);
+    // the dash is finer below z15, where the band is narrow
+    const dashed = byId.get(WAY_CASING_DASHED) as { minzoom?: number; paint: Record<string, unknown> };
+    expect(dashed.minzoom).toBe(RIM_DASH_MINZOOM);
+    const dash = (zoom: number) => value(dashed.paint["line-dasharray"], {}, zoom);
+    expect(dash(14)).toEqual([...RIM_DASH_FINE]);
+    expect(dash(15)).toEqual([...RIM_DASH]);
+    // the dashes are soft: drawn at RIM_DASH_OPACITY
+    expect(
+      value(dashed.paint["line-opacity"], edge({ highway: "track", tracktype: "grade3" }), 15),
+    ).toBeCloseTo(RIM_DASH_OPACITY);
   });
 
   test("the line weight widens every way and what lies under it alike", () => {
@@ -288,8 +309,13 @@ describe("the key", () => {
     const c = CARTO.light;
     const at = (row: string) => KEY_ROWS.find((r) => r.label === row) as (typeof KEY_ROWS)[number];
     const gravel = keyStrokes(at("Gravel"), c);
-    expect(gravel.map((s) => s.color)).toEqual([c.gravel, c.trackRimUnpaved, c.gravel]);
+    expect(gravel.map((s) => s.color)).toEqual([
+      underDashColour(c.gravel, c.trackRimUnpaved),
+      c.trackRimUnpaved,
+      c.gravel,
+    ]);
     expect(gravel[1]?.dash).toBeDefined();
+    expect(gravel[1]?.opacity).toBe(RIM_DASH_OPACITY);
     const band = byId.get(WAY_BAND) as { paint: Record<string, unknown> };
     const mapWidth = value(band.paint["line-width"], edge(at("Gravel").sample), KEY_ZOOM);
     expect(gravel[2]?.width).toBeCloseTo(mapWidth as number, 1);

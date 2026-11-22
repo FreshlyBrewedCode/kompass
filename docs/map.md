@@ -77,7 +77,7 @@ options** (below). Built by `style.ts` from these parts, bottom to top:
 | land cover and land use | Protomaps tiles (`landuse`) | `basemap.ts` |
 | hillshade, contour lines | the manifest's `terrain` | `style.ts` (`terrainLayers`) |
 | lakes and the sea (above the relief: flat water is not shaded and carries no contours) | Protomaps tiles | `basemap.ts` |
-| rivers, buildings | Protomaps tiles | `basemap.ts` |
+| rivers, canals, streams (from z13), ditches and drains (from z15), buildings | Protomaps tiles | `basemap.ts` (`waterways`, `WATERWAY_WIDTHS`) |
 | band of signed cycle routes (from z9) | overlay | `ways.ts` (`routeLayer`) |
 | the ways' casings and dashed rims, the cycle paths' halo | overlay | `ways.ts` (`wayLayers().under`) |
 | the information band, the explored band, the cost layer | overlay | `style.ts`, `info.ts`, `cost.ts` |
@@ -91,7 +91,7 @@ options** (below). Built by `style.ts` from these parts, bottom to top:
 The ground is a straw tone and the forest clearly green, apart in hue, so every band is the lightest
 thing on the map. Roads keep the familiar tiers. **Every track is one cased band** at one width,
 whatever its grade, so a track reads as one continuous line: its **fill** tells the grade (white,
-cream, ochre, pale tan) and its **rim** whether it is paved (solid) or not (dashed from z15, plain and
+cream, ochre, pale tan) and its **rim** whether it is paved (solid) or not (dashed from z13, plain and
 lighter below). Paths are thin solid dark lines, so a dense forest network stays legible and the
 tracks stand out from it. The fill ramp from paved to gravel is ordered in lightness (it survives grey
 scale and colour blindness); the "simple" track style draws every track white and leaves only the rim.
@@ -123,9 +123,15 @@ each, `ways.ts`):
 | path, not mapped | `#6e645a` | solid line | |
 | ferry | `#4b84b3` | dashes `3 / 2.5`, never a band | `highway` = ferry |
 
-The **dashed rim** (`RIM_DASH`, 1.1 / 0.7 casing widths, from `RIM_DASH_MINZOOM` = 15) lies on a
-casing of the band's own fill, so the gaps keep the band's width; below z15 the rim is plain in the
-lighter unpaved colour (dashes there would only be texture). **Widths** (px at the default line
+The **dashed rim** is soft: the dashes at 60 % (`RIM_DASH_OPACITY`) on a casing of the band's fill
+with 30 % of the rim in it (`RIM_UNDER_TINT`), so the edge stays continuous and the gaps keep the
+band's width; full-strength dashes on the bare fill flickered and made a field of tracks busy. It
+starts at `RIM_DASH_MINZOOM` = 13 (around z14 is how a phone is held: paved or not must read there),
+with a finer dash below z15 (`RIM_DASH_FINE`, 0.75 / 0.45 casing widths; from z15 `RIM_DASH`, 1.1 /
+0.7), where the long dash on a narrow band turned into a zipper. Below z13 the rim is plain in the
+lighter unpaved colour. The start is a whole zoom on purpose: the casing's colour steps there, and
+MapLibre takes a zoom step in a data expression per tile, at the tile's whole zoom (at 13.5 the casing
+stayed dark until z14 and hid the dashes). **Widths** (px at the default line
 weight; a band's fill, the roads' casing adds 1.0 / 1.4 / 1.6 / 1.8 / 2.0 / 2.3 at z10 / 12 / 13 /
 14 / 15 / 16, a track's rim 0 / 1.0 / 1.6 / 1.9 / 2.2 / 2.6; a cycle path's halo adds 0.8 / 1.2 /
 1.6 / 1.9 / 2.2 / 2.6):
@@ -169,8 +175,8 @@ weight; a band's fill, the roads' casing adds 1.0 / 1.4 / 1.6 / 1.8 / 2.0 / 2.3 
   sample edge is classified as the row says and that every look is in the key.
 - The classes are looked up **by enum label** in the manifest (`enumCodes`), never by code. A
   manifest lacking an attribute still gives a valid, simpler style.
-- **Dashes** are one layer per pattern with a constant `line-dasharray` (the dashed rim, the ferry), not
-  a data-driven dash: that keeps MapLibre on its plain line shader. The paths' line layer keeps a
+- **Dashes** are one layer per pattern (the dashed rim, the ferry), never a data-driven dash: that keeps
+  MapLibre on its plain line shader. The rim's dash steps by zoom only (finer below z15). The paths' line layer keeps a
   transparent halo layer under it (only cycle paths show theirs), so a tap finds every line.
 - **Dark** keeps the same system with dark colours (lemon becomes a muted gold, the white roads
   greys, the bands keep their ramp brighter than the land, the tracks a brown rim); it is kept working,
@@ -206,9 +212,10 @@ the widths take the weight.
   chrome. The strong hues stay free for the route and the layers; the ochre gravel band is the route's
   nearest neighbour, which the route's white rim keeps apart. Every band fill but the ochre stays
   lighter than the open land of the straw and meadow grounds (a unit test checks it).
-- Widths: `BAND_WIDTHS`, `CASING_WIDTHS`, `LINE_WIDTHS`, `HALO_WIDTHS` (px at `ZOOMS`), `RIM_DASH`
-  and `FERRY_DASH` in `ways.ts`; the fade of tracks and paths: `TRACK_FADE`; the options' factors:
-  `WEIGHT_SCALE`, `RELIEF_SCALE` in `look.ts`.
+- Widths: `BAND_WIDTHS`, `CASING_WIDTHS`, `LINE_WIDTHS`, `HALO_WIDTHS` (px at `ZOOMS`); the dashes:
+  `RIM_DASH`, `RIM_DASH_FINE`, `RIM_DASH_OPACITY`, `RIM_UNDER_TINT`, `FERRY_DASH` in `ways.ts`; the
+  waterways: `WATERWAY_WIDTHS` in `basemap.ts`; the fade of tracks and paths: `TRACK_FADE`; the
+  options' factors: `WEIGHT_SCALE`, `RELIEF_SCALE` in `look.ts`.
 - Which land use kind gets which fill: `landFills` in `basemap.ts`.
 - Relief strength: `hillshadeStrength`, `shade`, `highlight` in `carto.ts`; contour opacity and
   labels in `terrainLayers`.

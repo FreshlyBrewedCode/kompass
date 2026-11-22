@@ -9,7 +9,7 @@ import { useMapLook } from "@/lib/map-look";
 import { type Carto, cartoFor } from "@/map/carto";
 import { WEIGHT_SCALE } from "@/map/look";
 import type { Theme } from "@/map/palette";
-import { KEY_ROWS, KEY_ZOOM, type KeyRow, keyStrokes } from "@/map/ways";
+import { KEY_ROWS, KEY_ZOOM, type KeyRow, keyStrokes, RIM_DASH_MINZOOM } from "@/map/ways";
 import { label } from "./parts";
 
 const W = 52;
@@ -99,8 +99,8 @@ export function MapKey({ theme, className }: { theme: Theme; className?: string 
             </div>
           ))}
           <p className="text-muted-foreground leading-snug">
-            As drawn at zoom {KEY_ZOOM}. Zoomed further out the rims are plain, tracks are fainter and paths
-            are left out.
+            As drawn at zoom {KEY_ZOOM}. Zoomed out the dashes get finer, below zoom {RIM_DASH_MINZOOM} the
+            rims are plain, and further out tracks and paths fade.
           </p>
         </div>
       )}

@@ -11,7 +11,7 @@
 //   directions) are a dashed ink line.
 import type { ExpressionSpecification, LayerSpecification } from "maplibre-gl";
 import type { Manifest } from "./manifest";
-import { COST_CLOSED, COST_STOPS, SELECTED, type Theme } from "./palette";
+import { COST_CLOSED, COST_STOPS, mixHex, SELECTED, type Theme } from "./palette";
 import { underlayWidth, wayClasses } from "./ways";
 
 type Expr = ExpressionSpecification;
@@ -87,16 +87,6 @@ export function costColorAt(t: number, theme: Theme): string {
   const x = ((Math.max(-1, Math.min(1, t)) + 1) / 2) * (stops.length - 1);
   const i = Math.min(stops.length - 2, Math.floor(x));
   return mixHex(stops[i] as string, stops[i + 1] as string, x - i);
-}
-
-function mixHex(a: string, b: string, f: number): string {
-  const ch = (hex: string, o: number) => Number.parseInt(hex.slice(o, o + 2), 16);
-  const out = [1, 3, 5].map((o) =>
-    Math.round(ch(a, o) + (ch(b, o) - ch(a, o)) * f)
-      .toString(16)
-      .padStart(2, "0"),
-  );
-  return `#${out.join("")}`;
 }
 
 /** The ticks of the key: the bounds, 1, and a round value in between on each side. */

@@ -5,7 +5,7 @@
 //                       yellow, the rest white; the width is the tier
 //   tracks ............ one cased band for every grade, so a track reads as one line: the fill is the
 //                       grade (white paved, cream compacted, ochre gravel, pale tan soft; all white in
-//                       the "simple" track style), the rim paved or not (solid, or dashed from z15);
+//                       the "simple" track style), the rim paved or not (solid, or dashed from z13);
 //                       an unpaved road is the band of its grade at the road's width
 //   not mapped ........ a pale band with a grey dashed rim (neither surface nor grade: a fact, not a guess)
 //   paths ............. thin solid lines: dark when unpaved, grey when paved, paler when nothing is
@@ -20,6 +20,7 @@
 import type { ExpressionSpecification, LayerSpecification } from "maplibre-gl";
 import type { Carto } from "./carto";
 import type { OverlayAttribute } from "./manifest";
+import { mixHex } from "./palette";
 
 type Expr = ExpressionSpecification;
 
@@ -51,9 +52,25 @@ export const WAY_PICK_LAYERS = [WAY_CASING, WAY_HALO, WAY_FERRY] as const;
 
 /** The ferry's dash and gap, in line widths. */
 export const FERRY_DASH = [3, 2.5] as const;
-/** The rim of an unpaved band: dash and gap in casing widths; dashed from `RIM_DASH_MINZOOM`, plain below. */
+/**
+ * The rim of an unpaved band: dash and gap in casing widths; dashed from `RIM_DASH_MINZOOM`, plain below.
+ * Finer below `RIM_DASH_FINE_TO` (`RIM_DASH_FINE`): at the zoom a phone is held at (z14) the band is
+ * narrow, and a short tight dash reads as a broken edge where the long one became a zipper.
+ */
 export const RIM_DASH = [1.1, 0.7] as const;
-export const RIM_DASH_MINZOOM = 15;
+export const RIM_DASH_FINE = [0.75, 0.45] as const;
+/** a whole zoom: the casing's colour steps here, and a data expression's zoom step is taken per tile */
+export const RIM_DASH_MINZOOM = 13;
+/**
+ * A soft dashed rim: the dashes at `RIM_DASH_OPACITY`, over a casing that is the band's fill with
+ * `RIM_UNDER_TINT` of the rim in it. The edge stays continuous and the dashes are a texture on it;
+ * full-strength dashes on the bare fill flickered, and made a field of tracks busy.
+ */
+export const RIM_DASH_OPACITY = 0.6;
+export const RIM_UNDER_TINT = 0.3;
+/** The casing under a dashed rim: the band's fill, tinted towards the rim. */
+export const underDashColour = (fill: string, rim: string) => mixHex(fill, rim, RIM_UNDER_TINT);
+export const RIM_DASH_FINE_TO = 15;
 
 const normalise = (label: string) =>
   label
@@ -478,8 +495,16 @@ export function wayLayers(
     pick(
       k.look,
       entries.flatMap(([id, l]) => {
-        // under a dashed rim the casing is the fill: the gaps keep the band's width
-        const v = part === "underDash" ? (l.rim === "dashed" ? l.fill : l.casing) : l[part];
+        // under a dashed rim the casing is the fill, tinted towards the rim: the gaps keep the band's
+        // width and the edge stays continuous
+        const v =
+          part === "underDash"
+            ? l.rim === "dashed"
+              ? l.casing
+                ? underDashColour(l.fill, l.casing)
+                : l.fill
+              : l.casing
+            : l[part];
         return v ? [[LOOK[id], v] as const] : [];
       }),
       o.colors.road,
@@ -539,7 +564,7 @@ export function wayLayers(
       layout: { ...round, "line-sort-key": k.sort as never },
       paint: {
         // an unpaved band's rim is plain (and light) below RIM_DASH_MINZOOM; from there this is the
-        // band's own fill and the dashes lie on top of it, so the gaps keep the band's width
+        // band's fill tinted towards the rim, and the dashes lie on top of it
         "line-color": ["step", ["zoom"], colour("casing"), RIM_DASH_MINZOOM, colour("underDash")] as Expr,
         "line-width": casingWidth,
         "line-opacity": opacity(1),
@@ -560,8 +585,14 @@ export function wayLayers(
       paint: {
         "line-color": colour("casing"),
         "line-width": casingWidth,
-        "line-opacity": opacity(1),
-        "line-dasharray": [...RIM_DASH],
+        "line-opacity": opacity(RIM_DASH_OPACITY),
+        "line-dasharray": [
+          "step",
+          ["zoom"],
+          ["literal", [...RIM_DASH_FINE]],
+          RIM_DASH_FINE_TO,
+          ["literal", [...RIM_DASH]],
+        ] as never,
       },
     },
     {
@@ -761,12 +792,12 @@ export function keyStrokes(row: KeyRow, c: Carto, weight = 1): KeyStroke[] {
     const casing = w(WIDTHS.casing);
     const rim = look.casing ?? look.fill;
     if (look.rim === "dashed") {
-      // at KEY_ZOOM (≥ RIM_DASH_MINZOOM) the rim is dashed on the band's own fill
-      strokes.push({ color: look.fill, width: casing, opacity, cap: "round" });
+      // at KEY_ZOOM (≥ RIM_DASH_FINE_TO) the rim is dashed on the band's fill, tinted towards the rim
+      strokes.push({ color: underDashColour(look.fill, rim), width: casing, opacity, cap: "round" });
       strokes.push({
         color: rim,
         width: casing,
-        opacity,
+        opacity: opacity * RIM_DASH_OPACITY,
         cap: "butt",
         dash: [round2(RIM_DASH[0] * casing), round2(RIM_DASH[1] * casing)],
       });
