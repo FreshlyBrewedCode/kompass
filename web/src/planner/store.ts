@@ -29,6 +29,9 @@ import type {
   RouteRequest,
   RouteResult,
   Tier,
+  Tradeoff,
+  TradeoffRequest,
+  Tradeoffs,
 } from "@/engine/generated/types";
 import type { EdgeCostsParams, EdgeCostsResult, RouteOutcome } from "@/engine/protocol";
 import type { EngineStore } from "@/engine/store";
@@ -101,6 +104,8 @@ type ModePlan = {
   edited: boolean;
 };
 
+import { allowOverrides, closesWays, offered, tradeoffKey, tradeoffSentence } from "./tradeoffs";
+
 /** What the store needs of the engine (an adapter over `EngineStore`; a fake in tests). */
 export interface PlannerEngine {
   presets(): Promise<Preset[]>;
@@ -117,6 +122,8 @@ export interface PlannerEngine {
   compare(request: CompareRequest, lane: string): Promise<RouteComparison | Superseded>;
   /** "this segment": the edge's run between junctions (docs/planner.md, "This plan's exceptions") */
   edgeRun(edge: number, lane: string): Promise<EdgeRun | Superseded>;
+  /** the hard limits as trade-offs (docs/planner.md, "Limits as trade-offs") */
+  tradeoffs(request: TradeoffRequest, lane: string): Promise<Tradeoffs | Superseded>;
   cancel(lane: string): void;
 }
 
@@ -132,6 +139,7 @@ export function engineAdapter(engine: EngineStore): PlannerEngine {
     explainEdge: (request, lane) => engine.client.latest(lane, "explainEdge", request),
     compare: (request, lane) => engine.client.latest(lane, "compare", request),
     edgeRun: (edge, lane) => engine.client.latest(lane, "edgeRun", { edge }),
+    tradeoffs: (request, lane) => engine.client.latest(lane, "tradeoffs", request),
     cancel: (lane) => engine.client.cancel(lane),
   };
 }
@@ -208,6 +216,10 @@ export type PlanState = {
   compareDiff: RouteDiff | null;
   blame: Blame | null;
   whyNot: WhyNotState | null;
+  /** where breaking a limit on a short bit would save real distance, for the main route (offered ones) */
+  tradeoffs: Tradeoff[];
+  /** the trade-off whose card is open (by `tradeoffKey`) */
+  tradeoffOpen: string | null;
   /** the main route has been on its way for a while (a subtle "Routing…") */
   routing: boolean;
   // the shell
@@ -232,6 +244,8 @@ const PRESETS_KEY = "kompass.presets.v1";
 export const CONTROLS_KEY = "kompass.controls.v1";
 export const DEFAULT_BASE = "gravel_explorer";
 const OPTIONS = { snap_radius_m: 250, geometry: true, avoid_reuse: true };
+/** how long the main route must stay put before its trade-offs are asked for (not during a drag) */
+export const TRADEOFF_DELAY_MS = 400;
 /** how long the main route may take before the shell says "Routing…" */
 const BUSY_AFTER_MS = 250;
 
@@ -250,6 +264,8 @@ export type StoreOptions = {
   controls?: Controls;
   schedule?: Schedule;
   now?: () => number;
+  /** how long the main route must stay put before its trade-offs are asked for (tests: 0) */
+  tradeoffDelayMs?: number;
 };
 
 export class PlannerStore {
@@ -258,6 +274,7 @@ export class PlannerStore {
   readonly #schedule: Schedule;
   readonly #now: () => number;
   readonly #build: string | undefined;
+  readonly #tradeoffDelay: number;
   readonly #listeners = new Set<() => void>();
   #state: PlanState;
   #pending = false;
@@ -281,6 +298,9 @@ export class PlannerStore {
   #wantControls: Controls;
   /** bumped per switch: an older conversion answering late is dropped */
   #switchSeq = 0;
+  #tradeoffTimer: ReturnType<typeof setTimeout> | null = null;
+  /** trade-offs kept ("Keep the limit") for this plan's session, by `tradeoffKey` */
+  readonly #kept = new Set<string>();
 
   constructor(engine: PlannerEngine, options: StoreOptions = {}) {
     this.#engine = engine;
@@ -288,6 +308,7 @@ export class PlannerStore {
     this.#schedule = options.schedule ?? frame;
     this.#now = options.now ?? (() => performance.now());
     this.#build = options.build;
+    this.#tradeoffDelay = options.tradeoffDelayMs ?? TRADEOFF_DELAY_MS;
     this.#restored = parsePlan(this.#read(PLAN_KEY), options.bounds);
     const own = parsePresets(this.#read(PRESETS_KEY));
     this.#all.own = own;
@@ -323,6 +344,8 @@ export class PlannerStore {
       compareDiff: null,
       blame: null,
       whyNot: null,
+      tradeoffs: [],
+      tradeoffOpen: null,
       routing: false,
       sheet: null,
       chip: null,
@@ -333,7 +356,7 @@ export class PlannerStore {
       fresh: null,
       cursorM: null,
       fitSeq: 0,
-    } as PlanState);
+    });
   }
 
   // ---------------------------------------------------------------- store plumbing
@@ -1027,6 +1050,54 @@ export class PlannerStore {
     this.addWaypointAt(w.at.lon, w.at.lat);
   }
 
+  // ---------------------------------------------------------------- limits as trade-offs
+
+  /** Opens a trade-off's card (`null` closes it). */
+  openTradeoff(key: string | null) {
+    if (key === this.#state.tradeoffOpen) return;
+    this.#set(key ? { tradeoffOpen: key, sheet: null, chip: null } : { tradeoffOpen: null });
+  }
+
+  /** "Allow here": the bit's edges become allowed exceptions of the plan (undo restores). */
+  allowTradeoff(key: string) {
+    const t = this.#state.tradeoffs.find((x) => tradeoffKey(x) === key);
+    if (!t) return;
+    let list = this.#state.overrides;
+    for (const o of allowOverrides(t)) list = withOverride(list, o);
+    this.#set({ tradeoffOpen: null });
+    this.#setOverrides(list, `Allowed: ${tradeoffSentence(t).replace(/ here would save .*$/, "")}`);
+  }
+
+  /** "Keep the limit": not offered again in this session. */
+  keepTradeoff(key: string) {
+    this.#kept.add(key);
+    this.#set({
+      tradeoffs: offered(this.#state.tradeoffs, this.#kept),
+      tradeoffOpen: this.#state.tradeoffOpen === key ? null : this.#state.tradeoffOpen,
+    });
+  }
+
+  /** The main route settled: once it has stayed put a moment, ask what its limits cost (own lane). */
+  #askTradeoffs(result: RouteResult | null, request?: RouteRequest) {
+    if (this.#tradeoffTimer) clearTimeout(this.#tradeoffTimer);
+    this.#tradeoffTimer = null;
+    this.#engine.cancel("tradeoffs");
+    if (this.#state.tradeoffs.length > 0 || this.#state.tradeoffOpen)
+      this.#set({ tradeoffs: [], tradeoffOpen: null });
+    if (!result || !request || !closesWays(request.profile)) return;
+    this.#tradeoffTimer = setTimeout(() => {
+      this.#tradeoffTimer = null;
+      if (this.#state.main.result !== result) return;
+      void this.#engine.tradeoffs({ route: request, strict: result.arcs }, "tradeoffs").then(
+        (out) => {
+          if (isSuperseded(out) || this.#state.main.result !== result) return;
+          this.#set({ tradeoffs: offered(out.tradeoffs, this.#kept) });
+        },
+        () => undefined,
+      );
+    }, this.#tradeoffDelay);
+  }
+
   /** Flashes a preference's row (the profile card scrolls to it). */
   flash(id: PrefId) {
     this.#set({ fresh: id });
@@ -1138,6 +1209,7 @@ export class PlannerStore {
     const s = this.#state;
     const can = s.engineReady && s.waypoints.length >= 2 && !!s.base;
     if (!can) {
+      this.#askTradeoffs(null);
       for (const lane of ["route", "ghost", "compare", "probe", "whynot", "whynot-compare"]) {
         this.#engine.cancel(lane);
         this.#sent.delete(lane);
@@ -1158,16 +1230,19 @@ export class PlannerStore {
     const profile = this.profile();
     const before = this.#sent.get("route");
     if (s.whyNot) this.#mainPending = true;
-    this.#send("route", this.#request(profile), (main, key) => {
+    const request = this.#request(profile);
+    this.#send("route", request, (main, key) => {
       if (key !== this.#sent.get("route") && this.#sent.get("route") !== undefined) {
         // an older answer while a newer request runs: show it (the drag stays live), no follow-ups
         this.#set({ main });
+        this.#askTradeoffs(null);
         return;
       }
       this.#busy(false);
       this.#mainPending = false;
       this.#set({ main, blame: main.error ? { limit: null, result: null, searching: true } : null });
       if (main.error) void this.#probe(key);
+      this.#askTradeoffs(main.result, request);
       this.#diffMoved();
       this.#diffCompare();
       this.#compareWhyNot();
@@ -1319,7 +1394,21 @@ export class PlannerStore {
 }
 
 /** The derived parts of the snapshot. */
-function derive(s: PlanState): PlanState {
+/** What `derive` computes from the rest of the snapshot. */
+type Derived =
+  | "base"
+  | "baseWeights"
+  | "baseLimits"
+  | "minFactor"
+  | "baseMinFactor"
+  | "changes"
+  | "sentence"
+  | "prefIds"
+  | "limitIds"
+  | "changed"
+  | "baseParts";
+
+function derive(s: Omit<PlanState, Derived>): PlanState {
   const base = s.presets.find((p) => p.id === s.baseId);
   const baseWeights = base?.profile.weights ?? {};
   const baseLimits = normaliseLimits(base?.profile.limits ?? {}, s.catalogue);

@@ -166,7 +166,7 @@ pub(crate) fn run(a: &Args) -> Result<(), Failure> {
         s.turn_cost
     );
     // the cost debug view: text on stdout, the GeoJSON only to --out
-    let text = a.switch("--explain") || why_not.is_some();
+    let text = a.switch("--explain") || a.switch("--tradeoffs") || why_not.is_some();
     match a.get("--out") {
         Some(path) => {
             std::fs::write(path, out)?;
@@ -184,6 +184,9 @@ pub(crate) fn run(a: &Args) -> Result<(), Failure> {
             crate::explain::route_explanation(&mut planner, &profile, &r)?
         );
     }
+    if a.switch("--tradeoffs") {
+        print_tradeoffs(&mut planner, &req, &r)?;
+    }
     if let Some(p) = why_not {
         let forced = RouteRequest {
             overrides: None,
@@ -192,6 +195,44 @@ pub(crate) fn run(a: &Args) -> Result<(), Failure> {
         };
         let b = planner.route(&forced).map_err(|e| Failure::Run(e.message))?;
         print!("\n{}", crate::explain::why_not(&mut planner, &profile, &r, &b)?);
+    }
+    Ok(())
+}
+
+/// `--tradeoffs`: the hard limits' trade-offs of one route (lengths and edge ids, no coordinates).
+fn print_tradeoffs(
+    planner: &mut Planner,
+    req: &RouteRequest,
+    r: &kompass_core::RouteResult,
+) -> Result<(), Failure> {
+    let t = Instant::now();
+    let out = planner
+        .tradeoffs(&kompass_core::tradeoffs::TradeoffRequest {
+            route: req.clone(),
+            strict: Some(r.arcs.clone()),
+        })
+        .map_err(|e| Failure::Run(e.message))?;
+    println!(
+        "\ntrade-offs: {} of {} stretches that break a limit ({:.0} ms, {} settled)",
+        out.tradeoffs.len(),
+        out.candidates,
+        t.elapsed().as_secs_f64() * 1e3,
+        out.settled
+    );
+    for x in &out.tradeoffs {
+        let limits: Vec<&str> = x.limits.iter().map(|c| c.id()).collect();
+        let edges: Vec<String> = x
+            .runs
+            .iter()
+            .flat_map(|r| r.edges.iter().map(u32::to_string))
+            .collect();
+        println!(
+            "  {:.0} m breaking {} saves {:.0} m (edges {})",
+            x.broken_m,
+            limits.join(", "),
+            x.saved_m,
+            edges.join(" ")
+        );
     }
     Ok(())
 }

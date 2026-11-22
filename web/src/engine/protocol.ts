@@ -19,6 +19,8 @@ import type {
   RouteError,
   RouteRequest,
   RouteResult,
+  TradeoffRequest,
+  Tradeoffs,
 } from "./generated/types";
 
 /**
@@ -164,6 +166,8 @@ export interface EngineMethods {
   compare: { params: CompareRequest; result: RouteComparison };
   /** "this segment": the edge extended to the next real junctions, with its line */
   edgeRun: { params: { edge: number }; result: EdgeRun };
+  /** the hard limits as trade-offs: where breaking one on a short bit would save real distance */
+  tradeoffs: { params: TradeoffRequest; result: Tradeoffs };
   setPersonal: { params: PersonalParams | null; result: undefined };
   /** the summed length in metres of these edges, each once (the explored map's km) */
   edgesLength: { params: { edges: Uint32Array }; result: number };

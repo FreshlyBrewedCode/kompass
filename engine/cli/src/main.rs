@@ -5,8 +5,9 @@
 //! - `kompass info --build <dir> [--snaps N]`: loads the graph, prints counts, load times, memory and
 //!   the time of N seeded random snaps (no coordinates).
 //! - `kompass route --build <dir> --profile <file|preset> --from lon,lat [--via lon,lat]… --to
-//!   lon,lat [--out file] [--segments] [--radius m] [--explain] [--why-not lon,lat]`: a route as
-//!   GeoJSON; `--explain` prints every segment's cost breakdown and an aggregate, `--why-not` the
+//!   lon,lat [--out file] [--segments] [--radius m] [--explain] [--tradeoffs] [--why-not lon,lat]`: a
+//!   route as GeoJSON; `--explain` prints every segment's cost breakdown and an aggregate,
+//!   `--tradeoffs` the hard limits' trade-offs (lengths and edge ids), `--why-not` the
 //!   route against one forced through a point, stretch by stretch (text; the GeoJSON then only to
 //!   `--out`).
 //! - `kompass explain --build <dir> --profile <file|preset> --edge <id> [--json] | --time`: one
@@ -17,7 +18,8 @@
 //! - `kompass schema --write <dir> | --check <dir> [--traffic <file>]`: the generated JSON Schemas and TypeScript types (and the traffic model for the pipeline).
 //! - `kompass bench --build <dir>`: seeded random routes at ~10/50/100 km under the main presets.
 //! - `kompass compare --build <dir> --profiles a,b`: route quality of profiles on seeded random pairs;
-//!   `--loop <corners>`: seeded loops of waypoints, how much is ridden twice per `--reuse` variant.
+//!   `--loop <corners>`: seeded loops of waypoints, how much is ridden twice per `--reuse` variant;
+//!   `--tradeoffs`: how many routes get a hard-limit trade-off per threshold, what it saves.
 //! - `kompass match --build <dir> [--geojson <dir>] [--explored <file>] <gpx files or directories>`:
 //!   map-matches recorded tracks, prints aggregate numbers (`docs/matching.md`).
 //! - `kompass replay --build <dir> --profiles <a,b> [--ref name=dir]... <gpx files>`: route quality
@@ -57,14 +59,15 @@ const USAGE: &str = "usage: kompass [--version | --help]
                       [--leg ride<k>-leg<j>] [--out-dir <dir>]
                       <gpx files or directories>
        kompass route --build <dir> --profile <file|preset> --from <lon,lat> [--via <lon,lat>]... --to <lon,lat>
-                     [--out <file>] [--segments] [--radius <m>] [--explain] [--why-not <lon,lat>] [--reuse off|<per_m>/<u_turn_m>]
+                     [--out <file>] [--segments] [--radius <m>] [--explain] [--tradeoffs] [--why-not <lon,lat>] [--reuse off|<per_m>/<u_turn_m>]
        kompass explain --build <dir> --profile <file|preset> (--edge <id> [--json] | --time)
        kompass profile schema | catalogue [--build <dir>] | presets [--structured] | convert <file|preset>
        kompass schema --write <dir> | --check <dir> [--traffic <file>]
        kompass bench --build <dir> [--pairs <n>] [--seed <n>] [--profiles <a,b>]
        kompass sensitivity --build <dir> [--profiles <a,b,...>] [--pairs <n>] [--km <min-max>] [--seed <n>] [--personal <explored.json>]
        kompass compare --build <dir> --profiles <a,b,...> [--pairs <n>] [--km <min-max>] [--seed <n>] [--out-dir <dir>] [--grade <pct>]
-       kompass compare --build <dir> --loop <corners> [--profiles <a,b,...>] [--reuse off,on,<per_m>/<u_turn_m>,...] [--corners through|any] [--pairs <n>] [--km <min-max>] [--seed <n>]";
+       kompass compare --build <dir> --loop <corners> [--profiles <a,b,...>] [--reuse off,on,<per_m>/<u_turn_m>,...] [--corners through|any] [--pairs <n>] [--km <min-max>] [--seed <n>]
+       kompass compare --build <dir> --tradeoffs [--profiles <a,b,...>] [--pairs <n>] [--km <min-max>] [--seed <n>]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -82,11 +85,16 @@ fn main() -> ExitCode {
         Some("info") => Args::parse(rest, &[]).and_then(|a| info(&a)),
         Some("match") => matchcmd::run(rest),
         Some("replay") => replay::run(rest),
-        Some("route") => Args::parse(rest, &["--segments", "--explain"]).and_then(|a| route::run(&a)),
+        Some("route") => {
+            Args::parse(rest, &["--segments", "--explain", "--tradeoffs"]).and_then(|a| route::run(&a))
+        }
         Some("explain") => Args::parse(rest, &["--json", "--time"]).and_then(|a| explain::run(&a)),
         Some("profile") => profile(rest),
         Some("schema") => Args::parse(rest, &[]).and_then(|a| schema(&a)),
         Some("bench") => Args::parse(rest, &[]).and_then(|a| bench::bench(&a)),
+        Some("compare") if rest.iter().any(|x| x == "--tradeoffs") => {
+            Args::parse(rest, &["--tradeoffs"]).and_then(|a| bench::tradeoffs(&a))
+        }
         Some("compare") => Args::parse(rest, &[]).and_then(|a| bench::compare(&a)),
         Some("sensitivity") => Args::parse(rest, &[]).and_then(|a| sensitivity::run(&a)),
         Some(other) => Err(Failure::Usage(format!("unknown command `{other}`"))),

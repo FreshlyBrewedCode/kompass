@@ -1630,6 +1630,25 @@ impl CostModel {
         }
     }
 
+    /// Whether the profile closes ways it could open (a limit, a board row on `avoid`): what a
+    /// trade-off can soften ([`crate::tradeoffs`]).
+    #[must_use]
+    pub fn closes_ways(&self) -> bool {
+        let l = &self.limits;
+        l.no_main
+            || l.paved_only
+            || l.no_unknown
+            || l.max_grade.is_some()
+            || l.max_mtb.is_some()
+            || l.no_stairs
+            || l.legal_only
+            || l.no_ferries
+            || self
+                .structured
+                .as_ref()
+                .is_some_and(|st| st.tiers.contains(&Some(Tier::Avoid)))
+    }
+
     /// What excludes an edge in both directions (`None`: at least one direction may be ridden
     /// unless one-way forbids it).
     #[must_use]

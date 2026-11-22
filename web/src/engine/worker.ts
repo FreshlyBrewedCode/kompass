@@ -267,6 +267,7 @@ const handlers: EngineHandlers = {
   explainEdge: (request) => JSON.parse(ready().engine.explainEdge(JSON.stringify(request))),
   compare: (request) => JSON.parse(ready().engine.compare(JSON.stringify(request))),
   edgeRun: ({ edge }) => JSON.parse(ready().engine.edgeRun(edge)),
+  tradeoffs: (request) => JSON.parse(ready().engine.tradeoffs(JSON.stringify(request))),
   setPersonal: (layer) => {
     const e = ready().engine;
     if (layer) e.setPersonal(layer.rides, layer.lastRidden, layer.today);

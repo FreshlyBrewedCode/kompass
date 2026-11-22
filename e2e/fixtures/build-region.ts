@@ -13,6 +13,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { $ } from "bun";
+import { LADDER } from "../../web/test/synthetic";
 
 const here = import.meta.dirname;
 const src = join(here, "src");
@@ -90,7 +91,7 @@ type Feature = {
 };
 
 // the grid's streets, in generation order (`way` is the OSM-like way id the pipeline would carry)
-type Line = { way: number; coordinates: [number, number][] };
+type Line = { way: number; coordinates: [number, number][]; attrs?: Record<string, unknown> };
 const lines: Line[] = [];
 function line(a: [number, number], b: [number, number]) {
   const k = lines.length + 1;
@@ -103,13 +104,43 @@ function line(a: [number, number], b: [number, number]) {
 }
 for (let j = 0; j < N; j++) for (let i = 0; i < N - 1; i++) line(node(i, j), node(i + 1, j));
 for (let i = 0; i < N; i++) for (let j = 0; j < N - 1; j++) line(node(i, j), node(i, j + 1));
+const GRID_EDGES = lines.length;
+// The ladder, north-east of the grid and not joined to it (docs/planner.md, "Limits as trade-offs"):
+// S — X ~ Y — T along one street, X ~ Y a 40 m gravel track, and round it a 2 km paved loop. A
+// paved-only profile rides the loop; its trade-off offers the track. Its edges sort after the grid's
+// (the Hilbert keys there are higher), so the grid's edge ids stay what they were.
+{
+  const street = {
+    highway: code("highway", "residential"),
+    surface_class: code("surface_class", "paved_smooth"),
+  };
+  const track = { highway: code("highway", "track"), surface_class: code("surface_class", "gravel") };
+  const { s: ls, x, y, t } = LADDER;
+  const a: [number, number] = [x[0], 0.0198];
+  const b: [number, number] = [0.0125, 0.0198];
+  const c: [number, number] = [0.0125, 0.018];
+  const d: [number, number] = [y[0], 0.018];
+  const ladder: [[number, number][], Record<string, unknown>][] = [
+    [[[...ls], [...x]], street],
+    [[[...x], [...y]], track],
+    [[[...y], [...t]], street],
+    [[[...x], a], street],
+    [[a, b], street],
+    [[b, c], street],
+    [[c, d], street],
+    [[d, [...y]], street],
+  ];
+  for (const [coordinates, attrs] of ladder) lines.push({ way: lines.length + 1, coordinates, attrs });
+}
 // edge ids: the row numbers after the pipeline's sort
 const keyed = lines.map((l) => ({ ...l, key: hilbert(z16Tile(midpoint(l.coordinates))) }));
 keyed.sort((p, q) => p.key - q.key || p.way - q.way);
+if (keyed.slice(0, GRID_EDGES).some((l) => l.attrs))
+  throw new Error("a ladder edge sorts among the grid's: the grid's edge ids would change");
 
 const edges: Feature[] = [];
 const roads: Feature[] = [];
-keyed.forEach(({ way, coordinates }, id) => {
+keyed.forEach(({ way, coordinates, attrs }, id) => {
   // the attributes follow from the id, so the e2e can name them (edge 1: a compacted secondary road, ...)
   const seed = id;
   const properties: Record<string, unknown> = {
@@ -132,9 +163,22 @@ keyed.forEach(({ way, coordinates }, id) => {
   if (seed % 10 === 4) properties.service_kind = 1 + (seed % 20 === 4 ? 0 : 1); // parking_aisle, driveway
   // every seventh edge has no grade: "no value" is information too
   if (seed % 7 !== 0) properties.grade_max = (seed * 5) % 26;
+  if (attrs)
+    Object.assign(properties, {
+      tracktype: 0,
+      bike_access: 0,
+      cycleway_kind: 0,
+      route_level: 0,
+      forest_share: 0,
+      road_near_share: 0,
+      oneway_bike: 0,
+      grade_max: 0,
+      ...attrs,
+    });
+  if (attrs) for (const k of ["service_kind", "bridge", "tunnel", "layer"]) delete properties[k];
   edges.push({ type: "Feature", id, properties, geometry: { type: "LineString", coordinates } });
   const kind = seed % 9 === 0 ? "major_road" : seed % 3 === 0 ? "medium_road" : "minor_road";
-  const [a, b] = [coordinates[0], coordinates[2]];
+  const [a, b] = [coordinates[0], coordinates[coordinates.length - 1]];
   roads.push({
     type: "Feature",
     properties: { kind, kind_detail: kind === "major_road" ? "primary" : "residential", "pmap:level": 0 },

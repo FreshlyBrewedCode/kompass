@@ -712,3 +712,146 @@ fn loops(a: &Args) -> Result<(), Failure> {
     }
     Ok(())
 }
+
+/// `kompass compare --tradeoffs`: on seeded pairs, the strict route and the hard limits' trade-offs
+/// (`docs/routing.md`, "Limits as trade-offs"): how many routes get one under a grid of thresholds,
+/// the distance they save, and what the softened search costs next to the strict route.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::too_many_lines,
+    reason = "numbers for display; one report"
+)]
+pub(crate) fn tradeoffs(a: &Args) -> Result<(), Failure> {
+    use kompass_core::tradeoffs::{Thresholds, TradeoffRequest};
+    a.only(&[
+        "--build",
+        "--tradeoffs",
+        "--pairs",
+        "--seed",
+        "--profiles",
+        "--km",
+    ])?;
+    let build = a.build()?;
+    let n: usize = a.number("--pairs", 100)?;
+    let seed: u64 = a.number("--seed", 0x7ade)?;
+    let profiles = profile_list(a, "paved_quiet")?;
+    let (lo, hi) = a
+        .get("--km")
+        .unwrap_or("10-50")
+        .split_once('-')
+        .and_then(|(x, y)| Some((x.parse::<f64>().ok()?, y.parse::<f64>().ok()?)))
+        .ok_or_else(|| Failure::Usage("--km must be <min>-<max>".into()))?;
+    let (graph, _) = kompass_compile::build::load(&build, true)?;
+    let mut planner = Planner::new(graph);
+    let mut rng = Rng(seed | 1);
+    let set = pairs(&mut planner, &profiles, &mut rng, (lo, hi), n, &mut |_, _, _| {
+        true
+    });
+    println!("{} pairs, {lo:.0}–{hi:.0} km straight line\n", set.len());
+    let grid_broken = [150.0f32, 300.0, 500.0];
+    let grid_saved = [500.0f32, 1000.0, 2000.0];
+    let grid_ratio = [3.0f32, 5.0, 10.0];
+    for p in &profiles {
+        // per route: every candidate (broken, saved)
+        let mut cands: Vec<Vec<(f32, f32)>> = Vec::new();
+        // what the default thresholds' trade-offs break, by limit
+        let mut limits: Vec<(&'static str, usize)> = Vec::new();
+        let (mut strict_ms, mut soft_ms, mut km) = (Vec::new(), Vec::new(), Vec::new());
+        for &(x, y) in &set {
+            let route = request(planner.graph(), x, y, p, true);
+            let t = Instant::now();
+            let Ok(r) = planner.route(&route) else { continue };
+            strict_ms.push(t.elapsed().as_secs_f64() * 1e3);
+            km.push(f64::from(r.summary.distance_m) / 1000.0);
+            let req = TradeoffRequest {
+                route,
+                strict: Some(r.arcs),
+            };
+            let t = Instant::now();
+            let out = planner
+                .tradeoffs_with(&req, &Thresholds::ALL)
+                .map_err(|e| Failure::Run(e.message))?;
+            soft_ms.push(t.elapsed().as_secs_f64() * 1e3);
+            cands.push(out.tradeoffs.iter().map(|t| (t.broken_m, t.saved_m)).collect());
+            let mut kept: Vec<_> = out
+                .tradeoffs
+                .iter()
+                .filter(|t| Thresholds::DEFAULT.keep(t.broken_m, t.saved_m))
+                .collect();
+            kept.sort_by(|x, y| y.saved_m.total_cmp(&x.saved_m));
+            for t in kept.iter().take(Thresholds::DEFAULT.max) {
+                for c in &t.limits {
+                    match limits.iter_mut().find(|(id, _)| *id == c.id()) {
+                        Some(x) => x.1 += 1,
+                        None => limits.push((c.id(), 1)),
+                    }
+                }
+            }
+        }
+        let sorted = |mut v: Vec<f64>| {
+            v.sort_by(f64::total_cmp);
+            v
+        };
+        let (strict_ms, soft_ms, km) = (sorted(strict_ms), sorted(soft_ms), sorted(km));
+        let all: usize = cands.iter().map(Vec::len).sum();
+        println!(
+            "{}: {} routes, km p50 {:.1}; strict route ms p50 / p95 {:.1} / {:.1}, trade-offs (softened route + compare) {:.1} / {:.1}; {} stretches break a limit on {} routes",
+            name(p),
+            cands.len(),
+            percentile(&km, 0.5),
+            percentile(&strict_ms, 0.5),
+            percentile(&strict_ms, 0.95),
+            percentile(&soft_ms, 0.5),
+            percentile(&soft_ms, 0.95),
+            all,
+            cands.iter().filter(|c| !c.is_empty()).count(),
+        );
+        println!(
+            "\n| max broken m | min saved m | min ratio | routes with one | trade-offs (≤ 3 per route) | saved km p50 / p90 | broken m p50 |"
+        );
+        println!("|---:|---:|---:|---:|---:|---:|---:|");
+        for &mb_ in &grid_broken {
+            for &ms in &grid_saved {
+                for &mr in &grid_ratio {
+                    let th = Thresholds {
+                        max_broken_m: mb_,
+                        min_saved_m: ms,
+                        min_ratio: mr,
+                        max: 3,
+                    };
+                    let mut routes = 0;
+                    let (mut saved, mut broken) = (Vec::new(), Vec::new());
+                    for c in &cands {
+                        let mut kept: Vec<(f32, f32)> =
+                            c.iter().copied().filter(|&(b, s)| th.keep(b, s)).collect();
+                        kept.sort_by(|x, y| y.1.total_cmp(&x.1));
+                        kept.truncate(th.max);
+                        if !kept.is_empty() {
+                            routes += 1;
+                        }
+                        saved.extend(kept.iter().map(|k| f64::from(k.1) / 1000.0));
+                        broken.extend(kept.iter().map(|k| f64::from(k.0)));
+                    }
+                    let (saved, broken) = (sorted(saved), sorted(broken));
+                    println!(
+                        "| {mb_:.0} | {ms:.0} | {mr:.0} | {routes} of {} | {} | {:.1} / {:.1} | {:.0} |",
+                        cands.len(),
+                        saved.len(),
+                        percentile(&saved, 0.5),
+                        percentile(&saved, 0.9),
+                        percentile(&broken, 0.5),
+                    );
+                }
+            }
+        }
+        println!(
+            "\nthe default thresholds' trade-offs break: {}\n",
+            limits
+                .iter()
+                .map(|(id, n)| format!("{id} {n}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    Ok(())
+}

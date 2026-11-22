@@ -11,6 +11,8 @@ import type {
   RouteResult,
   StretchCost,
   StructuredInfo,
+  TradeoffRequest,
+  Tradeoffs,
 } from "@/engine/generated/types";
 import type { RouteOutcome } from "@/engine/protocol";
 import type { PlannerEngine } from "@/planner/store";
@@ -332,10 +334,16 @@ export function stretchCost(o: {
   };
 }
 
+const NO_TRADEOFFS: Tradeoffs = { tradeoffs: [], candidates: 0, searched: true, settled: 0 };
+
 /** A fake engine: answers routes from `answer` (synchronously resolved promises), records the calls. */
-export function fakeEngine(answer: (request: RouteRequest, lane: string) => RouteOutcome) {
+export function fakeEngine(
+  answer: (request: RouteRequest, lane: string) => RouteOutcome,
+  tradeoffs: (request: TradeoffRequest) => Tradeoffs = () => NO_TRADEOFFS,
+) {
   const calls: Call[] = [];
   const compares: CompareRequest[] = [];
+  const tradeoffCalls: TradeoffRequest[] = [];
   const engine: PlannerEngine = {
     presets: async () => PRESETS,
     structuredPresets: async () => STRUCTURED_PRESETS(),
@@ -378,9 +386,13 @@ export function fakeEngine(answer: (request: RouteRequest, lane: string) => Rout
         shared_m: 0,
       };
     },
+    tradeoffs: async (request) => {
+      tradeoffCalls.push(request);
+      return tradeoffs(request);
+    },
     cancel: () => undefined,
   };
-  return { engine, calls, compares };
+  return { engine, calls, compares, tradeoffCalls };
 }
 
 export function memoryStorage() {

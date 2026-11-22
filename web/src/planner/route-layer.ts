@@ -7,6 +7,8 @@
 //   "why this way" notes;
 // - this plan's exceptions: a quiet mark under the route on each avoided (dotted ink), preferred or
 //   allowed (soft halos) stretch;
+// - the hard limits' trade-offs: a small marker on the route at each bit where breaking a limit
+//   would save real distance; while its card is open, the shortcut dashed in the "allowed" colour;
 // - the segment inspector's way: an ink ring around it, or around its whole run between junctions once
 //   the engine has it (around the route's line where the route rides it); "why not this" draws the route through it in the compared route's blue, with a ring at the
 //   point; the ghost and a compared preset step aside meanwhile;
@@ -32,11 +34,15 @@ import { type InspectTarget, midpoint, nearestPiece, onRoute } from "./inspector
 import { markerText, routeNotes, SURFACE_GROUP, vertexAt, waypointLabel } from "./model";
 import { GHOST, OVERRIDE, ROUTE, ROUTE_ALT, ROUTE_CASING, surfaceColor } from "./palette";
 import type { PlannerStore, PlanState } from "./store";
+import { tradeoffKey, tradeoffSentence } from "./tradeoffs";
 
 const MAIN = "planner-main";
 const ALT = "planner-alt";
 const CURSOR = "planner-cursor";
 const INSPECT = "planner-inspect";
+/** the open trade-off's shortcut */
+const TRADEOFF = "planner-tradeoff";
+export const TRADEOFF_LINE = "planner-tradeoff-line";
 /** this plan's exceptions (avoided, preferred, allowed stretches) */
 export const OVERRIDES = "planner-overrides";
 const OVERRIDE_HALO = "planner-override-halo";
@@ -50,7 +56,7 @@ const MAIN_CASING = "planner-main-casing";
 const ALT_CASING = "planner-alt-casing";
 const CURSOR_DOT = "planner-cursor-dot";
 /** what the route toggle hides: every route line (the plan's, the ghost, a compared one, "why not") */
-export const ROUTE_LINES = [ALT_CASING, ALT_LINE, GHOST_LINE, MAIN_CASING, MAIN_LINE];
+export const ROUTE_LINES = [ALT_CASING, ALT_LINE, GHOST_LINE, MAIN_CASING, MAIN_LINE, TRADEOFF_LINE];
 
 type Padding = { top: number; right: number; bottom: number; left: number };
 type Feature = {
@@ -135,7 +141,10 @@ export class RouteLayer {
   readonly map: MapLibreMap;
   readonly #store: PlannerStore;
   #view: LayerView;
-  #applied: Partial<Record<"main" | "alt" | "cursor" | "notes" | "inspect" | "overrides", unknown>> = {};
+  #applied: Partial<
+    Record<"main" | "alt" | "cursor" | "notes" | "inspect" | "overrides" | "tradeoff" | "tradeoffs", unknown>
+  > = {};
+  #tradeoffs = new Map<string, Marker>();
   /** the inspected way and its pieces as the tiles have them (for the ring off the route) */
   #inspected: { target: InspectTarget; pieces: [number, number][][] } | null = null;
   readonly #press: LongPress;
@@ -268,6 +277,7 @@ export class RouteLayer {
       map.addSource(CURSOR, { type: "geojson", data: collection([]) });
       map.addSource(INSPECT, { type: "geojson", data: collection([]) });
       map.addSource(OVERRIDES, { type: "geojson", data: collection([]) });
+      map.addSource(TRADEOFF, { type: "geojson", data: collection([]) });
     } catch {
       return; // the style is still loading: the next styledata / idle event tries again
     }
@@ -321,6 +331,7 @@ export class RouteLayer {
     );
     map.addLayer({ id: MAIN_CASING, type: "line", source: MAIN, layout: round, paint: {} }, before);
     map.addLayer({ id: MAIN_LINE, type: "line", source: MAIN, layout: round, paint: {} }, before);
+    map.addLayer({ id: TRADEOFF_LINE, type: "line", source: TRADEOFF, layout: round, paint: {} }, before);
     map.addLayer({ id: INSPECT_RING, type: "line", source: INSPECT, layout: round, paint: {} }, before);
     map.addLayer({ id: CURSOR_DOT, type: "circle", source: CURSOR, paint: {} }, before);
     this.#applied = {};
@@ -385,6 +396,10 @@ export class RouteLayer {
     set(OVERRIDE_AVOID, "line-width", w(3, 4.5));
     set(OVERRIDE_AVOID, "line-opacity", 0.85);
     set(OVERRIDE_AVOID, "line-dasharray", [0.5, 1.5]);
+    // the open trade-off's shortcut: the "allowed" colour, dashed (not allowed yet)
+    set(TRADEOFF_LINE, "line-color", OVERRIDE.allow[t]);
+    set(TRADEOFF_LINE, "line-width", w(4, 6));
+    set(TRADEOFF_LINE, "line-dasharray", [1.2, 1]);
     set(CURSOR_DOT, "circle-radius", 7);
     set(CURSOR_DOT, "circle-color", ROUTE[t]);
     set(CURSOR_DOT, "circle-stroke-color", ROUTE_CASING[t]);
@@ -495,7 +510,26 @@ export class RouteLayer {
         ),
       );
     }
+    // the open trade-off's shortcut
+    const open = s.tradeoffOpen ? s.tradeoffs.find((t) => tradeoffKey(t) === s.tradeoffOpen) : undefined;
+    if (ready && changed(this.#applied.tradeoff, [open])) {
+      this.#applied.tradeoff = [open];
+      (map.getSource(TRADEOFF) as GeoJSONSource).setData(
+        collection(
+          open && open.coordinates.length >= 2
+            ? [
+                {
+                  type: "Feature",
+                  properties: {},
+                  geometry: { type: "LineString", coordinates: open.coordinates as [number, number][] },
+                },
+              ]
+            : [],
+        ),
+      );
+    }
     this.#syncMarkers(s);
+    this.#syncTradeoffs(s);
     this.#syncNotes(s);
     this.#syncVia(s);
     // fit once the lines are there (and the chrome has laid out around them)
@@ -644,6 +678,49 @@ export class RouteLayer {
     }
   }
 
+  /** A marker on the route at each trade-off of the plan's limits (tap: its card). */
+  #syncTradeoffs(s: PlanState) {
+    const show =
+      s.waypoints.length >= 2 &&
+      !s.main.error &&
+      !s.whyNot &&
+      !s.compareId &&
+      !s.routeHidden &&
+      !!s.main.result;
+    const list = show ? s.tradeoffs : [];
+    const key = [list, s.tradeoffOpen];
+    if (!changed(this.#applied.tradeoffs, key)) return;
+    this.#applied.tradeoffs = key;
+    const seen = new Set<string>();
+    for (const t of list) {
+      const k = tradeoffKey(t);
+      seen.add(k);
+      let marker = this.#tradeoffs.get(k);
+      if (!marker) {
+        const el = document.createElement("button");
+        el.type = "button";
+        el.className = "kp-tradeoff";
+        el.dataset.testid = "tradeoff-marker";
+        el.setAttribute("aria-label", `${tradeoffSentence(t)} Show the trade-off`);
+        el.title = tradeoffSentence(t);
+        el.addEventListener("click", (event) => {
+          event.stopPropagation();
+          const now = this.#store.getSnapshot().tradeoffOpen;
+          this.#store.openTradeoff(now === k ? null : k);
+        });
+        el.addEventListener("contextmenu", (event) => event.stopPropagation());
+        marker = new Marker({ element: el }).setLngLat([t.at.lon, t.at.lat]).addTo(this.map);
+        this.#tradeoffs.set(k, marker);
+      }
+      marker.getElement().dataset.open = String(s.tradeoffOpen === k);
+    }
+    for (const [k, m] of this.#tradeoffs) {
+      if (seen.has(k)) continue;
+      m.remove();
+      this.#tradeoffs.delete(k);
+    }
+  }
+
   /** The ring at the point of "why not through here?". */
   #syncVia(s: PlanState) {
     const at = s.whyNot?.at;
@@ -676,11 +753,14 @@ export class RouteLayer {
     surface.removeEventListener("touchcancel", this.#onTouchEnd);
     for (const { marker } of this.#markers.values()) marker.remove();
     for (const m of this.#notes) m.remove();
+    for (const m of this.#tradeoffs.values()) m.remove();
+    this.#tradeoffs.clear();
     this.#markers.clear();
     if (this.map.getStyle()) {
       for (const id of [
         CURSOR_DOT,
         INSPECT_RING,
+        TRADEOFF_LINE,
         GHOST_LINE,
         MAIN_LINE,
         MAIN_CASING,
@@ -690,7 +770,7 @@ export class RouteLayer {
         OVERRIDE_HALO,
       ])
         if (this.map.getLayer(id)) this.map.removeLayer(id);
-      for (const id of [MAIN, ALT, CURSOR, INSPECT, OVERRIDES])
+      for (const id of [MAIN, ALT, CURSOR, INSPECT, OVERRIDES, TRADEOFF])
         if (this.map.getSource(id)) this.map.removeSource(id);
     }
   }
