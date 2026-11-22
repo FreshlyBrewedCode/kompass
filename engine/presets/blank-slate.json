@@ -3,7 +3,7 @@
   "blurb": "The shortest way; build your own from here",
   "profile": {
     "name": "Blank slate",
-    "weights": { "unpaved": 0, "quiet": 0, "climb": 0, "novel": 0 },
+    "weights": {},
     "limits": {}
   }
 }

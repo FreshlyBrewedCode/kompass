@@ -27,13 +27,6 @@
         "$ref": "#/$defs/Limit"
       }
     },
-    "core": {
-      "description": "The core set: always on screen, whatever the base.",
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/PrefId"
-      }
-    },
     "bounds": {
       "$ref": "#/$defs/BoundsInfo"
     }
@@ -43,7 +36,6 @@
     "groups",
     "preferences",
     "limits",
-    "core",
     "bounds"
   ],
   "$defs": {
@@ -126,10 +118,6 @@
           "minimum": -128,
           "maximum": 127
         },
-        "core": {
-          "description": "Part of the core set every profile shows.",
-          "type": "boolean"
-        },
         "max_bonus": {
           "description": "The factor on a fully matching way at +100 (< 1: cheaper).",
           "type": "number",
@@ -167,7 +155,6 @@
         "short",
         "hint",
         "default",
-        "core",
         "max_bonus",
         "max_penalty",
         "gated",
