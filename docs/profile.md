@@ -317,16 +317,16 @@ curves (Flat please, Don't mind, Climber, No walls) and the loose and detours ra
 
 **Evidence** (the PR of #66; real region, aggregates only). Replay on the rider's 24 legs (as the
 route-quality report): the Gravel explorer's twin reproduces as much as today (36 / 35 % against
-36 / 34 % of the ridden length, all / median leg) at 1.67 turns per km against 1.72; with the
+36 / 34 % of the ridden length, all / median leg) at 1.68 turns per km against 1.72; with the
 history minus the replayed rides 24 / 22 % against 25 / 23 %. Paved & quiet's reproduces more
 (38 / 32 % against 37 / 26 %) and is shorter (1.00 against 1.10 of the ridden length) but rides 41 km
 of main road against 24 (`dislike` is weaker than `main −60`; `avoid` or more detours reproduced less).
 River valley's (tuned) 41 / 41 % against 42 / 42 %. Length at the floor on 30 seeded pairs with the
 history: 16.5 % today (Gravel explorer), 0 % structured. One control nudged (sliders ±25, a tier one
-step, a handle × or ÷ 1.25, detours ±0.25) changes on average 9.6 % of the twin's route (9.7 % today),
-a tier step 12.9 %, a handle 2.1 %, Detours 17 %; bonuses and penalties move it alike (8.7 / 10.4 %;
-today 7.4 / 11.9 %). Compile 91–166 ms natively (today 26–77 ms; the curve per arc is most of it),
-settled nodes 0–9 % fewer.
+step, a handle × or ÷ 1.25, detours ±0.25) changes on average 9.8 % of the twin's route (9.7 % today),
+a tier step 13 %, a handle 2.7 %, Detours 16 %; making something cheaper and dearer move it alike
+(8.9 / 10.5 %; today 7.4 / 11.9 %). Compile 91–166 ms natively (today 26–77 ms; the curve per arc is
+most of it), settled nodes 0–9 % fewer.
 
 ## The catalogue
 
