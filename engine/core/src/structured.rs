@@ -673,8 +673,9 @@ fn round2(v: f32) -> f32 {
 /// A slider profile in the structured form (a pure function, the prototype's switch): every row
 /// of both boards at the tier nearest to its factor today (the board's slider weights on a
 /// representative way of the row; limits as `avoid`), the hills curve's handles from `climb`,
-/// `steep` and `ramps_over_*` at the handles' grades, `detours` from `bounds.min_factor`; the other
-/// weights and limits are kept. A structured profile comes back unchanged.
+/// `steep` and `ramps_over_*` at the handles' grades, `detours` from `bounds.min_factor`, the turn
+/// cost doubled (the factors' scale); the other weights and limits are kept. A structured profile
+/// comes back unchanged.
 #[must_use]
 pub fn to_structured(p: &Profile) -> Profile {
     if p.structured() {
@@ -749,6 +750,10 @@ pub fn to_structured(p: &Profile) -> Profile {
     out.detours = Some(round2(
         (mf.ln() / 0.5f32.ln()).clamp(DETOURS_RANGE.0, DETOURS_RANGE.1),
     ));
+    // a turn keeps its worth against the ways: the relative factors are about twice the slider
+    // model's (a fine way on both boards costs 1.82 per metre where a neutral one cost 1), and
+    // replay on the rider's rides matches today's turns per km at twice the metres
+    out.turn_m = Some((2.0 * p.turn_m()).min(crate::profile::TURN_M_RANGE.1));
     out.bounds = p.bounds.map(|b| crate::profile::Bounds {
         min_factor: crate::profile::Bounds::default().min_factor,
         ..b
@@ -874,6 +879,7 @@ mod tests {
         );
         assert_eq!(blank.hills.unwrap().up_values(), [1.0; 4]);
         assert_eq!(blank.detours, Some(1.0));
+        assert_eq!(blank.turn_m, Some(2.0 * crate::profile::TURN_M));
     }
 
     #[test]

@@ -38,6 +38,7 @@
       },
       "loose_pct": 0.0
     },
-    "detours": 1.0
+    "detours": 1.0,
+    "turn_m": 40.0
   }
 }

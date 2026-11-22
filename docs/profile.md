@@ -281,9 +281,10 @@ relative  = Π boards tier(row) × Π groups (strongest bonus × strongest penal
   hills keep working (in the Terrain group, per arc).
 - **The A* bound** is the smallest factor plus hills metres per metre any arc has (the other additive
   terms are ≥ 0); A* equals Dijkstra under random structured profiles (a test).
-- **Fixed costs weigh less.** Barriers (15 m), steps, a ferry, the reuse penalty and U-turns are metres
-  too, and a typical way now costs about 2.2 per metre where it cost 0.85: they count roughly 2.5×
-  less against the factors than in the slider model. Not tuned yet (an open point of the prototype).
+- **Fixed costs weigh less.** Barriers (15 m), steps, a ferry, the reuse penalty, U-turns and turns
+  are metres too, and a typical way now costs about 2.2 per metre where it cost 0.85: against the
+  factors they count roughly 2.5× less than in the slider model. The conversion doubles `turn_m`
+  (replay matches today's turns per km at 40 m); the others are not rescaled yet (open).
 
 **Conversion** (`to_structured`, wasm `toStructured`, `kompass profile convert <file|preset>`): a
 pure function from a slider profile. Every row of both boards gets the tier nearest (in log space, fine
@@ -294,7 +295,7 @@ main). Soft weights never become `avoid` (a strength, not a limit): `main −80`
 weaker (1.48 × fine against 3.6 ×). The curve's handles are today's factor of `climb`, `steep` and
 `ramps_over_*` at the handles' grades on a way of factor 1 (`climb −w` is additive, 1 + 0.25 w (g −
 0.4) uphill; `steep` and the ramps their tables at that grade, descents half). The other weights and
-limits stay; a structured profile comes back unchanged.
+limits stay, `turn_m` doubles (above); a structured profile comes back unchanged.
 
 **Twins** (`structured_presets()`, wasm `structuredPresets`, `kompass profile presets --structured`):
 each shipped preset converted, id `<id>_structured`, the same name. Tuned after replay: River valley's
@@ -315,18 +316,19 @@ The additive term is `hills`. The `why` lists name only what counts.
 it) and what each replaces, the tiers with their factors, the curve's handles with ranges, the named
 curves (Flat please, Don't mind, Climber, No walls) and the loose and detours ranges.
 
-**Evidence** (the PR of #66; real region, aggregates only). Replay on the rider's 24 legs (as the
-route-quality report): the Gravel explorer's twin reproduces as much as today (36 / 35 % against
-36 / 34 % of the ridden length, all / median leg) at 1.68 turns per km against 1.72; with the
-history minus the replayed rides 24 / 22 % against 25 / 23 %. Paved & quiet's reproduces more
-(38 / 32 % against 37 / 26 %) and is shorter (1.00 against 1.10 of the ridden length) but rides 41 km
-of main road against 24 (`dislike` is weaker than `main −60`; `avoid` or more detours reproduced less).
-River valley's (tuned) 41 / 41 % against 42 / 42 %. Length at the floor on 30 seeded pairs with the
-history: 16.5 % today (Gravel explorer), 0 % structured. One control nudged (sliders ±25, a tier one
-step, a handle × or ÷ 1.25, detours ±0.25) changes on average 9.8 % of the twin's route (9.7 % today),
-a tier step 13 %, a handle 2.7 %, Detours 16 %; making something cheaper and dearer move it alike
-(8.9 / 10.5 %; today 7.4 / 11.9 %). Compile 91–166 ms natively (today 26–77 ms; the curve per arc is
-most of it), settled nodes 0–9 % fewer.
+**Evidence** (the PR of #66; real region, aggregates only, with #74's turn cost). Replay on the
+rider's 24 legs (as the route-quality report): the Gravel explorer's twin reproduces as much as today
+(37 / 37 % against 38 / 34 % of the ridden length, all / median leg) at the same 1.48 turns per km;
+with the history minus the replayed rides 27 / 23 % both, 1.61 against 1.64 turns per km. Paved &
+quiet's reproduces more (38 / 34 % against 37 / 26 %) and is shorter (1.00 against 1.10 of the
+ridden length) but rides 41 km of main road against 24 (`dislike` is weaker than `main −60`; `avoid`
+or more detours reproduced less). River valley's (tuned) 44 / 41 % against 44 / 43 %, with the
+history 44 / 41 % against 49 / 45 % (open). Length at the floor on 30 seeded pairs with the history:
+16 % today (Gravel explorer), 0 % structured. One control nudged (sliders ±25, a tier one step, a
+handle × or ÷ 1.25, detours ±0.25) changes on average 8.9 % of the twin's route (11.4 % today), a
+tier step 12 %, a handle 1.9 %, Detours 17 %; making something cheaper or dearer moves it alike
+(7.9 / 9.8 %; today 10.5 / 12.2 %). Compile 90–166 ms natively (today 26–77 ms; the curve per arc is
+most of it), settled nodes 0–8 % fewer.
 
 ## The catalogue
 
