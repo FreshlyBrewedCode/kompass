@@ -111,6 +111,7 @@ export function result(o: {
       cost: d,
       reused_m: 0,
       shape_cost: 0,
+      override_cost: 0,
       unpaved_share: o.unpaved ?? 0.5,
       unknown_surface_share: 0,
       main_road_m: (o.mainKm ?? 0) * 1000,
@@ -136,6 +137,7 @@ export function result(o: {
       cost: 0,
       reused_m: 0,
       shape_cost: 0,
+      override_cost: 0,
       arcs: [i, i + 1],
       segments: [0, 1],
       settled: 0,
@@ -165,6 +167,7 @@ export function result(o: {
       elevation_m: [300, 350, 320],
     },
     notes: [],
+    overrides: [],
   };
 }
 
@@ -188,6 +191,7 @@ export function stretchCost(o: {
     why: [],
     ways: [{ key: "track", length_m: o.m, share: 1 }],
     closed: [],
+    overrides: [],
   };
 }
 
@@ -214,6 +218,16 @@ export function fakeEngine(answer: (request: RouteRequest, lane: string) => Rout
     explainEdge: async () => {
       throw new Error("not in the fake");
     },
+    edgeRun: async (edge) => ({
+      edges: [edge, edge + 1],
+      index: 0,
+      length_m: 420,
+      coordinates: [
+        [0, 0],
+        [0.002, 0],
+        [0.004, 0.001],
+      ],
+    }),
     compare: async (request) => {
       compares.push(request);
       const a = stretchCost({ m: request.a.length * 100, cost: request.a.length * 80 });

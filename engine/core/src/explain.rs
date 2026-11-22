@@ -291,7 +291,7 @@ pub struct ArcCostExplanation {
     /// Everything that closes this direction (empty: open), in the order the engine checks.
     pub closed_by: Vec<Closure>,
     /// The limits this plan's override (allow, prefer) lifts here: they would close it.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub lifted: Vec<Closure>,
 }
 

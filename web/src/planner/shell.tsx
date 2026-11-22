@@ -66,6 +66,7 @@ import {
   Soon,
   Stats,
   StatusBody,
+  UndoToast,
   useFlashScroll,
   useStatus,
 } from "./parts";
@@ -164,7 +165,11 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
   const engine = engineStore();
   const engineState = useEngine();
   const store = useMemo(
-    () => new PlannerStore(engineAdapter(engine), { bounds: manifest.bounds }),
+    () =>
+      new PlannerStore(engineAdapter(engine), {
+        bounds: manifest.bounds,
+        build: manifest.graph?.buildId ?? manifest.buildId,
+      }),
     [engine, manifest],
   );
   const attributes = manifest.overlay.attributes;
@@ -439,6 +444,7 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
             ) : null
           }
         />
+        <UndoToast />
         {mapError && (
           <div
             data-testid="map-error"

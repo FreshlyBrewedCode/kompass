@@ -354,7 +354,8 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/Closure"
-          }
+          },
+          "default": []
         }
       },
       "required": [

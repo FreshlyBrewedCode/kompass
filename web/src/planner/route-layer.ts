@@ -5,8 +5,10 @@
 //   error the route without the blocking limit; a compared preset's route in blue;
 // - the waypoints as draggable markers (dragging reroutes live), the timeline's cursor, a few
 //   "why this way" notes;
-// - the segment inspector's way: an ink ring around it (around the route's line where the route rides
-//   it); "why not this" draws the route through it in the compared route's blue, with a ring at the
+// - this plan's exceptions: a quiet mark under the route on each avoided (dotted ink), preferred or
+//   allowed (soft halos) stretch;
+// - the segment inspector's way: an ink ring around it, or around its whole run between junctions once
+//   the engine has it (around the route's line where the route rides it); "why not this" draws the route through it in the compared route's blue, with a ring at the
 //   point; the ghost and a compared preset step aside meanwhile;
 // - the gestures: a tap adds a waypoint; a right-click or a long press (touch) inspects the nearest way
 //   (so does a tap while the Cost layer inspects), and never adds a waypoint or opens the browser's menu.
@@ -28,13 +30,17 @@ import { partedBounds } from "./cost/model";
 import { LongPress, type Point } from "./inspector/gesture";
 import { type InspectTarget, midpoint, nearestPiece, onRoute } from "./inspector/model";
 import { markerText, routeNotes, SURFACE_GROUP, vertexAt, waypointLabel } from "./model";
-import { GHOST, ROUTE, ROUTE_ALT, ROUTE_CASING, surfaceColor } from "./palette";
+import { GHOST, OVERRIDE, ROUTE, ROUTE_ALT, ROUTE_CASING, surfaceColor } from "./palette";
 import type { PlannerStore, PlanState } from "./store";
 
 const MAIN = "planner-main";
 const ALT = "planner-alt";
 const CURSOR = "planner-cursor";
 const INSPECT = "planner-inspect";
+/** this plan's exceptions (avoided, preferred, allowed stretches) */
+export const OVERRIDES = "planner-overrides";
+const OVERRIDE_HALO = "planner-override-halo";
+const OVERRIDE_AVOID = "planner-override-avoid";
 /** the ring around the inspected way */
 export const INSPECT_RING = "planner-inspect-ring";
 export const MAIN_LINE = "planner-main-line";
@@ -129,7 +135,7 @@ export class RouteLayer {
   readonly map: MapLibreMap;
   readonly #store: PlannerStore;
   #view: LayerView;
-  #applied: Partial<Record<"main" | "alt" | "cursor" | "notes" | "inspect", unknown>> = {};
+  #applied: Partial<Record<"main" | "alt" | "cursor" | "notes" | "inspect" | "overrides", unknown>> = {};
   /** the inspected way and its pieces as the tiles have them (for the ring off the route) */
   #inspected: { target: InspectTarget; pieces: [number, number][][] } | null = null;
   readonly #press: LongPress;
@@ -261,6 +267,7 @@ export class RouteLayer {
       map.addSource(MAIN, { type: "geojson", data: collection([]) });
       map.addSource(CURSOR, { type: "geojson", data: collection([]) });
       map.addSource(INSPECT, { type: "geojson", data: collection([]) });
+      map.addSource(OVERRIDES, { type: "geojson", data: collection([]) });
     } catch {
       return; // the style is still loading: the next styledata / idle event tries again
     }
@@ -269,6 +276,29 @@ export class RouteLayer {
     const before = ridesAt >= 0 ? layers[ridesAt + 1]?.id : undefined;
     const round = { "line-cap": "round" as const, "line-join": "round" as const };
     const isKind = (k: string) => ["==", ["get", "kind"], k] as ["==", ["get", string], string];
+    // the plan's exceptions under every route line
+    map.addLayer(
+      {
+        id: OVERRIDE_HALO,
+        type: "line",
+        source: OVERRIDES,
+        filter: ["!=", ["get", "kind"], "avoid"],
+        layout: round,
+        paint: {},
+      },
+      before,
+    );
+    map.addLayer(
+      {
+        id: OVERRIDE_AVOID,
+        type: "line",
+        source: OVERRIDES,
+        filter: isKind("avoid"),
+        layout: round,
+        paint: {},
+      },
+      before,
+    );
     map.addLayer(
       { id: ALT_CASING, type: "line", source: ALT, filter: isKind("compare"), layout: round, paint: {} },
       before,
@@ -342,6 +372,19 @@ export class RouteLayer {
       17,
       ["match", ["get", "kind"], "route", 13, 14],
     ]);
+    set(OVERRIDE_HALO, "line-color", [
+      "match",
+      ["get", "kind"],
+      "prefer",
+      OVERRIDE.prefer[t],
+      OVERRIDE.allow[t],
+    ]);
+    set(OVERRIDE_HALO, "line-width", w(7, 12));
+    set(OVERRIDE_HALO, "line-opacity", 0.4);
+    set(OVERRIDE_AVOID, "line-color", OVERRIDE.avoid[t]);
+    set(OVERRIDE_AVOID, "line-width", w(3, 4.5));
+    set(OVERRIDE_AVOID, "line-opacity", 0.85);
+    set(OVERRIDE_AVOID, "line-dasharray", [0.5, 1.5]);
     set(CURSOR_DOT, "circle-radius", 7);
     set(CURSOR_DOT, "circle-color", ROUTE[t]);
     set(CURSOR_DOT, "circle-stroke-color", ROUTE_CASING[t]);
@@ -416,13 +459,40 @@ export class RouteLayer {
         ),
       );
     }
-    // the inspected way: around the route's line where the route rides it, else around the way
+    // the inspected way (its run once known): around the route's line where the route rides it, else
+    // around the way
     const inspected = this.#inspected;
-    const inspectKey = [inspected, s.main.result];
+    const run = inspected && s.run?.edge === inspected.target.id ? s.run.result : null;
+    const inspectKey = [inspected, s.main.result, run];
     if (ready && changed(this.#applied.inspect, inspectKey)) {
       this.#applied.inspect = inspectKey;
       (map.getSource(INSPECT) as GeoJSONSource).setData(
-        collection(inspected ? inspectFeatures(inspected.target.id, inspected.pieces, s.main.result) : []),
+        collection(
+          inspected
+            ? inspectFeatures(
+                run ? run.edges : [inspected.target.id],
+                run && run.coordinates.length >= 2
+                  ? [run.coordinates as [number, number][]]
+                  : inspected.pieces,
+                s.main.result,
+              )
+            : [],
+        ),
+      );
+    }
+    // this plan's exceptions
+    if (ready && changed(this.#applied.overrides, [s.overrides])) {
+      this.#applied.overrides = [s.overrides];
+      (map.getSource(OVERRIDES) as GeoJSONSource).setData(
+        collection(
+          s.overrides
+            .filter((o) => o.line.length >= 2)
+            .map((o) => ({
+              type: "Feature" as const,
+              properties: { kind: o.kind },
+              geometry: { type: "LineString" as const, coordinates: o.line },
+            })),
+        ),
       );
     }
     this.#syncMarkers(s);
@@ -608,23 +678,36 @@ export class RouteLayer {
     for (const m of this.#notes) m.remove();
     this.#markers.clear();
     if (this.map.getStyle()) {
-      for (const id of [CURSOR_DOT, INSPECT_RING, GHOST_LINE, MAIN_LINE, MAIN_CASING, ALT_LINE, ALT_CASING])
+      for (const id of [
+        CURSOR_DOT,
+        INSPECT_RING,
+        GHOST_LINE,
+        MAIN_LINE,
+        MAIN_CASING,
+        ALT_LINE,
+        ALT_CASING,
+        OVERRIDE_AVOID,
+        OVERRIDE_HALO,
+      ])
         if (this.map.getLayer(id)) this.map.removeLayer(id);
-      for (const id of [MAIN, ALT, CURSOR, INSPECT]) if (this.map.getSource(id)) this.map.removeSource(id);
+      for (const id of [MAIN, ALT, CURSOR, INSPECT, OVERRIDES])
+        if (this.map.getSource(id)) this.map.removeSource(id);
     }
   }
 }
 
 /**
- * The ring's features: where the route rides the edge, the route's own vertices of it (the ring then
- * hugs the route's line); else the way's pieces from the tiles.
+ * The ring's features: where the route rides all of the edges (the inspected one, or its run), the
+ * route's own vertices of them (the ring then hugs the route's line); else the way's pieces (the run's
+ * line, or the tiles' pieces of the edge).
  */
-function inspectFeatures(edge: number, pieces: [number, number][][], r: RouteResult | null): Feature[] {
+function inspectFeatures(edges: number[], pieces: [number, number][][], r: RouteResult | null): Feature[] {
   const coords = r?.geometry?.coordinates;
-  if (r && coords && onRoute(edge, r.arcs)) {
+  if (r && coords && edges.every((e) => onRoute(e, r.arcs))) {
+    const set = new Set(edges);
     const out: Feature[] = [];
     r.arcs.forEach((a, i) => {
-      if (a >> 1 !== edge) return;
+      if (!set.has(a >> 1)) return;
       const from = r.arc_vertex[i] ?? 0;
       const to = r.arc_vertex[i + 1] ?? coords.length - 1;
       const line = coords.slice(from, to + 1);

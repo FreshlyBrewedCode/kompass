@@ -10,6 +10,7 @@ import type {
   CompareRequest,
   DiffRequest,
   EdgeExplanation,
+  EdgeRun,
   ExplainEdgeRequest,
   Preset,
   Profile,
@@ -157,6 +158,8 @@ export interface EngineMethods {
   explainEdge: { params: ExplainEdgeRequest; result: EdgeExplanation };
   /** "why not this way?": two routes under one profile, stretch by stretch where they part */
   compare: { params: CompareRequest; result: RouteComparison };
+  /** "this segment": the edge extended to the next real junctions, with its line */
+  edgeRun: { params: { edge: number }; result: EdgeRun };
   setPersonal: { params: PersonalParams | null; result: undefined };
   /** the summed length in metres of these edges, each once (the explored map's km) */
   edgesLength: { params: { edges: Uint32Array }; result: number };

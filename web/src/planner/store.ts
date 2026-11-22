@@ -13,9 +13,11 @@ import type {
   Catalogue,
   CompareRequest,
   EdgeExplanation,
+  EdgeRun,
   ExplainEdgeRequest,
   LimitId,
   LimitValue,
+  OverrideKind,
   PrefId,
   Preset,
   Profile,
@@ -56,6 +58,15 @@ import {
   type Weights,
   waypointId,
 } from "./model";
+import {
+  makeOverride,
+  overridesWire,
+  overrideText,
+  type PlanOverride,
+  parseOverrides,
+  type SavedOverrides,
+  withOverride,
+} from "./overrides";
 
 /** What the store needs of the engine (an adapter over `EngineStore`; a fake in tests). */
 export interface PlannerEngine {
@@ -67,6 +78,8 @@ export interface PlannerEngine {
   edgeCosts(params: EdgeCostsParams, lane: string): Promise<EdgeCostsResult | Superseded>;
   explainEdge(request: ExplainEdgeRequest, lane: string): Promise<EdgeExplanation | Superseded>;
   compare(request: CompareRequest, lane: string): Promise<RouteComparison | Superseded>;
+  /** "this segment": the edge's run between junctions (docs/planner.md, "This plan's exceptions") */
+  edgeRun(edge: number, lane: string): Promise<EdgeRun | Superseded>;
   cancel(lane: string): void;
 }
 
@@ -79,6 +92,7 @@ export function engineAdapter(engine: EngineStore): PlannerEngine {
     edgeCosts: (params, lane) => engine.client.latest(lane, "edgeCosts", params),
     explainEdge: (request, lane) => engine.client.latest(lane, "explainEdge", request),
     compare: (request, lane) => engine.client.latest(lane, "compare", request),
+    edgeRun: (edge, lane) => engine.client.latest(lane, "edgeRun", { edge }),
     cancel: (lane) => engine.client.cancel(lane),
   };
 }
@@ -114,6 +128,14 @@ export type PlanState = {
   /** the detours slider (`bounds.min_factor`) when moved away from the base's; `null`: the base's */
   detours: number | null;
   compareId: string | null;
+  /** this plan's exceptions: stretches it avoids, prefers or allows (docs/planner.md) */
+  overrides: PlanOverride[];
+  /** exceptions of a saved plan dropped on load: they were made on another build of the region */
+  overridesDropped: number;
+  /** the last change to the exceptions, to undo it (`seq` tells changes apart) */
+  overrideUndo: { text: string; before: PlanOverride[]; seq: number } | null;
+  /** the inspected way's run of edges between junctions: what an exception would apply to */
+  run: { edge: number; result: EdgeRun } | null;
   // derived from the above (kept in the snapshot so selectors stay cheap and stable)
   base: PlanPreset | undefined;
   baseWeights: Weights;
@@ -171,6 +193,8 @@ const frame: Schedule =
 export type StoreOptions = {
   storage?: Pick<Storage, "getItem" | "setItem"> | null;
   bounds?: readonly [number, number, number, number];
+  /** the region build's id: exceptions (edge ids) are saved with it and dropped on another one */
+  build?: string;
   schedule?: Schedule;
   now?: () => number;
 };
@@ -180,6 +204,7 @@ export class PlannerStore {
   readonly #storage: Pick<Storage, "getItem" | "setItem"> | null;
   readonly #schedule: Schedule;
   readonly #now: () => number;
+  readonly #build: string | undefined;
   readonly #listeners = new Set<() => void>();
   #state: PlanState;
   #pending = false;
@@ -197,9 +222,11 @@ export class PlannerStore {
     this.#storage = options.storage === undefined ? safeStorage() : options.storage;
     this.#schedule = options.schedule ?? frame;
     this.#now = options.now ?? (() => performance.now());
+    this.#build = options.build;
     this.#restored = parsePlan(this.#read(PLAN_KEY), options.bounds);
     const own = parsePresets(this.#read(PRESETS_KEY));
     const r = this.#restored;
+    const saved = parseOverrides(r?.overrides, this.#build);
     this.#state = derive({
       catalogue: null,
       presets: own,
@@ -209,6 +236,10 @@ export class PlannerStore {
       limits: r?.limits ?? {},
       detours: r?.detours ?? null,
       compareId: r?.compareId ?? null,
+      overrides: saved.kept,
+      overridesDropped: saved.dropped,
+      overrideUndo: null,
+      run: null,
       engineReady: false,
       main: NO_LINE,
       ghost: NO_LINE,
@@ -289,6 +320,9 @@ export class PlannerStore {
       ...(s.detours !== null ? { detours: s.detours } : {}),
       compareId: s.compareId,
       lineBy: s.lineBy,
+      ...(s.overrides.length > 0 && this.#build !== undefined
+        ? { overrides: { build: this.#build, list: s.overrides } satisfies SavedOverrides }
+        : {}),
     };
     this.#write(PLAN_KEY, JSON.stringify(plan));
   }
@@ -539,9 +573,84 @@ export class PlannerStore {
     return planProfile(s.base, s.weights, s.limits, s.minFactor);
   }
 
-  /** One edge's cost, explained under the plan's profile (or another one, on its own lane; latest wins). */
+  /**
+   * One edge's cost, explained under the plan's profile and exceptions (or under another profile
+   * alone, on its own lane; latest wins).
+   */
   explainEdge(edge: number, profile?: Profile, lane = "explain"): Promise<EdgeExplanation | Superseded> {
-    return this.#engine.explainEdge({ profile: profile ?? this.profile(), edge }, lane);
+    const overrides = profile ? [] : this.#wire();
+    return this.#engine.explainEdge(
+      { profile: profile ?? this.profile(), edge, ...(overrides.length > 0 ? { overrides } : {}) },
+      lane,
+    );
+  }
+
+  // ---------------------------------------------------------------- this plan's exceptions
+
+  /** The plan's exceptions as the engine takes them (one per edge). */
+  #wire() {
+    return overridesWire(this.#state.overrides);
+  }
+
+  /** The inspected way's run of edges between junctions (`run`), what an exception applies to. */
+  loadRun(edge: number) {
+    if (this.#state.run?.edge === edge) return;
+    void this.#engine.edgeRun(edge, "edge-run").then(
+      (result) => {
+        if (isSuperseded(result)) return;
+        this.#set({ run: { edge, result } });
+      },
+      () => undefined,
+    );
+  }
+
+  clearRun() {
+    this.#engine.cancel("edge-run");
+    if (this.#state.run) this.#set({ run: null });
+  }
+
+  #setOverrides(overrides: PlanOverride[], text: string) {
+    const s = this.#state;
+    this.#set(
+      {
+        overrides,
+        overridesDropped: 0,
+        overrideUndo: { text, before: s.overrides, seq: (s.overrideUndo?.seq ?? 0) + 1 },
+      },
+      { route: true, save: true },
+    );
+  }
+
+  /** "Avoid this segment", "Prefer this way", "Allow here": the run of `edge` (loaded by `loadRun`). */
+  addOverride(kind: OverrideKind, edge: number, way: string, limit?: LimitId) {
+    const run = this.#state.run?.edge === edge ? this.#state.run.result : null;
+    const o = makeOverride(
+      kind,
+      run ?? { edges: [edge], index: 0, length_m: 0, coordinates: [] },
+      way,
+      limit,
+    );
+    this.#setOverrides(withOverride(this.#state.overrides, o), overrideText(o));
+  }
+
+  removeOverride(id: string) {
+    const o = this.#state.overrides.find((x) => x.id === id);
+    if (!o) return;
+    this.#setOverrides(
+      this.#state.overrides.filter((x) => x.id !== id),
+      `Removed: ${overrideText(o).toLowerCase()}`,
+    );
+  }
+
+  /** Back to the exceptions before the last change. */
+  undoOverride() {
+    const u = this.#state.overrideUndo;
+    if (!u) return;
+    this.#set({ overrides: u.before, overrideUndo: null }, { route: true, save: true });
+  }
+
+  dismissUndo() {
+    if (this.#state.overrideUndo) this.#set({ overrideUndo: null });
   }
 
   /** The visible edges' factors for the cost layer (latest wins, its own lane). */
@@ -621,11 +730,14 @@ export class PlannerStore {
     });
   }
 
+  /** A route request for the plan's stops: every lane honours the plan's exceptions (docs/planner.md). */
   #request(profile: Profile): RouteRequest {
+    const overrides = this.#wire();
     return {
       waypoints: this.#state.waypoints.map((w) => ({ lon: w.lon, lat: w.lat })),
       profile,
       options: OPTIONS,
+      ...(overrides.length > 0 ? { overrides } : {}),
     };
   }
 
@@ -644,6 +756,7 @@ export class PlannerStore {
       request.profile.weights,
       request.profile.limits,
       request.profile.bounds,
+      request.overrides ?? [],
     ]);
     if (this.#sent.get(lane) === key) return;
     this.#sent.set(lane, key);
@@ -762,7 +875,14 @@ export class PlannerStore {
     const b = whyNot?.line.result;
     if (!a || !b || !whyNot || this.#mainPending || this.#throughPending) return;
     const at = whyNot.at;
-    void this.#engine.compare({ profile: this.profile(), a: a.arcs, b: b.arcs }, "whynot-compare").then(
+    const overrides = this.#wire();
+    const request = {
+      profile: this.profile(),
+      a: a.arcs,
+      b: b.arcs,
+      ...(overrides.length > 0 ? { overrides } : {}),
+    };
+    void this.#engine.compare(request, "whynot-compare").then(
       (comparison) => {
         const w = this.#state.whyNot;
         if (isSuperseded(comparison) || !w || w.at !== at || w.line.result !== b) return;

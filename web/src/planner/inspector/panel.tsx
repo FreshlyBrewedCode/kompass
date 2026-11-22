@@ -31,6 +31,15 @@ import { weightWord } from "../model";
 import { Dial, label, pill } from "../parts";
 import { usePlan, usePlanner } from "../store";
 import {
+  ActionsHint,
+  AllowButton,
+  AvoidButton,
+  allowable,
+  PlanException,
+  PreferButton,
+  useException,
+} from "./actions";
+import {
   arrange,
   focusArc,
   type Group,
@@ -71,8 +80,11 @@ function probeProfile(ids: readonly PrefId[]): Profile {
   return { weights: Object.fromEntries(ids.map((id) => [id, 100])), limits: {} };
 }
 
-/** on the route; off it (with a route); closed both ways (nothing routes through it); no route yet */
-type Mode = "used" | "whynot" | "closed" | "way";
+/**
+ * on the route; off it (with a route); closed both ways (nothing routes through it); avoided by this
+ * plan (no "why not": the plan says why); no route yet
+ */
+type Mode = "used" | "whynot" | "closed" | "avoided" | "way";
 
 export function Inspector({
   target,
@@ -92,16 +104,22 @@ export function Inspector({
   const limits = usePlan((s) => s.limits);
   const base = usePlan((s) => s.base);
   const minFactor = usePlan((s) => s.minFactor);
+  const overrides = usePlan((s) => s.overrides);
+  const exception = useException(target.id);
   const routed = usePlan((s) => s.waypoints.length >= 2 && !!s.main.result && !s.main.error);
   const arcs = usePlan((s) =>
     s.waypoints.length >= 2 && !s.main.error ? (s.main.result?.arcs ?? null) : null,
   );
   const used = onRoute(target.id, arcs);
 
-  // the explanation under the plan's profile: again on every profile change (a slider step)
+  // the way's run between junctions: what an exception applies to (ringed on the map)
+  useEffect(() => store.loadRun(target.id), [target.id, store]);
+  useEffect(() => () => store.clearRun(), [store]);
+
+  // the explanation under the plan's profile and exceptions: again on every change (a slider step)
   const [x, setX] = useState<EdgeExplanation | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the profile (weights, limits, base, detours) is the input
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the profile (weights, limits, base, detours) and the exceptions are the input
   useEffect(() => {
     let live = true;
     store.explainEdge(target.id).then(
@@ -115,11 +133,12 @@ export function Inspector({
     return () => {
       live = false;
     };
-  }, [target.id, weights, limits, base, minFactor, store]);
+  }, [target.id, weights, limits, base, minFactor, overrides, store]);
   const fresh = x?.edge === target.id ? x : null;
   // a way closed both ways is never routed through (a via snaps to an open way nearby): no comparison
   const closedWay = !!fresh && !isOpen(fresh.along) && !isOpen(fresh.against);
-  const mode: Mode = used ? "used" : closedWay ? "closed" : routed ? "whynot" : "way";
+  const avoided = exception?.kind === "avoid";
+  const mode: Mode = used ? "used" : closedWay ? "closed" : avoided ? "avoided" : routed ? "whynot" : "way";
   const known = fresh !== null;
   // what would match here: once per way (memberships do not depend on the weights)
   const [probe, setProbe] = useState<EdgeExplanation | null>(null);
@@ -195,7 +214,9 @@ export function Inspector({
   }, [onClose]);
 
   const verdict = fresh ? edgeVerdict(fresh, catalogue, arc ?? undefined) : null;
-  const head = fresh && arc ? headline(fresh, arc) : null;
+  // an avoided way counts as the profile has it; the exception block says the rest
+  const counted = arc && avoided && arc.base_cost !== undefined ? { ...arc, cost: arc.base_cost } : arc;
+  const head = fresh && counted ? headline(fresh, counted) : null;
   const closed = !arc || !isOpen(arc);
   return (
     <section
@@ -229,15 +250,18 @@ export function Inspector({
       {!fresh && !error && <p className="text-muted-foreground text-xs">Explaining…</p>}
       {fresh && verdict && head && (
         <>
+          {exception && <PlanException o={exception} x={fresh} onRoute={used} />}
           <div className={cn(label, "mb-1")}>
             {mode === "used"
               ? "Why the route uses this"
-              : mode === "way"
+              : mode === "way" || mode === "avoided"
                 ? "How this way counts"
                 : "Why the route does not use this"}
           </div>
           {mode === "whynot" && (
             <WhyNotVerdictBlock
+              x={fresh}
+              exception={!!exception}
               minFactor={minFactor}
               onUse={() => {
                 // the stop goes in; decide again once the route through it is there
@@ -271,6 +295,20 @@ export function Inspector({
               {closed && <Closed x={fresh} />}
             </div>
           </div>
+          {!exception && (mode === "used" || mode === "way") && (
+            <div data-testid="inspector-actions">
+              <div className="mt-2.5 flex flex-wrap gap-1.5">
+                <AvoidButton x={fresh} />
+                {mode === "way" && <PreferButton x={fresh} />}
+              </div>
+              {mode === "used" && (
+                <p className="mt-1.5 text-muted-foreground text-xs leading-snug">
+                  For this plan only, between the junctions (the ring): the profile stays as it is.
+                </p>
+              )}
+              {mode === "way" && <ActionsHint x={fresh} use={false} />}
+            </div>
+          )}
           {shown && (
             <div className="mt-2.5 space-y-2" data-testid="inspector-groups">
               <LineGroup
@@ -453,6 +491,7 @@ function Closed({ x }: { x: EdgeExplanation }) {
         No slider can change this: only lifting “{limit.label}” opens it.
       </p>
       <div className="mt-2 flex flex-wrap gap-1.5" data-testid="inspector-actions">
+        {allowable(x) && <AllowButton x={x} limit={limit.id} />}
         <button
           type="button"
           data-testid="inspector-lift"
@@ -462,11 +501,27 @@ function Closed({ x }: { x: EdgeExplanation }) {
           Lift “{limit.label}”
         </button>
       </div>
+      {allowable(x) && (
+        <p className="mt-1.5 text-muted-foreground text-xs leading-snug" data-testid="inspector-allow-hint">
+          “Allow here” opens only this way, for this plan; “Lift” switches the limit off for the whole plan.
+        </p>
+      )}
     </>
   );
 }
 
-function WhyNotVerdictBlock({ minFactor, onUse }: { minFactor: number; onUse: () => void }) {
+function WhyNotVerdictBlock({
+  x,
+  exception,
+  minFactor,
+  onUse,
+}: {
+  x: EdgeExplanation;
+  /** the plan already has an exception here (its block says what and offers the way back) */
+  exception: boolean;
+  minFactor: number;
+  onUse: () => void;
+}) {
   const w = usePlan((s) => s.whyNot);
   const catalogue = usePlan((s) => s.catalogue);
   if (!w || w.line.error)
@@ -508,7 +563,7 @@ function WhyNotVerdictBlock({ minFactor, onUse }: { minFactor: number; onUse: ()
         </p>
       )}
       {v.detail && <p className="mt-0.5 text-muted-foreground text-xs leading-snug">{v.detail}</p>}
-      {/* the plan's actions on this way (more come with per-plan overrides, #59) */}
+      {/* the plan's actions on this way: a stop, or an exception (this plan only) */}
       <div className="mt-2 flex flex-wrap gap-1.5" data-testid="inspector-actions">
         <button
           type="button"
@@ -520,7 +575,10 @@ function WhyNotVerdictBlock({ minFactor, onUse }: { minFactor: number; onUse: ()
           <Route className="size-4" />
           Use this way
         </button>
+        {!exception && <PreferButton x={x} />}
+        {!exception && <AvoidButton x={x} short />}
       </div>
+      {!exception && <ActionsHint x={x} use />}
     </div>
   );
 }

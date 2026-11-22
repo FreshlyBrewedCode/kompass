@@ -32,6 +32,7 @@ import {
   Trash2,
   Trees,
   TriangleAlert,
+  Undo2,
   X,
 } from "lucide-react";
 import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
@@ -65,6 +66,7 @@ import {
   wayShares,
   weightWord,
 } from "./model";
+import { exceptionsCount, overrideText } from "./overrides";
 import { SURFACE, WAY } from "./palette";
 import { type PlanState, usePlan, usePlanner } from "./store";
 
@@ -809,6 +811,100 @@ export function ProfileList({
           <p className="py-2 text-muted-foreground text-xs">None. Add one from the picker.</p>
         )}
       </div>
+      <PlanExceptions />
+    </div>
+  );
+}
+
+/**
+ * "This plan · 2 exceptions": the stretches this plan avoids, prefers or allows (made in the segment
+ * inspector), each removable; the profile stays what the rider wants in general.
+ */
+export function PlanExceptions() {
+  const store = usePlanner();
+  const list = usePlan((s) => s.overrides);
+  const dropped = usePlan((s) => s.overridesDropped);
+  return (
+    <div data-fade className="mt-4" data-testid="plan-exceptions">
+      <div className={cn(label, "flex items-center gap-1.5")}>
+        <Signpost className="size-3" />
+        This plan · {list.length === 0 ? "no exceptions" : exceptionsCount(list.length)}
+      </div>
+      {dropped > 0 && (
+        <p className="py-1.5 text-muted-foreground text-xs" data-testid="plan-exceptions-dropped">
+          {exceptionsCount(dropped)} dropped: the region's map data changed since they were made.
+        </p>
+      )}
+      {list.length === 0 && dropped === 0 && (
+        <p className="py-2 text-muted-foreground text-xs leading-snug">
+          None. Right-click or long-press a way to avoid it, prefer it or allow it past a limit, for this plan
+          only.
+        </p>
+      )}
+      <ul>
+        {list.map((o) => (
+          <li
+            key={o.id}
+            data-testid="plan-exception"
+            data-kind={o.kind}
+            className="flex min-h-11 items-center gap-2 rounded-control px-1"
+          >
+            <i
+              className="h-1.5 w-4 shrink-0 rounded-full"
+              style={{
+                background:
+                  o.kind === "avoid"
+                    ? "repeating-linear-gradient(to right, var(--override-avoid) 0 3px, transparent 3px 6px)"
+                    : `var(--override-${o.kind})`,
+              }}
+            />
+            <span className="min-w-0 flex-1 truncate font-semibold text-sm">{overrideText(o)}</span>
+            <button
+              type="button"
+              aria-label={`Remove: ${overrideText(o)}`}
+              data-testid="plan-exception-remove"
+              onClick={() => store.removeOverride(o.id)}
+              className="grid size-8 shrink-0 place-items-center rounded-full hover:bg-foreground/8"
+            >
+              <X className="size-4" />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** After a change to the plan's exceptions: what changed, and "Undo" (for a few seconds). */
+export function UndoToast() {
+  const store = usePlanner();
+  const undo = usePlan((s) => s.overrideUndo);
+  const seq = undo?.seq;
+  useEffect(() => {
+    if (seq === undefined) return;
+    const t = setTimeout(() => store.dismissUndo(), 8000);
+    return () => clearTimeout(t);
+  }, [seq, store]);
+  if (!undo) return null;
+  return (
+    <div
+      data-testid="undo-toast"
+      role="status"
+      className={cn(
+        card,
+        "absolute top-[calc(max(var(--gutter),env(safe-area-inset-top))+52px)] left-1/2 z-30 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-3 py-1.5 pr-1.5 pl-3.5 text-xs",
+      )}
+    >
+      <span className="min-w-0 truncate font-semibold">{undo.text}</span>
+      <button
+        type="button"
+        data-testid="undo-button"
+        onClick={() => store.undoOverride()}
+        className={cn(pill, "h-8 bg-foreground px-3 text-background")}
+      >
+        <Undo2 className="size-3.5" />
+        Undo
+      </button>
     </div>
   );
 }

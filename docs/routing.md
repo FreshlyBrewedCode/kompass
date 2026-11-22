@@ -2,7 +2,7 @@
 
 The `route` query: waypoints in, a route with everything the planner draws out. Plain serde data on
 both sides (JSON in the browser worker; schemas and TypeScript types in `web/src/engine/generated/`).
-Code: `engine/core/src/{route,search,explain}.rs`; the cost it searches is [profile.md](profile.md).
+Code: `engine/core/src/{route,search,explain,overrides}.rs`; the cost it searches is [profile.md](profile.md).
 
 ## The engine object
 
@@ -20,6 +20,7 @@ compiled profiles (19 MB each: the current one and, typically, the base preset's
 | `edge_costs(&Profile, &EdgeSelection)` | → factor and cost per metre per edge and direction, what closes it ([below](#explaining-the-cost)) |
 | `explain_edge(&ExplainEdgeRequest)` | → one edge, both directions, every step of its cost |
 | `compare(&CompareRequest)` | two routes' `arcs` → `RouteComparison`: the `diff` stretches, each side costed |
+| `edge_run(edge)` | → `EdgeRun`: the edge extended to the next real junctions, with its line ([below](#this-plans-exceptions)) |
 | `stretch_costs(&Profile, arcs, spans, n)` | → stretches of one route costed like `compare`'s sides |
 | `prepare(&Profile)` | compile ahead of the first route |
 | `set_personal(Option<PersonalLayer>)` | ride history per edge ([profile.md](profile.md)) |
@@ -34,12 +35,14 @@ limits, bounds: not the name), so dragging a slider costs one compile plus one s
 { "waypoints": [{ "lon": 0.001, "lat": 0.002, "name": "Start" }, { "lon": 0.03, "lat": 0.01 }],
   "profile": { "weights": { "unpaved": 70 }, "limits": { "legal_only": true } },
   "leg_profiles": [null],
-  "options": { "snap_radius_m": 250, "geometry": true, "avoid_reuse": true } }
+  "options": { "snap_radius_m": 250, "geometry": true, "avoid_reuse": true },
+  "overrides": [{ "edge": 4711, "kind": "avoid" }] }
 ```
 
 Two or more waypoints, a profile, optionally a profile per leg (`null` keeps the main one; API only,
 the planner sends one), options (`avoid_reuse`, on by default: [below](#dont-ride-the-same-way-twice);
-`reuse_cost` tunes it for tools, the planner sends none). Reserved and accepted but not used yet (the result says so in
+`reuse_cost` tunes it for tools, the planner sends none), and the plan's exceptions by edge
+(`overrides`, for every leg: [below](#this-plans-exceptions)). Reserved and accepted but not used yet (the result says so in
 `notes`): `via_zones` and `avoid_zones` (`{ "type": "circle", "center", "radius_m" }` or `{ "type":
 "polygon", "ring" }`) and `sketch` (`{ "points": [...] }`). Loops (start, distance, bearing or a sketch)
 will be their own query, not a variant of this one.
@@ -86,8 +89,7 @@ stays the profile's cost of the line (the compiled cost of every arc ridden), so
 segments read the same numbers as before; the search minimised `cost + shape_cost` per leg. A
 single-leg route has no overlay and pays nothing for it.
 
-Per-plan edge overrides (#59: avoid, prefer, allow an edge) fit the same layer: more entries, each
-with its own term (a prefer or an allow below the compiled cost then has to lower the bound).
+The plan's edge overrides ride the same per-request layer ([next](#this-plans-exceptions)).
 
 **The strengths, from seeded loops on the real region** (`kompass compare --loop 3|4 --reuse …`:
 40 loops each, 30–60 km polygons, corners mid-edge on ways that are not dead ends for any profile;
@@ -111,6 +113,50 @@ setting (12.8 % → 4.1 % on triangles, 6.9 % → 2.7 % on squares): with `paved
 sparse and many corners sit on stretches with no paved way round. With corners anywhere (often on a
 dead-end spur, where reuse is forced) every loop still routes. Multi-leg routes are as fast as
 before (the overlay is a bit per edge, 290 KB for the region, and a map for the few marked ones).
+
+## This plan's exceptions
+
+A plan carries a few exceptions to its profile, by edge (`overrides`: `{ edge, kind }`, each edge at
+most once, ids checked; `overrides.rs`). They apply to every leg, per request, on top of the compiled
+profile, which stays compiled and cached: an `Overrides` (a bit per edge, a map for the few marked,
+like the reuse overlay) replaces the cost of its arcs in the search, the snapping, the pocket check and
+the partial arcs at the waypoints.
+
+- **avoid**: the edge costs `AVOID_M` = **100 km** more per full arc, in either direction. A finite
+  penalty, not a closure: the route takes any other way that costs less than 100 km more, and when
+  there is none (a dead end, a bridge) it still routes and says so (a note, and the edge in
+  `overrides`). A stop on the edge still works: a part of the edge costs that part of the penalty, so
+  the route leaves by the nearer end and rides no more of it than it must.
+- **prefer**: the edge counts `min_factor × length` plus its additive terms (climbing, barriers): as
+  cheap as the profile's bounds allow, the Detours slider's floor. The limits do not close it.
+- **allow**: the limits do not close the edge; it is costed as the profile has it without them. A
+  bicycle ban and one-way still hold (for prefer too): an exception never makes a route illegal in a
+  way the profile cannot switch off either.
+
+**The bound.** A prefer or an allow can make an arc cheaper per metre than anything the compile
+produced (the A* bound is the smallest compiled factor). The search's bound is then the smaller of
+that and the cheapest override's cost per metre (`Overrides::bound`), so it stays consistent; a test
+checks a preferred detour that only the lowered bound finds, and random grids against Dijkstra over the
+override costs. Avoid only adds.
+
+**What the result says.** `summary.cost` and `legs[i].cost` stay the profile's cost of the line (an
+allowed arc at its cost without the limits); `override_cost` is what the exceptions added (< 0 where a
+preferred way counts less; the search minimised `cost + shape_cost + override_cost`). `overrides` lists
+the overridden edges the route rides, with the metres on each: the preferred and allowed ways it uses,
+the avoided ones it could not get around. `explainEdge` and `compare` take the same `overrides`:
+`plan_override` names the edge's exception, an arc's `cost` is what the router counts with it, and
+`base_cost` what it would count without (avoid, prefer); the limits an allow or a prefer lifts move from
+`closed_by` to `lifted`. A `compare` side counts the exceptions in its `cost` and lists their length
+by kind (`overrides`).
+
+**"This segment".** A rider means the way between junctions, not a graph edge: `edge_run(edge)` extends
+the edge through every node where only one other edge meets it (nothing branches off), up to the next
+real junction or dead end (at most 256 edges), and returns the edges in order, their length and the
+line. Avoiding one edge of such a chain avoids all of it for a route through it anyway; preferring or
+allowing needs all of it, so the planner applies an exception to the whole run.
+
+Edge ids hold for one build of the region only: the planner saves the build id with a plan's
+exceptions and drops them on another build ([planner.md](planner.md#persistence)).
 
 ## Search
 
@@ -155,6 +201,7 @@ and a 6×-throttled phone estimate ~7×.
 - `breakdown`: length and share per surface and per way type, longest first; ridden vs. new with a
   personal layer. `legs`: per leg the same totals and its ranges of arcs and segments.
 - `waypoints`: where each one snapped (point, distance, edge, fraction, `excluded_by`). `notes`.
+- `overrides`: the plan's exceptions the route rides ([above](#this-plans-exceptions)).
 
 **What crosses the worker per slider step**: one result, ~90 KB of JSON for 50 km (the geometry is
 most of it). Everything heavier is on demand: `explain` for one tapped stretch, `diff` against the
@@ -188,7 +235,7 @@ Native: every edge of the demo region (51 k) in 1.3 ms, 25 k listed in 0.5 ms, a
 (so ~60 ms for 2.34 M); the browser worker: 2.2 ms for the 51 k, 1.2 ms for 25 k listed (round trip
 included, `?bench`).
 
-**`explainEdge`: the segment inspector** ([planner.md](planner.md#the-segment-inspector)). `{ profile, edge }` → `EdgeExplanation`: the way type, the reported
+**`explainEdge`: the segment inspector** ([planner.md](planner.md#the-segment-inspector)). `{ profile, edge, overrides? }` → `EdgeExplanation`: the way type, the reported
 surface and the one the cost uses (`tagged`, `strong_guess`, `weak_guess`), the traffic level `quiet`
 penalises and where it comes from (`traffic_from`: `way`, or `alongside` for the roads beside it), every
 attribute by its `edges.parquet` column (shares in percent), the bounds, and per direction (`along`,
@@ -201,7 +248,8 @@ router's `cost` and `cost_per_m` (absent when closed), and `closed_by`: every cl
 engine checks, each with the attribute that triggers it (`legal_only (bike_access = agri_forestry)`).
 
 **`compare`: why not this way?** Route as usual, route again with a via on the wanted line, then
-`compare({ profile, a, b })` with both routes' `arcs` and the profile to judge them by. The answer: both
+`compare({ profile, a, b, overrides? })` with both routes' `arcs` and the profile (and the plan's
+exceptions) to judge them by. The answer: both
 whole routes and every `diff` stretch, each side a `StretchCost`: its span, cost under the profile
 (closed arcs at `max_factor` per metre, as near a waypoint), mean factor, additive metres, length at the
 clamp (`clamped_min_m`: the bonuses wanted it lower, more seeking changes nothing; `clamped_max_m`),
