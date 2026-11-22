@@ -27,6 +27,7 @@ import { CATALOGUE, stretchCost } from "./planner-fake";
 
 function arc(o: Partial<ArcCostExplanation> = {}): ArcCostExplanation {
   return {
+    lifted: [],
     arc: 14,
     preferences: [],
     quality: 1,

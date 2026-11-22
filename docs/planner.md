@@ -12,7 +12,8 @@ The screen: the region map with the planner on top, built on the consolidated de
 | `parts.tsx` | the components of the design's inventory (one set for every breakpoint) |
 | `shell.tsx` | the arrangement per breakpoint (phone, tablet, desk), sheets, the chip strip; wires map, engine, rides |
 | `layers-panel.tsx` | "Map & rides": map (with the tracks legend and the key, `map-key.tsx`, and the map style options, `map-style.tsx`) / one information layer / explored / cost, toggles, inspect, the ride library |
-| `inspector/` | the segment inspector: the words (`model.ts`: exchange rates, the three groups, the "why not" verdict), the long press (`gesture.ts`), the panel (`panel.tsx`) |
+| `inspector/` | the segment inspector: the words (`model.ts`: exchange rates, the three groups, the "why not" verdict), the long press (`gesture.ts`), the panel (`panel.tsx`), this plan's actions (`actions.tsx`) |
+| `overrides.ts` | this plan's exceptions: the list (one per edge), what the engine gets, the words, the saved form per build |
 | `cost/` | the cost debug view: the words of one edge and of a comparison (`model.ts`), the layer's key (`panel.tsx`), the layer's wiring (`use-cost-layer.ts`) |
 | `palette.ts` | data colours (route, compare, ghost, surface, way type, ridden) as CSS variables |
 | `gpx.ts` | the GPX writer and the export (share sheet on touch devices, else a download) |
@@ -21,7 +22,7 @@ The screen: the region map with the planner on top, built on the consolidated de
 
 `PlannerStore` is a plain TS store (subscribe / getSnapshot, like `engine/store.ts`). The snapshot
 holds the **plan** (waypoints, base preset id, this plan's `weights` and `limits`, the compared
-preset), what is **derived** from it (the base, the changes and their sentence, the rows on
+preset, its exceptions `overrides`), what is **derived** from it (the base, the changes and their sentence, the rows on
 screen, whether the changes route differently), the **routes** (one `Line` per lane: main, ghost,
 compare; the moved stretches; the blamed limit after an error) and the **shell** (which sheet,
 chip or picker is open, route colouring, inspect mode, the timeline cursor). Components read slices
@@ -48,6 +49,10 @@ engine's two-profile cache. When main and ghost differ, `diff` gives the "moved"
 comparison, `diff` gives the shared share for the trade-off sentence. "Routing…" shows only when
 the main route takes longer than 250 ms.
 
+Every lane sends the plan's exceptions ([below](#this-plans-exceptions)): the main route, the ghost and
+a compared preset (so the moved stretches and the trade-off show what the profiles do, on the same
+exceptions), the probe after an error, and "why not" with its comparison.
+
 A failed route (`no_route`, `excluded`) is explained by **probing**: the limit the error names, then
 this plan's own limits, then the base's are lifted one at a time (lane `probe`); the first that
 makes a route is blamed ("No route with “Paved only”", "Lift …") and its route is the dashed line.
@@ -61,7 +66,7 @@ reroutes when the explored store changes, so "new to me" and the ridden lane fol
 The light/dark choice (system / light / dark) is the "Appearance" row of the Map & rides sheet: app-level
 settings live there, no extra menu (see docs/map.md, Theme).
 
-`RouteLayer` adds three GeoJSON sources (main, alt, cursor) above the map's ways and "My rides" and
+`RouteLayer` adds GeoJSON sources (main, alt, cursor, the inspector's ring, the plan's exceptions) above the map's ways and "My rides" and
 below the labels, and re-adds them after a theme change (a new style). It subscribes to the store
 itself and calls `setData` only for the source whose data changed. Waypoints are MapLibre markers
 (44 px targets, draggable; a drag moves the waypoint live and reroutes), notes are a few HTML
@@ -134,8 +139,38 @@ stop while it is open, and the inspector follows.
 - **No route yet**: "How this way counts", the numbers and the lines.
 - Folded at the end: the arithmetic per direction (quality × bonus through the gate → raw → clamped,
   additive terms, what the router counts) and the way's data.
-- **Room for per-plan actions** (#59: "avoid this segment", "prefer this way"): the actions row under
-  the verdict holds what works today ("Use this way", "Lift …").
+- **Actions for this plan** ([below](#this-plans-exceptions)): on the route "Avoid this segment"; off it
+  "Use this way" (a stop), "Prefer this way" and "Avoid"; on a way a limit closes "Allow here" next to
+  "Lift …"; with no route "Avoid" and "Prefer". A way with an exception says so first ("Avoided in this
+  plan: the route takes any other way round these 420 m") with the way back ("Stop avoiding"); an
+  avoided way off the route gets no "why not" (the plan is why) and counts as the profile has it.
+
+## This plan's exceptions
+
+A plan carries a few exceptions to its profile, made in the segment inspector: the profile stays what
+the rider wants in general, an exception is about one stretch of this plan (the engine side:
+[routing.md](routing.md#this-plans-exceptions)).
+
+- **What they apply to.** A rider means the way between junctions, not one graph edge: the inspector
+  loads the way's run (`edgeRun`, lane `edge-run`: the edge extended through nodes where nothing
+  branches off), the ring on the map covers all of it, and the buttons name its length ("Avoid this
+  segment · 420 m"). An exception holds the run's edges, its line and the way's name; a new one on an
+  edge replaces the one there (one exception per way).
+- **Avoid this segment**: the route takes any other way round it (a high finite penalty: with no other
+  way, or a stop on it, the route still rides it, and the inspector says so).
+- **Prefer this way** vs. **Use this way**: "Use" adds a stop, so the route must pass; "Prefer" adds no
+  stop: the run counts as little as Detours allow (`min_factor` × its length), and the route takes it
+  where that pays. Both stay: a stop is for "ride through here", a preference for "this one if it is on
+  the way", which also survives moving the stops; the line under the buttons says the difference.
+- **Allow here** (a way a limit closes): only that limit-closed run opens, for this plan, costed as if
+  the limits were off there; "Lift …" switches the limit off for the whole plan. A bicycle ban or a
+  one-way never opens. The limit trade-offs (#65) will make the same exception from a marker.
+- **Where they are.** "This plan · 2 exceptions" closes the profile panel (`PlanExceptions` in
+  `parts.tsx`), each row with its kind, way and length, removable; on the map a quiet mark under the
+  route on each (avoided: a dotted ink line; preferred and allowed: a soft halo in the planner palette's
+  `OVERRIDE` colours). Every change (add, remove, "Stop …") shows "Undo" for 8 s (`UndoToast`).
+- **Not on the Cost layer**: it colours the profile, which an exception does not change.
+
 
 ## Cost (the debug view)
 
@@ -187,7 +222,12 @@ moved), a moved value is a change ("more detours"), has the change dot to reset,
 ## Persistence
 
 - The plan (`kompass.plan.v1` in `localStorage`): waypoints, base id, weights, limits, detours (when moved), compared
-  preset, route colouring; written 250 ms after a change and on `pagehide`. Waypoints outside the
+  preset, route colouring, and its exceptions with the region build they were made on (`overrides:
+  { build, list }`, absent when there are none: older plans load as before). Edge ids change with every
+  build of the region, so exceptions of another build are dropped on load, and the panel says how many
+  ("2 exceptions dropped: the region's map data changed"). Re-picking them by their line on a new build
+  was the alternative; a plan's exceptions are few and quickly made again, a wrong re-pick would avoid
+  the wrong way silently; written 250 ms after a change and on `pagehide`. Waypoints outside the
   region's bounds are dropped on load; a missing base falls back to Gravel explorer.
 - Own presets (`kompass.presets.v1`): `{ id, blurb, profile }` like the shipped ones; saved, renamed
   and deleted from the profile's head.

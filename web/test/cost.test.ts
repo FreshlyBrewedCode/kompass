@@ -170,6 +170,7 @@ describe("the cost layer", () => {
 
 function arc(o: Partial<ArcCostExplanation> & { preferences?: PrefPart[] }): ArcCostExplanation {
   return {
+    lifted: [],
     arc: 0,
     preferences: [],
     quality: 1,

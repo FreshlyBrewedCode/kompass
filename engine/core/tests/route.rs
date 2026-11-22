@@ -54,6 +54,7 @@ fn wp(lon: f64, lat: f64) -> Waypoint {
 
 fn request(waypoints: Vec<Waypoint>, profile: &Profile) -> RouteRequest {
     RouteRequest {
+        overrides: None,
         waypoints,
         profile: profile.clone(),
         leg_profiles: None,
@@ -1607,6 +1608,7 @@ fn the_explained_cost_is_the_routed_cost() {
             for e in 0..g.edge_count() as EdgeId {
                 let x = planner
                     .explain_edge(&ExplainEdgeRequest {
+                        overrides: None,
                         profile: p.clone(),
                         edge: e,
                     })
@@ -1701,6 +1703,7 @@ fn closed_edges_name_every_limit_that_closes_them() {
         let e = d.built.edge(d.top[0]);
         let x = planner
             .explain_edge(&ExplainEdgeRequest {
+                overrides: None,
                 profile: p.clone(),
                 edge: e,
             })
@@ -1732,6 +1735,7 @@ fn closed_edges_name_every_limit_that_closes_them() {
     p.limits.insert(LimitId::LegalOnly, LimitValue::Flag(true));
     let x = planner
         .explain_edge(&ExplainEdgeRequest {
+            overrides: None,
             profile: p.clone(),
             edge: d.built.edge(d.top[0]),
         })
@@ -1754,6 +1758,7 @@ fn closed_edges_name_every_limit_that_closes_them() {
     // without the limits only the one-way closes it, one way
     let x = planner
         .explain_edge(&ExplainEdgeRequest {
+            overrides: None,
             profile: Profile::default(),
             edge: d.built.edge(d.top[0]),
         })
@@ -1815,6 +1820,7 @@ fn the_clamp_and_the_gate_are_explained() {
     ]);
     let x = planner
         .explain_edge(&ExplainEdgeRequest {
+            overrides: None,
             profile: p.clone(),
             edge: e,
         })
@@ -1847,7 +1853,11 @@ fn the_clamp_and_the_gate_are_explained() {
     p.set_weight(PrefId::Unpaved, Some(-100));
     p.set_weight(PrefId::Track, None);
     let x = planner
-        .explain_edge(&ExplainEdgeRequest { profile: p, edge: e })
+        .explain_edge(&ExplainEdgeRequest {
+            profile: p,
+            edge: e,
+            overrides: None,
+        })
         .unwrap();
     assert!(x.along.quality >= 2.2 && x.along.gate == 0.0);
     assert!((x.along.raw_factor - x.along.quality).abs() < 1e-5);
@@ -1869,6 +1879,7 @@ fn ramp_terms(grade_up: f32, grade_down: f32, p: &Profile) -> kompass_core::expl
     let edge = d.built.edge(d.top[0]);
     planner
         .explain_edge(&ExplainEdgeRequest {
+            overrides: None,
             profile: p.clone(),
             edge,
         })
@@ -1988,6 +1999,7 @@ fn compare_says_why_not_the_other_way() {
     let b = planner.route(&request(via, &plain)).unwrap();
     let c = planner
         .compare(&kompass_core::explain::CompareRequest {
+            overrides: None,
             profile: weights(&[(PrefId::Unpaved, -60)]),
             a: a.arcs.clone(),
             b: b.arcs.clone(),
@@ -2011,6 +2023,7 @@ fn compare_says_why_not_the_other_way() {
     paved.limits.insert(LimitId::PavedOnly, LimitValue::Flag(true));
     let c = planner
         .compare(&kompass_core::explain::CompareRequest {
+            overrides: None,
             profile: paved,
             a: a.arcs.clone(),
             b: b.arcs.clone(),
@@ -2126,6 +2139,7 @@ fn quiet_moves_the_route_off_a_roadside_path() {
     let explain = |planner: &mut Planner, h: usize| {
         planner
             .explain_edge(&ExplainEdgeRequest {
+                overrides: None,
                 profile: weights(&[(PrefId::Quiet, 100)]),
                 edge: d.built.edge(h),
             })
@@ -2186,6 +2200,7 @@ fn roads_keep_their_own_traffic_level() {
     let explain = |planner: &mut Planner, h: usize| {
         planner
             .explain_edge(&ExplainEdgeRequest {
+                overrides: None,
                 profile: weights(&[(PrefId::Quiet, 100)]),
                 edge: d.built.edge(h),
             })

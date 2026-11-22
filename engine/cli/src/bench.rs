@@ -22,6 +22,7 @@ fn waypoint(g: &Graph, v: NodeId) -> Waypoint {
 
 fn request(g: &Graph, a: NodeId, b: NodeId, profile: &Profile, geometry: bool) -> RouteRequest {
     RouteRequest {
+        overrides: None,
         waypoints: vec![waypoint(g, a), waypoint(g, b)],
         profile: profile.clone(),
         leg_profiles: None,
@@ -539,6 +540,7 @@ fn loops(a: &Args) -> Result<(), Failure> {
     let nodes = planner.graph().node_count() as u64;
     let req =
         |wps: &[Waypoint], p: &Profile, v: (bool, Option<kompass_core::route::ReuseCost>)| RouteRequest {
+            overrides: None,
             waypoints: wps.to_vec(),
             profile: p.clone(),
             leg_profiles: None,

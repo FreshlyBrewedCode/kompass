@@ -15,7 +15,8 @@
 //! - [`cost`]: a profile compiled into a cost per arc; [`search`]: A* over it.
 //! - [`route`]: the `route` query and the route diff ([`Planner`]), [`personal`]: the rider's
 //!   history per edge; [`explain`]: the cost debug queries (edge costs for a map layer, one edge
-//!   explained, two routes compared).
+//!   explained, two routes compared); [`overrides`]: a plan's exceptions by edge (avoid, prefer,
+//!   allow) on top of the compiled profile, and the run of edges a rider means by "this segment".
 //! - [`testing`]: tiny graphs built in code, for tests here and in the other crates.
 #![allow(
     clippy::missing_errors_doc,
@@ -36,6 +37,7 @@ pub mod geometry;
 pub mod graph;
 pub mod hilbert;
 pub mod matching;
+pub mod overrides;
 pub mod personal;
 pub mod presets;
 pub mod profile;

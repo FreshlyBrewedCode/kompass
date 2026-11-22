@@ -282,6 +282,12 @@ impl Engine {
         self.0.compare(request).map_err(js)
     }
 
+    /// The run of edges between the junctions around `edge` (an `EdgeRun`, JSON): "this segment".
+    #[wasm_bindgen(js_name = edgeRun)]
+    pub fn edge_run(&mut self, edge: u32) -> Result<String, JsError> {
+        self.0.edge_run(edge).map_err(js)
+    }
+
     /// The catalogue with this region's coverage (JSON).
     #[wasm_bindgen(js_name = regionCatalogue)]
     pub fn region_catalogue(&mut self) -> Result<String, JsError> {

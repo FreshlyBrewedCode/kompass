@@ -55,13 +55,21 @@ type Snapshot = {
   main: { result: { arcs: number[] } | null };
   waypoints: unknown[];
   weights: Record<string, number>;
+  overrides: { kind: string; edges: number[] }[];
+  run: { edge: number; result: { edges: number[] } } | null;
 };
 const planner = (page: Page) =>
   page.evaluate(() => {
     const s = (
       window as unknown as { __kompass: { planner: { getSnapshot(): Snapshot } } }
     ).__kompass.planner.getSnapshot();
-    return { arcs: s.main.result?.arcs ?? [], waypoints: s.waypoints.length, weights: s.weights };
+    return {
+      arcs: s.main.result?.arcs ?? [],
+      waypoints: s.waypoints.length,
+      weights: s.weights,
+      overrides: s.overrides.map((o) => o.kind),
+      run: s.run?.result.edges ?? [],
+    };
   });
 
 /** Edges on (or off) the planned route whose middle lies where no chrome covers the map. */
@@ -91,6 +99,17 @@ const ring = (page: Page) =>
       .serialize()
       .data.features.map((f) => f.properties.kind);
   });
+
+const sourceKinds = (page: Page, source: string) =>
+  page.evaluate((id) => {
+    const map = window.__kompass.map as unknown as {
+      getSource(id: string): { serialize(): { data: { features: { properties: { kind: string } }[] } } };
+    };
+    return map
+      .getSource(id)
+      .serialize()
+      .data.features.map((f) => f.properties.kind);
+  }, source);
 
 const altKinds = (page: Page) =>
   page.evaluate(() => {
@@ -199,4 +218,49 @@ test("the segment inspector on an avoided way: why not, and use this way", async
   if (phone(page)) await page.getByTestId("inspector-close").click();
   else await page.keyboard.press("Escape");
   await expect(inspector).toHaveCount(0);
+});
+
+test("avoid a segment of the route: the route moves, the plan lists it, undo", async ({ page }, testInfo) => {
+  await planRoute(page);
+  const inspector = page.getByTestId("inspector");
+  const before = (await planner(page)).arcs;
+  // a way of the route away from the stops (its run then has another way round on the fixture grid)
+  const ends = new Set([before[0], before.at(-1)].map((a) => (a ?? 0) >> 1));
+  const used = (await edgesWhere(page, true)).find((c) => !ends.has(c.id));
+  if (!used) throw new Error("no fixture edge of the route away from its stops");
+  await inspectAt(page, used.point);
+  await expect(inspector).toHaveAttribute("data-mode", "used");
+  const avoid = page.getByTestId("inspector-avoid");
+  // enabled once the way's run between junctions is in (the ring then covers all of it)
+  await expect(avoid).toBeEnabled();
+  await expect(avoid).toContainText(/Avoid this segment · \d+ m/);
+  expect((await planner(page)).run).toContain(used.id);
+  await screenshot(page, testInfo, "exceptions-actions");
+
+  // avoided: the route leaves the way, the inspector says why, the map marks it
+  await avoid.click();
+  await expect.poll(async () => (await planner(page)).overrides).toEqual(["avoid"]);
+  await expect.poll(async () => (await planner(page)).arcs.some((a) => a >> 1 === used.id)).toBe(false);
+  const moved = (await planner(page)).arcs;
+  expect(moved).not.toEqual(before);
+  await expect(page.getByTestId("inspector-exception")).toHaveAttribute("data-kind", "avoid");
+  await expect(inspector).toHaveAttribute("data-mode", "avoided");
+  await expect.poll(() => sourceKinds(page, "planner-overrides")).toEqual(["avoid"]);
+  await expect(page.getByTestId("undo-toast")).toBeVisible();
+  await screenshot(page, testInfo, "exceptions-avoided");
+
+  // the plan's exceptions in the profile: removed there, the route is back; undo avoids it again
+  await page.getByTestId("inspector-close").click();
+  if (phone(page)) await page.getByTestId("profile-chip").click();
+  const list = page.getByTestId("plan-exceptions");
+  await list.scrollIntoViewIfNeeded();
+  await expect(list.getByTestId("plan-exception")).toHaveCount(1);
+  await expect(list).toContainText("1 exception");
+  await screenshot(page, testInfo, "exceptions-list");
+  await list.getByTestId("plan-exception-remove").click();
+  await expect.poll(async () => (await planner(page)).arcs).toEqual(before);
+  await expect(page.getByTestId("undo-toast")).toContainText("Removed");
+  await page.getByTestId("undo-button").click();
+  await expect.poll(async () => (await planner(page)).arcs).toEqual(moved);
+  await expect(list.getByTestId("plan-exception")).toHaveCount(1);
 });

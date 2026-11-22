@@ -3,6 +3,7 @@
 // (whose explored teal and unknown grey they reuse). The chrome stays neutral (index.css); this is
 // the only colour on screen, and the same colour means the same thing on the map, in a lane and in a
 // legend. `dataVars(theme)` hands them to the chrome as CSS variables.
+import type { OverrideKind } from "@/engine/generated/types";
 import type { Theme } from "@/map/palette";
 import { EXPLORED, UNKNOWN } from "@/map/palette";
 import type { SurfaceGroup, WayGroup } from "./model";
@@ -33,6 +34,15 @@ export const WAY: { key: WayGroup; label: string; color: Pair }[] = [
   { key: "main", label: "Main road", color: { light: "#8e2f3c", dark: "#d0677a" } },
 ];
 export const RIDDEN: Pair = EXPLORED;
+/**
+ * This plan's exceptions, a quiet mark under the route: avoided in ink (dotted on the map), preferred
+ * in Okabe–Ito bluish green, allowed in its reddish purple (soft halos on the map).
+ */
+export const OVERRIDE: Record<OverrideKind, Pair> = {
+  avoid: GHOST,
+  prefer: { light: "#009e73", dark: "#3cc99c" },
+  allow: { light: "#cc79a7", dark: "#e3a2c8" },
+};
 
 export const surfaceColor = (k: SurfaceGroup, theme: Theme) =>
   SURFACE.find((s) => s.key === k)?.color[theme] ?? UNKNOWN[theme];
@@ -46,6 +56,7 @@ export function dataVars(theme: Theme): Record<string, string> {
     "--ghost": GHOST[theme],
     "--ridden": RIDDEN[theme],
     "--unknown": UNKNOWN[theme],
+    ...Object.fromEntries(Object.entries(OVERRIDE).map(([k, c]) => [`--override-${k}`, c[theme]])),
     ...Object.fromEntries(SURFACE.map((s) => [`--surface-${s.key}`, s.color[theme]])),
     ...Object.fromEntries(WAY.map((s) => [`--way-${s.key}`, s.color[theme]])),
   };

@@ -694,6 +694,8 @@ export type SavedPlan = {
   detours?: number;
   compareId: string | null;
   lineBy: LineBy;
+  /** this plan's exceptions with the build they were made on (`overrides.ts`; read by the store) */
+  overrides?: unknown;
 };
 
 const num = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
@@ -733,6 +735,7 @@ export function parsePlan(
       ...(num(raw.detours) ? { detours: snapMinFactor(raw.detours) } : {}),
       compareId: typeof raw.compareId === "string" ? raw.compareId : null,
       lineBy: raw.lineBy === "surface" ? "surface" : "plain",
+      ...(raw.overrides ? { overrides: raw.overrides } : {}),
     };
   } catch {
     return null;
