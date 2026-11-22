@@ -14,7 +14,7 @@ use crate::cost::{self, CostModel, WayKind};
 use crate::graph::{ArcId, EdgeId, Graph, NodeId, arc, arc_edge, arc_is_reverse};
 use crate::overrides::{self, EdgeOverride, OverrideKind, OverrideUse, Overrides};
 use crate::personal::PersonalLayer;
-use crate::profile::{PrefId, Profile};
+use crate::profile::{BoardRow, PrefId, Profile, Tier};
 use crate::search::{Exempt, Overlay, Plane, Query, Search, Source, Target, Turns, UTurn};
 use crate::spatial::{DEFAULT_CELL_M, Grid, Snap};
 use crate::turns::{Headings, share_between};
@@ -233,8 +233,23 @@ pub struct Segment {
     /// Additive cost (climbing, barriers, steps, …) in metres.
     pub extra_m: f32,
     /// Why this way: the strongest preferences here (length-weighted geometric means), at most 3,
-    /// strongest first.
+    /// strongest first. Structured model: only what counts (per group its strongest bonus and
+    /// penalty).
     pub why: Vec<Reason>,
+    /// Structured model: the segment's row and tier on each board the profile has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tiers: Option<Vec<RowTier>>,
+    /// Structured model with a hills curve: its metres here (part of `extra_m`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hills_m: Option<f32>,
+}
+
+/// A way's row on a board and the tier the profile puts it in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema, TS))]
+pub struct RowTier {
+    pub row: BoardRow,
+    pub tier: Tier,
 }
 
 /// One leg (waypoint `i` → `i + 1`).
@@ -330,6 +345,60 @@ pub struct Breakdown {
     /// where it touches nothing.
     #[serde(default)]
     pub touched: Vec<Part<PrefId>>,
+    /// Structured model: per row of the boards the profile has, the length of the route in it
+    /// (board order, 0 m included): what each row "touches".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", ts(optional))]
+    pub rows: Option<Vec<Part<BoardRow>>>,
+    /// Structured model with a hills curve: the route's length per grade as the curve reads it
+    /// (the distribution behind the curve).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grades: Option<GradeHistogram>,
+}
+
+/// Metres per grade band: `metres[i]` lies in `[from_pct + i × step_pct, from_pct + (i + 1) ×
+/// step_pct)`, the first and last band also hold everything beyond. Signed (< 0 downhill), as the
+/// hills curve reads it (the steepest 50 m of each arc, the rest split by ascent and descent; loose
+/// ground steeper).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema, TS))]
+pub struct GradeHistogram {
+    pub from_pct: f32,
+    pub step_pct: f32,
+    pub metres: Vec<f32>,
+}
+
+impl GradeHistogram {
+    /// 1 % bands from −20 to +20 %.
+    #[must_use]
+    pub fn new() -> GradeHistogram {
+        GradeHistogram {
+            from_pct: -20.0,
+            step_pct: 1.0,
+            metres: vec![0.0; 40],
+        }
+    }
+
+    /// Adds metres at a grade.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss,
+        reason = "a band index, clamped"
+    )]
+    pub fn add(&mut self, pct: f32, metres: f32) {
+        let n = self.metres.len();
+        let i = ((pct - self.from_pct) / self.step_pct)
+            .floor()
+            .clamp(0.0, (n - 1) as f32) as usize;
+        self.metres[i] += metres;
+    }
+}
+
+impl Default for GradeHistogram {
+    fn default() -> GradeHistogram {
+        GradeHistogram::new()
+    }
 }
 
 /// The line: coordinates, and per vertex the distance from the start and the elevation.
@@ -968,6 +1037,9 @@ impl Planner {
             req.options.geometry,
         );
         result.breakdown.touched = self.touched(&pieces, &req.profile);
+        if req.profile.structured() {
+            self.structured_breakdown(&pieces, &req.profile, &mut result.breakdown);
+        }
         result.overrides = uses;
         Ok(result)
     }
@@ -977,6 +1049,48 @@ impl Planner {
     fn piece_turns(&self, pieces: &[Piece], turn_m: f32) -> (u32, f32) {
         let arcs: Vec<ArcId> = pieces.iter().map(|p| p.arc).collect();
         crate::turns::line_turns(&self.graph, &self.headings, turn_m, &arcs)
+    }
+
+    /// The structured model's breakdowns: length per board row, and per grade as the hills curve
+    /// reads it (`breakdown.rows`, `breakdown.grades`).
+    fn structured_breakdown(&self, pieces: &[Piece], profile: &Profile, out: &mut Breakdown) {
+        let g = &self.graph;
+        let Ok(model) = CostModel::new(profile) else {
+            return;
+        };
+        let rows = model.rows();
+        let mut m = vec![0.0f32; rows.len()];
+        let mut hist = model.has_hills().then(GradeHistogram::new);
+        let mut total = 0.0f32;
+        for piece in pieces {
+            let e = arc_edge(piece.arc);
+            let frac = piece.fraction();
+            let len = g.length_m(e) * frac;
+            total += len;
+            let (surface, way) = cost::board_rows(g, e);
+            for (i, r) in rows.iter().enumerate() {
+                if *r == surface || Some(*r) == way {
+                    m[i] += len;
+                }
+            }
+            if let (Some(h), Some(parts)) = (&mut hist, model.hills_parts(g, piece.arc)) {
+                for (pct, metres) in parts {
+                    h.add(pct, metres * frac);
+                }
+            }
+        }
+        let total = total.max(1e-6);
+        out.rows = Some(
+            rows.into_iter()
+                .zip(m)
+                .map(|(key, length_m)| Part {
+                    key,
+                    length_m,
+                    share: length_m / total,
+                })
+                .collect(),
+        );
+        out.grades = hist;
     }
 
     /// The length of the route each preference of `profile` applies to (`breakdown.touched`).
@@ -1339,17 +1453,26 @@ impl Planner {
                 }
                 let ex = model.explain(g, personal, piece.arc);
                 // (an arc an override of the plan opens counts as the profile without its limits)
-                let (factor, extra) = if ex.excluded.is_some() && !lifted {
+                let (factor, extra, hills) = if ex.excluded.is_some() && !lifted {
                     // ridden near a waypoint on an excluded way, to get away from it
                     excluded_m += len;
-                    (model.max_factor, 0.0)
+                    (model.max_factor, 0.0, 0.0)
                 } else {
-                    (ex.factor, (ex.climb_m + ex.penalty_m) * frac)
+                    (
+                        ex.factor,
+                        (ex.climb_m + ex.penalty_m + ex.hills_m) * frac,
+                        ex.hills_m * frac,
+                    )
                 };
                 let key = (surface, way, ridden);
                 if acc.key != Some(key) {
                     acc.flush(&mut segments, arcs.len() - 1, first_vertex);
                     acc.start(key, dist, arcs.len() - 1, first_vertex);
+                    acc.tiers = model.is_structured().then(|| model.row_tiers(g, e));
+                    acc.hills = model.has_hills().then_some(0.0);
+                }
+                if let Some(h) = &mut acc.hills {
+                    *h += hills;
                 }
                 acc.add(len, factor, extra, &ex.factors);
                 dist += len;
@@ -1424,6 +1547,8 @@ impl Planner {
                 way: parts(way_m, total),
                 ridden,
                 touched: Vec::new(),
+                rows: None,
+                grades: None,
             },
             waypoints,
             legs,
@@ -1459,6 +1584,7 @@ impl Planner {
                     gate: x.gate,
                     climb_m: x.climb_m,
                     penalty_m: x.penalty_m,
+                    hills_m: x.hills_m,
                     reasons: x
                         .factors
                         .iter()
@@ -1492,7 +1618,10 @@ pub struct ArcExplanation {
     pub gate: f32,
     pub climb_m: f32,
     pub penalty_m: f32,
-    /// Every preference whose factor is not 1 here.
+    /// The hills curve's metres (structured model).
+    #[serde(default)]
+    pub hills_m: f32,
+    /// Every preference whose factor is not 1 here (structured model: that counts).
     pub reasons: Vec<Reason>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub excluded_by: Option<String>,
@@ -1533,6 +1662,8 @@ struct SegAcc {
     extra: f32,
     /// Σ length × ln(factor) per preference.
     logs: Vec<(PrefId, f32)>,
+    tiers: Option<Vec<RowTier>>,
+    hills: Option<f32>,
 }
 
 impl SegAcc {
@@ -1589,6 +1720,8 @@ impl SegAcc {
             factor: self.cost / len,
             extra_m: self.extra,
             why,
+            tiers: self.tiers.take(),
+            hills_m: self.hills.take(),
         });
     }
 }

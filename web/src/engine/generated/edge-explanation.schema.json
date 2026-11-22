@@ -356,6 +356,17 @@
             "$ref": "#/$defs/Closure"
           },
           "default": []
+        },
+        "structured": {
+          "description": "Structured model: the boards' rows and tiers, what counts per group, the relative factor,\nthe hills curve's reading.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StructuredParts"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -398,6 +409,13 @@
         },
         "role": {
           "$ref": "#/$defs/Role"
+        },
+        "counted": {
+          "description": "Structured model: whether it counts (only the strongest bonus and penalty of its group do;\none with factor 1 here counts for nothing either way). Absent in the slider model, where every\npreference counts.",
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       },
       "required": [
@@ -539,6 +557,11 @@
           "description": "The wait.",
           "type": "string",
           "const": "ferry"
+        },
+        {
+          "description": "The hills curve (structured model): `length × (curve − 1)`, < 0 where it seeks climbs.",
+          "type": "string",
+          "const": "hills"
         }
       ]
     },
@@ -588,7 +611,286 @@
           "description": "Against a one-way: never.",
           "type": "string",
           "const": "oneway"
+        },
+        {
+          "description": "A surface row on `avoid` (structured model: the surface board's limit).",
+          "type": "string",
+          "const": "avoided_surface"
+        },
+        {
+          "description": "A way row on `avoid` (structured model: the way board's limit).",
+          "type": "string",
+          "const": "avoided_way"
         }
+      ]
+    },
+    "StructuredParts": {
+      "description": "An arc's cost under the structured model, its parts.",
+      "type": "object",
+      "properties": {
+        "boards": {
+          "description": "The way's row and tier on each board present.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BoardPart"
+          }
+        },
+        "board_factor": {
+          "description": "The boards' factors multiplied (relative to `love`).",
+          "type": "number",
+          "format": "float"
+        },
+        "groups": {
+          "description": "Per catalogue group with active sliders: what counts.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GroupPart"
+          }
+        },
+        "best": {
+          "description": "The profile's best absolute factor (boards at love, every group at its strongest bonus):\n`relative = raw_factor / best`.",
+          "type": "number",
+          "format": "float"
+        },
+        "relative": {
+          "description": "The factor relative to the best, before the spread: ≥ 1.",
+          "type": "number",
+          "format": "float"
+        },
+        "detours": {
+          "description": "The spread exponent: `factor = min(relative ^ detours, max_factor)`.",
+          "type": "number",
+          "format": "float"
+        },
+        "hills": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HillsPart"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "boards",
+        "board_factor",
+        "groups",
+        "best",
+        "relative",
+        "detours"
+      ]
+    },
+    "BoardPart": {
+      "description": "A board's part in an arc's cost: the way's row and its tier.",
+      "type": "object",
+      "properties": {
+        "board": {
+          "$ref": "#/$defs/BoardId"
+        },
+        "row": {
+          "$ref": "#/$defs/BoardRow"
+        },
+        "tier": {
+          "$ref": "#/$defs/Tier"
+        },
+        "factor": {
+          "description": "The tier's factor relative to `love` (`avoid`: `dislike`'s, what it counts where this plan\nallows it).",
+          "type": "number",
+          "format": "float"
+        },
+        "vs_fine": {
+          "description": "The same relative to `fine` (the neutral tier).",
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "required": [
+        "board",
+        "row",
+        "tier",
+        "factor",
+        "vs_fine"
+      ]
+    },
+    "BoardId": {
+      "description": "A board of the structured model.",
+      "type": "string",
+      "enum": [
+        "surface",
+        "way"
+      ]
+    },
+    "BoardRow": {
+      "description": "A row of a board: every way is in exactly one row of each board ([`BoardRow::board`]).",
+      "type": "string",
+      "enum": [
+        "paved",
+        "rough_paved",
+        "compacted",
+        "gravel",
+        "soft",
+        "unknown",
+        "main",
+        "country_road",
+        "residential",
+        "service",
+        "track",
+        "path",
+        "cycle_path",
+        "cycle_path_roadside"
+      ]
+    },
+    "Tier": {
+      "description": "A tier of a board: how much the rider likes the ways of a row, best first in [`Tier::BEST_FIRST`].",
+      "type": "string",
+      "enum": [
+        "avoid",
+        "dislike",
+        "fine",
+        "like",
+        "love"
+      ]
+    },
+    "GroupPart": {
+      "description": "A catalogue group's part in an arc's cost (structured model): of its active slider\npreferences only the strongest bonus and the strongest penalty count (and the strongest gated\nbonus, through the gate).",
+      "type": "object",
+      "properties": {
+        "group": {
+          "$ref": "#/$defs/Group"
+        },
+        "bonus": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Reason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "penalty": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Reason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "gated_bonus": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Reason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "best": {
+          "description": "The best this group can do anywhere (its part of the profile's `best`).",
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "required": [
+        "group",
+        "best"
+      ]
+    },
+    "Group": {
+      "description": "A group of the picker.",
+      "type": "string",
+      "enum": [
+        "surface",
+        "ways",
+        "traffic",
+        "landscape",
+        "terrain",
+        "signs",
+        "trail",
+        "history"
+      ]
+    },
+    "Reason": {
+      "description": "One preference's part in a cost: its factor (< 1 made it cheaper, > 1 dearer).",
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/PrefId"
+        },
+        "factor": {
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "required": [
+        "id",
+        "factor"
+      ]
+    },
+    "HillsPart": {
+      "description": "The hills curve's part in an arc's cost.",
+      "type": "object",
+      "properties": {
+        "metres": {
+          "description": "`length × (value − 1)`, through the gate where < 0 (seeking climbs).",
+          "type": "number",
+          "format": "float"
+        },
+        "value": {
+          "description": "What a metre of the arc counts relative to flat.",
+          "type": "number",
+          "format": "float"
+        },
+        "wall_pct": {
+          "description": "The grades the curve read (percent, signed: < 0 downhill; loose ground steeper) and the\nmetres at each: the steepest 50 m, the rest's climbing and descending part.",
+          "type": "number",
+          "format": "float"
+        },
+        "wall_m": {
+          "type": "number",
+          "format": "float"
+        },
+        "climb_pct": {
+          "type": "number",
+          "format": "float"
+        },
+        "climb_m": {
+          "type": "number",
+          "format": "float"
+        },
+        "descent_pct": {
+          "type": "number",
+          "format": "float"
+        },
+        "descent_m": {
+          "type": "number",
+          "format": "float"
+        },
+        "loose": {
+          "description": "Loose ground (gravel, soft, unusual): its grades read `loose_pct` steeper.",
+          "type": "boolean"
+        },
+        "gate": {
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "required": [
+        "metres",
+        "value",
+        "wall_pct",
+        "wall_m",
+        "climb_pct",
+        "climb_m",
+        "descent_pct",
+        "descent_m",
+        "loose",
+        "gate"
       ]
     }
   }

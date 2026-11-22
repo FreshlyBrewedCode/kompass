@@ -19,8 +19,9 @@ use crate::cost::{self, ArcBreakdown, Clamp, Confidence, CostModel, Exclusion, R
 use crate::graph::{ArcId, EdgeId, Graph, arc, arc_edge};
 use crate::overrides::{self, EdgeOverride, OverrideKind, Overrides};
 use crate::personal::PersonalLayer;
-use crate::profile::{Bounds, LimitId, PrefId, Profile};
+use crate::profile::{BoardId, BoardRow, Bounds, LimitId, PrefId, Profile};
 use crate::route::{Part, Planner, Reason, RouteError, Span, SurfaceKind, diff, invalid_request};
+use crate::structured::StructuredParts;
 use crate::turns::{Headings, line_turns};
 
 /// What closes an arc: a limit of the profile (the catalogue's limit ids) or a rule that holds
@@ -41,6 +42,10 @@ pub enum ClosedBy {
     NoBikes,
     /// Against a one-way: never.
     Oneway,
+    /// A surface row on `avoid` (structured model: the surface board's limit).
+    AvoidedSurface,
+    /// A way row on `avoid` (structured model: the way board's limit).
+    AvoidedWay,
 }
 
 impl ClosedBy {
@@ -56,6 +61,8 @@ impl ClosedBy {
         ClosedBy::NoFerries,
         ClosedBy::NoBikes,
         ClosedBy::Oneway,
+        ClosedBy::AvoidedSurface,
+        ClosedBy::AvoidedWay,
     ];
 
     /// The code in [`EdgeCosts::closed`]: 1.. in the order of [`ClosedBy::ALL`] (0 is open).
@@ -70,6 +77,8 @@ impl ClosedBy {
         match self {
             ClosedBy::NoBikes => "no_bikes",
             ClosedBy::Oneway => "oneway",
+            ClosedBy::AvoidedSurface => "avoided_surface",
+            ClosedBy::AvoidedWay => "avoided_way",
             _ => self.limit().map_or("", LimitId::id),
         }
     }
@@ -86,7 +95,9 @@ impl ClosedBy {
             ClosedBy::NoStairs => LimitId::NoStairs,
             ClosedBy::LegalOnly => LimitId::LegalOnly,
             ClosedBy::NoFerries => LimitId::NoFerries,
-            ClosedBy::NoBikes | ClosedBy::Oneway => return None,
+            ClosedBy::NoBikes | ClosedBy::Oneway | ClosedBy::AvoidedSurface | ClosedBy::AvoidedWay => {
+                return None;
+            }
         })
     }
 }
@@ -96,6 +107,10 @@ impl From<Exclusion> for ClosedBy {
         match x {
             Exclusion::NoBikes => ClosedBy::NoBikes,
             Exclusion::Oneway => ClosedBy::Oneway,
+            Exclusion::Avoided(row) => match row.board() {
+                BoardId::Surface => ClosedBy::AvoidedSurface,
+                BoardId::Way => ClosedBy::AvoidedWay,
+            },
             Exclusion::Limit(l) => match l {
                 LimitId::NoMainRoads => ClosedBy::NoMainRoads,
                 LimitId::PavedOnly => ClosedBy::PavedOnly,
@@ -213,6 +228,12 @@ pub struct PrefPart {
     /// through the gate; an `additive` one (avoiding climbs) has none, its metres are in `additive`.
     pub factor: f32,
     pub role: Role,
+    /// Structured model: whether it counts (only the strongest bonus and penalty of its group do;
+    /// one with factor 1 here counts for nothing either way). Absent in the slider model, where every
+    /// preference counts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", ts(optional))]
+    pub counted: Option<bool>,
 }
 
 /// What an additive term is.
@@ -230,6 +251,8 @@ pub enum AdditiveKind {
     Dismount,
     /// The wait.
     Ferry,
+    /// The hills curve (structured model): `length × (curve − 1)`, < 0 where it seeks climbs.
+    Hills,
 }
 
 /// An additive term: metres of cost on top of `length × factor`.
@@ -294,6 +317,10 @@ pub struct ArcCostExplanation {
     /// The limits this plan's override (allow, prefer) lifts here: they would close it.
     #[serde(default)]
     pub lifted: Vec<Closure>,
+    /// Structured model: the boards' rows and tiers, what counts per group, the relative factor,
+    /// the hills curve's reading.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured: Option<StructuredParts>,
 }
 
 /// `explainEdge`'s answer.
@@ -383,6 +410,14 @@ pub struct StretchCost {
     /// leaves the other route and rejoins it), and what they cost (metres-equivalent, in `cost`).
     pub turns: u32,
     pub turn_cost: f32,
+    /// Structured model: length per row of the boards present, board order (0 m included).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", ts(optional))]
+    pub rows: Option<Vec<Part<BoardRow>>>,
+    /// Structured model with a hills curve: its metres here (in `extra_m`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", ts(optional))]
+    pub hills_m: Option<f32>,
 }
 
 /// One stretch where the routes part, both sides costed.
@@ -455,7 +490,7 @@ impl Planner {
                 let c = v.costs[a as usize];
                 if c.is_finite() {
                     open = true;
-                    out.factor.push((c - v.model.extra_m(g, a)) / len);
+                    out.factor.push((c - v.model.extra_m(g, v.personal, a)) / len);
                     out.cost_per_m.push(c / len);
                 } else {
                     out.factor.push(0.0);
@@ -642,7 +677,11 @@ fn add_turns(c: &mut StretchCost, g: &Graph, h: &Headings, turn_m: f32, route: &
 
 /// A stretch of a route costed under a compiled profile (and the plan's overrides), its `why` cut to
 /// `why_max`.
-#[allow(clippy::too_many_arguments, reason = "the stretch and what costs it")]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "the stretch and what costs it, every part of it"
+)]
 fn stretch_cost(
     g: &Graph,
     model: &CostModel,
@@ -660,6 +699,8 @@ fn stretch_cost(
     let mut ways: Vec<(WayKind, f32)> = Vec::new();
     let mut closed: Vec<(ClosedBy, f32)> = Vec::new();
     let mut overridden: Vec<(OverrideKind, f32)> = Vec::new();
+    let mut rows: Vec<(BoardRow, f32)> = model.rows().into_iter().map(|r| (r, 0.0)).collect();
+    let mut hills = 0.0f32;
     for &a in &route[first as usize..end as usize] {
         let e = arc_edge(a);
         let len = g.length_m(e);
@@ -688,7 +729,13 @@ fn stretch_cost(
         fsum += len * factor;
         extra += x;
         add_len(&mut ways, cost::way_kind(g, e), len);
-        for t in b.terms.iter().filter(|t| t.role != Role::Additive) {
+        if let Some(st) = &b.structured {
+            for bp in &st.boards {
+                add_len(&mut rows, bp.row, len);
+            }
+            hills += b.hills_m;
+        }
+        for t in b.terms.iter().filter(|t| t.role != Role::Additive && t.counted) {
             let l = len * t.factor.ln();
             if let Some(x) = logs.iter_mut().find(|x| x.0 == t.id) {
                 x.1 += l;
@@ -736,6 +783,16 @@ fn stretch_cost(
             .collect(),
         turns: 0,
         turn_cost: 0.0,
+        rows: model.is_structured().then(|| {
+            rows.into_iter()
+                .map(|(key, length_m)| Part {
+                    key,
+                    length_m,
+                    share: length_m / n,
+                })
+                .collect()
+        }),
+        hills_m: model.has_hills().then_some(hills),
     }
 }
 
@@ -758,9 +815,10 @@ fn arc_explanation(g: &Graph, p: &Profile, a: ArcId, b: &ArcBreakdown, compiled:
         (AdditiveKind::Steps, steps),
         (AdditiveKind::Dismount, dismount),
         (AdditiveKind::Ferry, ferry),
+        (AdditiveKind::Hills, b.hills_m),
     ]
     .into_iter()
-    .filter(|(_, m)| *m > 0.0)
+    .filter(|(_, m)| *m != 0.0)
     .map(|(kind, metres)| Additive { kind, metres })
     .collect();
     let open = compiled.is_finite();
@@ -775,6 +833,7 @@ fn arc_explanation(g: &Graph, p: &Profile, a: ArcId, b: &ArcBreakdown, compiled:
                 membership: t.membership,
                 factor: t.factor,
                 role: t.role,
+                counted: b.structured.is_some().then_some(t.counted),
             })
             .collect(),
         quality: b.quality,
@@ -794,9 +853,17 @@ fn arc_explanation(g: &Graph, p: &Profile, a: ArcId, b: &ArcBreakdown, compiled:
         closed_by: b
             .exclusions
             .iter()
-            .map(|&x| closure(g, a, b, ClosedBy::from(x)))
+            .map(|&x| match x {
+                cost::Exclusion::Avoided(row) => Closure {
+                    by: ClosedBy::from(x),
+                    attribute: "board_row".to_owned(),
+                    value: text(row.id()),
+                },
+                _ => closure(g, a, b, ClosedBy::from(x)),
+            })
             .collect(),
         lifted: Vec::new(),
+        structured: b.structured.clone(),
     }
 }
 
@@ -844,6 +911,8 @@ fn closure(g: &Graph, a: ArcId, b: &ArcBreakdown, by: ClosedBy) -> Closure {
             }
         }
         ClosedBy::Oneway => ("oneway_bike", text(g.oneway(e).label())),
+        // (named by `arc_explanation`, which knows the row)
+        ClosedBy::AvoidedSurface | ClosedBy::AvoidedWay => ("board_row", text("")),
     };
     Closure {
         by,

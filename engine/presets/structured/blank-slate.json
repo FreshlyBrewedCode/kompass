@@ -1,0 +1,44 @@
+{
+  "id": "blank_slate_structured",
+  "blurb": "The shortest way; build your own from here",
+  "profile": {
+    "name": "Blank slate",
+    "weights": {},
+    "limits": {},
+    "boards": {
+      "surface": {
+        "paved": "fine",
+        "rough_paved": "fine",
+        "compacted": "fine",
+        "gravel": "fine",
+        "soft": "fine",
+        "unknown": "fine"
+      },
+      "way": {
+        "main": "fine",
+        "country_road": "fine",
+        "residential": "fine",
+        "service": "fine",
+        "track": "fine",
+        "path": "fine",
+        "cycle_path": "fine",
+        "cycle_path_roadside": "fine"
+      }
+    },
+    "hills": {
+      "up": {
+        "3": 1.0,
+        "6": 1.0,
+        "10": 1.0,
+        "15": 1.0
+      },
+      "down": {
+        "8": 1.0,
+        "15": 1.0
+      },
+      "loose_pct": 0.0
+    },
+    "detours": 1.0,
+    "turn_m": 40.0
+  }
+}

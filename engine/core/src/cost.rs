@@ -20,16 +20,24 @@
 //!
 //! The clamp keeps every allowed way between `min_factor` and `max_factor` per metre; the smallest
 //! factor the compile actually produced (≥ `min_factor`) is the A* bound.
+//!
+//! A profile with structured parts (boards, hills, detours: [`crate::structured`]) is costed by the
+//! structured model instead (`compile_structured`, `breakdown_structured`): one factor per board
+//! (the way's tier), one per catalogue group (its strongest bonus × strongest penalty), all relative
+//! to the profile's best (no floor), spread by `detours`, plus the hills curve in metres. The A*
+//! bound is then the smallest factor plus hills metres per metre an arc has (the other additive
+//! terms are ≥ 0).
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
 use crate::attrs::SurfaceClass;
-use crate::catalogue::pref_meta;
+use crate::catalogue::{Group, pref_meta};
 use crate::graph::{EdgeColumns, EdgeId, Graph, arc_edge, arc_is_reverse};
 use crate::personal::PersonalLayer;
-use crate::profile::{LimitId, PrefId, Profile, ProfileError};
+use crate::profile::{BoardRow, LimitId, PREF_COUNT, PrefId, Profile, ProfileError, TIER_FINE, Tier};
+use crate::structured::{BoardPart, Curve, GroupPart, HillsPart, HillsSplit, StructuredParts};
 
 /// Below this quality factor the gated bonuses count in full.
 pub const GATE_OK: f32 = 1.3;
@@ -54,8 +62,8 @@ pub const CLIMB_M_PER_H: f32 = 900.0;
 pub const CLIMB_FULL_GRADE: f32 = 0.05;
 
 /// Membership levels: fifteenths, −15..=15.
-const LEVELS: usize = 31;
-type Table = [f32; LEVELS];
+pub(crate) const LEVELS: usize = 31;
+pub(crate) type Table = [f32; LEVELS];
 
 /// One edge, decoded from the packed columns.
 #[derive(Debug, Clone, Copy)]
@@ -98,7 +106,7 @@ pub(crate) enum Confidence {
     Weak,
 }
 
-mod hw {
+pub(crate) mod hw {
     pub const TRUNK: u8 = 1;
     pub const SECONDARY_LINK: u8 = 6;
     pub const TERTIARY: u8 = 7;
@@ -118,7 +126,7 @@ mod hw {
     pub const FERRY: u8 = 21;
 }
 
-mod sc {
+pub(crate) mod sc {
     pub const UNKNOWN: u8 = 0;
     pub const PAVED: u8 = 1;
     pub const ROUGH: u8 = 2;
@@ -149,7 +157,7 @@ fn share(v: u8) -> f32 {
 /// −1..=1 → −15..=15.
 #[inline]
 #[allow(clippy::cast_possible_truncation, reason = "clamped to ±15")]
-fn lv(x: f32) -> i8 {
+pub(crate) fn lv(x: f32) -> i8 {
     // rounding by truncating a positive value: no libm call on targets without SSE4.1
     (((x.clamp(-1.0, 1.0) * 15.0) + 15.5) as i32 - 15) as i8
 }
@@ -377,7 +385,7 @@ pub fn touches(
 
 /// Ascent that counts, metres: the part beyond the deadband.
 #[inline]
-fn effective_ascent(ascent_dm: u16, len: f32, forest: u8) -> f32 {
+pub(crate) fn effective_ascent(ascent_dm: u16, len: f32, forest: u8) -> f32 {
     let band = (CLIMB_DEADBAND_OPEN + CLIMB_DEADBAND_FOREST * share(forest)) * len;
     (f32::from(ascent_dm) * 0.1 - band).max(0.0)
 }
@@ -590,7 +598,7 @@ pub struct GradeRamp {
 impl GradeRamp {
     /// The membership level at a tamed grade up and down.
     #[inline]
-    fn level(self, up: f32, down: f32) -> i8 {
+    pub(crate) fn level(self, up: f32, down: f32) -> i8 {
         let span = self.full_pct - self.from_pct;
         let up = (up - self.from_pct) / span;
         let down = self.downhill * (down - self.from_pct) / span;
@@ -622,7 +630,7 @@ pub fn grade_ramp(id: PrefId) -> Option<GradeRamp> {
 }
 
 /// The table of a preference at a weight: factor per membership level.
-fn table(id: PrefId, w: f32) -> Table {
+pub(crate) fn table(id: PrefId, w: f32) -> Table {
     let m = pref_meta(id);
     let (kb, kp) = ((1.0 / m.max_bonus).ln(), m.max_penalty.ln());
     let mut t = [1.0; LEVELS];
@@ -647,6 +655,8 @@ pub enum Exclusion {
     NoBikes,
     /// One-way against the direction.
     Oneway,
+    /// A row on `avoid` on a board of the structured model (the board's limit).
+    Avoided(BoardRow),
 }
 
 impl Exclusion {
@@ -657,6 +667,7 @@ impl Exclusion {
             Exclusion::Limit(id) => format!("the limit \"{}\"", crate::catalogue::limit_meta(id).label),
             Exclusion::NoBikes => "a bicycle ban (bicycle=no or a motor road)".into(),
             Exclusion::Oneway => "one-way".into(),
+            Exclusion::Avoided(row) => format!("\"{}\" on avoid", crate::structured::row_label(row)),
         }
     }
 }
@@ -691,8 +702,255 @@ pub struct CostModel {
     /// Avoiding climbs: metres per metre of effective ascent.
     climb_cost: f32,
     limits: Limits,
+    /// The best factor a way can have: `bounds.min_factor` (the clamp), 1 in the structured model
+    /// (every factor is relative to the profile's best).
     pub min_factor: f32,
     pub max_factor: f32,
+    /// The structured model's parts, `None` for a slider profile.
+    structured: Option<Box<Structured>>,
+}
+
+/// Catalogue groups (per-group arrays of the structured model).
+const GROUPS: usize = 8;
+
+/// The structured model of a profile (`docs/profile.md`, "The structured model").
+#[derive(Debug, Clone)]
+struct Structured {
+    /// Per board row its tier, `None` where the board is absent.
+    tiers: [Option<Tier>; BoardRow::ALL.len()],
+    surface: bool,
+    way: bool,
+    /// Every preference's catalogue group, as an index.
+    group: [u8; PREF_COUNT],
+    curve: Option<Curve>,
+    /// The curve is 1 everywhere: no hills metres (skipped).
+    flat: bool,
+    /// Grades on loose ground are multiplied by this.
+    loose: f32,
+    /// The spread exponent (`detours`).
+    k: f32,
+    /// The best absolute factor the profile can produce (boards at `love`, every group at its
+    /// strongest bonus): every factor is relative to it.
+    best: f32,
+    inv_best: f32,
+    /// Per group: its best quality bonus and its best gated bonus (1: none).
+    best_groups: [(f32, f32); GROUPS],
+}
+
+impl Structured {
+    /// Whether the curve costs anything (it reads the grades).
+    #[inline]
+    fn curved(&self) -> bool {
+        self.curve.is_some() && !self.flat
+    }
+
+    #[inline]
+    fn avoided(&self, row: BoardRow) -> bool {
+        self.tiers[row.index()] == Some(Tier::Avoid)
+    }
+
+    /// A row's factor relative to `love` (`avoid` counts as `dislike` where an override of the plan
+    /// lifts it); `None` where its board is absent.
+    #[inline]
+    fn row_factor(&self, row: BoardRow) -> Option<f32> {
+        self.tiers[row.index()].map(row_tier_factor)
+    }
+}
+
+/// A tier's factor, `avoid` as `dislike` (what an allowed avoided way counts).
+#[inline]
+fn row_tier_factor(t: Tier) -> f32 {
+    t.factor().or(Tier::Dislike.factor()).unwrap_or(2.0)
+}
+
+/// Per catalogue group: the strongest quality bonus, the strongest penalty and the strongest gated
+/// bonus (the structured model's combination: overlaps do not stack).
+#[derive(Debug, Clone, Copy)]
+struct GroupAcc {
+    b: [f32; GROUPS],
+    p: [f32; GROUPS],
+    gb: [f32; GROUPS],
+}
+
+/// One group's part of a [`GroupAcc`] (the class compile's context tables).
+#[derive(Debug, Clone, Copy)]
+struct Slot {
+    b: f32,
+    p: f32,
+    gb: f32,
+}
+
+impl Slot {
+    const NEW: Slot = Slot {
+        b: 1.0,
+        p: 1.0,
+        gb: 1.0,
+    };
+}
+
+/// The tag side of an edge class under the structured model: the groups only tags reach,
+/// finished, and the tag side of the two groups the context also reaches (traffic, way type).
+#[derive(Debug, Clone, Copy)]
+struct STag {
+    q: f32,
+    bonus: f32,
+    traffic: Slot,
+    ways: Slot,
+    /// `quiet`'s level of the way's own traffic.
+    quiet_own: i8,
+    loose: bool,
+    /// By whether the way is near a motor road (a cycle path's row): closed, the boards' factor
+    /// in absolute terms and relative to love.
+    closed: [bool; 2],
+    board: [f32; 2],
+    board_rel: [f32; 2],
+}
+
+impl Slot {
+    #[inline]
+    fn merge(&mut self, o: Slot) {
+        self.b = self.b.min(o.b);
+        self.p = self.p.max(o.p);
+        self.gb = self.gb.min(o.gb);
+    }
+
+    #[inline]
+    fn of(acc: &GroupAcc, g: usize) -> Slot {
+        Slot {
+            b: acc.b[g],
+            p: acc.p[g],
+            gb: acc.gb[g],
+        }
+    }
+}
+
+impl GroupAcc {
+    const NEW: GroupAcc = GroupAcc {
+        b: [1.0; GROUPS],
+        p: [1.0; GROUPS],
+        gb: [1.0; GROUPS],
+    };
+
+    #[inline]
+    fn quality(&mut self, g: usize, f: f32) {
+        if f < 1.0 {
+            self.b[g] = self.b[g].min(f);
+        } else {
+            self.p[g] = self.p[g].max(f);
+        }
+    }
+
+    #[inline]
+    fn gated(&mut self, g: usize, f: f32) {
+        if f < 1.0 {
+            self.gb[g] = self.gb[g].min(f);
+        } else {
+            self.p[g] = self.p[g].max(f);
+        }
+    }
+
+    /// (quality, bonus): the products over the groups.
+    #[inline]
+    fn finish(&self) -> (f32, f32) {
+        let (mut q, mut bonus) = (1.0f32, 1.0f32);
+        for i in 0..GROUPS {
+            q *= self.b[i] * self.p[i];
+            bonus *= self.gb[i];
+        }
+        (q, bonus)
+    }
+}
+
+/// The direction-independent part of an edge under the structured model.
+#[derive(Debug, Clone, Copy)]
+struct SEdge {
+    /// The groups' quality and gated bonus (Terrain, the only directional group, joins per arc).
+    q: f32,
+    bonus: f32,
+    /// The product of the boards' factors in absolute terms (`tier / fine`: fine is neutral).
+    board: f32,
+    /// The board factors relative to `love`.
+    board_rel: f32,
+    loose: bool,
+}
+
+/// One arc under the structured model.
+#[derive(Debug, Clone, Copy)]
+struct SArc {
+    q: f32,
+    bonus: f32,
+    gate: f32,
+    raw: f32,
+    rel: f32,
+    factor: f32,
+    clamped: bool,
+    hills_m: f32,
+    /// The arc's factor plus the hills metres per metre: what the A* bound takes (the other
+    /// additive terms are ≥ 0).
+    per_m: f32,
+    split: Option<HillsSplit>,
+}
+
+/// The range of membership levels a preference can reach (most 0..=15; the signed ones both ways):
+/// where its table's best value lies.
+fn level_range(id: PrefId) -> (i8, i8) {
+    match id {
+        PrefId::Tracktype | PrefId::Smoothness => (-15, 15),
+        PrefId::Quiet => (-15, 0),
+        _ => (0, 15),
+    }
+}
+
+/// A table's best (smallest) value over the levels its preference reaches, at most 1.
+fn table_best(id: PrefId, t: &Table) -> f32 {
+    let (lo, hi) = level_range(id);
+    (lo..=hi).map(|m| at(t, m)).fold(1.0, f32::min)
+}
+
+/// The board row of a surface as the cost sees it: weak guesses and unusual surfaces are `unknown`.
+#[inline]
+pub(crate) fn surface_row((s, conf): (u8, Confidence)) -> BoardRow {
+    if conf == Confidence::Weak {
+        return BoardRow::Unknown;
+    }
+    match s {
+        sc::PAVED => BoardRow::Paved,
+        sc::ROUGH => BoardRow::RoughPaved,
+        sc::COMPACTED => BoardRow::Compacted,
+        sc::GRAVEL => BoardRow::Gravel,
+        sc::SOFT => BoardRow::Soft,
+        _ => BoardRow::Unknown,
+    }
+}
+
+/// The way board's row of a way kind (steps count as paths, other ways as service roads; a ferry
+/// is in no row and counts as `fine`).
+#[must_use]
+pub fn way_row(k: WayKind) -> Option<BoardRow> {
+    Some(match k {
+        WayKind::MainRoad => BoardRow::Main,
+        WayKind::CountryRoad => BoardRow::CountryRoad,
+        WayKind::Residential => BoardRow::Residential,
+        WayKind::Service | WayKind::Other => BoardRow::Service,
+        WayKind::Track => BoardRow::Track,
+        WayKind::Path | WayKind::Steps => BoardRow::Path,
+        WayKind::BikePath => BoardRow::CyclePath,
+        WayKind::BikePathRoadside => BoardRow::CyclePathRoadside,
+        WayKind::Ferry => return None,
+    })
+}
+
+/// Loose ground for the hills curve: gravel, soft and unusual surfaces (weak guesses included).
+#[inline]
+fn is_loose((s, _): (u8, Confidence)) -> bool {
+    matches!(s, sc::GRAVEL | sc::SOFT | sc::OTHER)
+}
+
+/// The rows of an edge on both boards: (surface row, way row).
+#[must_use]
+pub fn board_rows(g: &Graph, e: EdgeId) -> (BoardRow, Option<BoardRow>) {
+    let v = View::decode(g.edge_columns(), e as usize);
+    (surface_row(v.surface()), way_row(v.kind()))
 }
 
 /// Per-arc explanation of the cost (for "why this way").
@@ -704,9 +962,10 @@ pub struct ArcCost {
     pub gate: f32,
     /// The clamped factor.
     pub factor: f32,
-    /// Additive metres: climbing, and barriers/steps/dismount/ferry.
+    /// Additive metres: climbing, and barriers/steps/dismount/ferry, the hills curve (structured).
     pub climb_m: f32,
     pub penalty_m: f32,
+    pub hills_m: f32,
     /// The arc's cost (infinite when excluded).
     pub cost: f32,
     pub excluded: Option<Exclusion>,
@@ -737,6 +996,9 @@ pub struct Term {
     /// The preference's factor at the profile's weight (1: no effect).
     pub factor: f32,
     pub role: Role,
+    /// Whether the factor counts: always in the slider model; in the structured model only the
+    /// strongest bonus and the strongest penalty of its group count.
+    pub counted: bool,
 }
 
 /// Which bound the clamp applied.
@@ -774,8 +1036,12 @@ pub struct ArcBreakdown {
     /// Additive metres: avoiding climbs, then barriers, steps, dismount, ferry.
     pub climb_m: f32,
     pub penalties_m: [f32; 4],
+    /// The hills curve's metres (structured model; < 0 where it seeks climbs).
+    pub hills_m: f32,
     /// Everything that closes the arc: the limits and rules of the edge in order, then one-way.
     pub exclusions: Vec<Exclusion>,
+    /// The structured model's parts (boards, groups, the relative factor, hills).
+    pub structured: Option<StructuredParts>,
 }
 
 impl ArcBreakdown {
@@ -783,7 +1049,7 @@ impl ArcBreakdown {
     #[must_use]
     pub fn extra_m(&self) -> f32 {
         let [b, s, d, f] = self.penalties_m;
-        b + s + d + f + self.climb_m
+        b + s + d + f + self.climb_m + self.hills_m
     }
 }
 
@@ -793,7 +1059,7 @@ impl ArcBreakdown {
     reason = "a table index"
 )]
 #[inline]
-fn at(t: &Table, m: i8) -> f32 {
+pub(crate) fn at(t: &Table, m: i8) -> f32 {
     t[(m + 15) as usize]
 }
 
@@ -811,6 +1077,7 @@ impl CostModel {
             limits: Limits::default(),
             min_factor: p.bounds().min_factor,
             max_factor: p.bounds().max_factor,
+            structured: None,
         };
         for (&id, w) in &p.weights {
             let w = w.unit();
@@ -841,7 +1108,113 @@ impl CostModel {
             no_ferries: p.limit(LimitId::NoFerries).is_some(),
         };
         m.limits = lim;
+        if p.structured() {
+            m.structured = Some(Box::new(m.structured_parts(p)));
+            m.min_factor = 1.0;
+        }
         Ok(m)
+    }
+
+    /// Whether the model is the structured one.
+    #[must_use]
+    pub fn is_structured(&self) -> bool {
+        self.structured.is_some()
+    }
+
+    /// The rows of the boards the profile has, board order (empty in the slider model).
+    #[must_use]
+    pub fn rows(&self) -> Vec<BoardRow> {
+        let Some(st) = &self.structured else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        if st.surface {
+            out.extend(BoardRow::SURFACE);
+        }
+        if st.way {
+            out.extend(BoardRow::WAY);
+        }
+        out
+    }
+
+    /// An edge's row and tier on each board the profile has.
+    #[must_use]
+    pub fn row_tiers(&self, g: &Graph, e: EdgeId) -> Vec<crate::route::RowTier> {
+        let Some(st) = &self.structured else {
+            return Vec::new();
+        };
+        let (surface, way) = board_rows(g, e);
+        [st.surface.then_some(surface), if st.way { way } else { None }]
+            .into_iter()
+            .flatten()
+            .filter_map(|row| st.tiers[row.index()].map(|tier| crate::route::RowTier { row, tier }))
+            .collect()
+    }
+
+    /// Whether the profile has a hills curve.
+    #[must_use]
+    pub fn has_hills(&self) -> bool {
+        self.structured.as_ref().is_some_and(|s| s.curve.is_some())
+    }
+
+    /// The structured model of a validated profile (after the tables are built).
+    fn structured_parts(&self, p: &Profile) -> Structured {
+        let boards = p.boards.unwrap_or_default();
+        let mut tiers = [None; BoardRow::ALL.len()];
+        for &row in BoardRow::ALL {
+            tiers[row.index()] = boards.tier(row);
+        }
+        let mut group = [0u8; PREF_COUNT];
+        for &id in PrefId::ALL {
+            #[allow(clippy::cast_possible_truncation, reason = "8 groups")]
+            {
+                group[id.index()] = pref_meta(id).group as u8;
+            }
+        }
+        let mut best_groups = [(1.0f32, 1.0f32); GROUPS];
+        let quality = self
+            .quality
+            .iter()
+            .map(|(id, t)| (*id, t))
+            .chain(self.quiet.as_ref().map(|t| (PrefId::Quiet, t)))
+            .chain(self.grades.iter().map(|(id, _, t)| (*id, t)));
+        for (id, t) in quality {
+            let g = usize::from(group[id.index()]);
+            best_groups[g].0 = best_groups[g].0.min(table_best(id, t));
+        }
+        let gated = self
+            .gated
+            .iter()
+            .map(|(id, t)| (*id, t))
+            .chain(self.climb_bonus.as_ref().map(|t| (PrefId::Climb, t)));
+        for (id, t) in gated {
+            let g = usize::from(group[id.index()]);
+            best_groups[g].1 = best_groups[g].1.min(table_best(id, t));
+        }
+        let (surface, way) = (boards.surface.is_some(), boards.way.is_some());
+        let mut best = best_groups.iter().map(|(b, gb)| b * gb).product::<f32>();
+        for present in [surface, way] {
+            if present {
+                best /= TIER_FINE;
+            }
+        }
+        Structured {
+            tiers,
+            surface,
+            way,
+            group,
+            curve: p.hills.as_ref().map(Curve::new),
+            flat: p.hills.is_none_or(|h| {
+                crate::structured::curve_points(&h)
+                    .iter()
+                    .all(|(_, v)| (v - 1.0).abs() < 1e-6)
+            }),
+            loose: 1.0 + p.hills.map_or(0.0, |h| h.loose_pct) / 100.0,
+            k: p.detours(),
+            best,
+            inv_best: 1.0 / best,
+            best_groups,
+        }
     }
 
     /// Whether the model reads the personal layer.
@@ -896,6 +1269,21 @@ impl CostModel {
         }
         if l.no_unknown && conf == Confidence::Weak && hit(Exclusion::Limit(LimitId::NoUnknownSurface)) {
             return;
+        }
+        if let Some(st) = &self.structured {
+            if st.surface {
+                let row = surface_row((s, conf));
+                if st.avoided(row) && hit(Exclusion::Avoided(row)) {
+                    return;
+                }
+            }
+            if st.way
+                && let Some(row) = way_row(v.kind())
+                && st.avoided(row)
+                && hit(Exclusion::Avoided(row))
+            {
+                return;
+            }
         }
         if let Some(max) = l.max_grade
             && grade_up.max(grade_down) > max
@@ -973,6 +1361,9 @@ impl CostModel {
     /// factor produced (the A* bound per metre).
     #[allow(clippy::cast_possible_truncation, reason = "edge ids fit u32")]
     pub fn compile_into(&self, g: &Graph, personal: Option<&PersonalLayer>, out: &mut Vec<f32>) -> f32 {
+        if let Some(st) = &self.structured {
+            return self.compile_structured(st, g, personal, out);
+        }
         let c = g.edge_columns();
         let m = g.edge_count();
         out.clear();
@@ -1072,17 +1463,18 @@ impl CostModel {
             factors: b
                 .terms
                 .iter()
-                .filter(|t| t.role != Role::Additive)
+                .filter(|t| t.role != Role::Additive && t.counted)
                 .map(|t| (t.id, t.factor))
                 .collect(),
             gate: b.gate,
             factor: b.factor,
             climb_m: b.climb_m,
             penalty_m,
+            hills_m: b.hills_m,
             cost: if excluded.is_some() {
                 f32::INFINITY
             } else {
-                v.length * b.factor + penalty_m + b.climb_m
+                v.length * b.factor + penalty_m + b.climb_m + b.hills_m
             },
             excluded,
         }
@@ -1095,6 +1487,9 @@ impl CostModel {
     #[must_use]
     #[allow(clippy::too_many_lines, reason = "the cost's steps, one after the other")]
     pub fn breakdown(&self, g: &Graph, personal: Option<&PersonalLayer>, a: crate::ArcId) -> ArcBreakdown {
+        if let Some(st) = &self.structured {
+            return self.breakdown_structured(st, g, personal, a);
+        }
         let c = g.edge_columns();
         let e = arc_edge(a) as usize;
         let dir = usize::from(arc_is_reverse(a));
@@ -1121,6 +1516,7 @@ impl CostModel {
                 membership: level(m),
                 factor: f,
                 role: Role::Quality,
+                counted: true,
             });
         }
         if let Some(t) = &self.quiet {
@@ -1132,6 +1528,7 @@ impl CostModel {
                 membership: level(m),
                 factor: f,
                 role: Role::Quality,
+                counted: true,
             });
         }
         for (id, t) in &self.gated {
@@ -1153,6 +1550,7 @@ impl CostModel {
                 membership: level(m),
                 factor: f,
                 role,
+                counted: true,
             });
         }
         // the directional ones, as in `arc_factor`
@@ -1165,6 +1563,7 @@ impl CostModel {
                 membership: level(m),
                 factor: f,
                 role: Role::Quality,
+                counted: true,
             });
         }
         let ascent_m = effective_ascent(asc[dir], v.length, v.forest);
@@ -1178,6 +1577,7 @@ impl CostModel {
                 membership: level(m),
                 factor: f,
                 role: Role::GatedBonus,
+                counted: true,
             });
         } else if self.climb_cost > 0.0 {
             terms.push(Term {
@@ -1185,6 +1585,7 @@ impl CostModel {
                 membership: level(lv(rate / CLIMB_FULL_GRADE)),
                 factor: 1.0,
                 role: Role::Additive,
+                counted: true,
             });
         }
         terms.sort_by_key(|t| t.id.index());
@@ -1223,7 +1624,9 @@ impl CostModel {
                 0.0
             },
             penalties_m: Self::penalty_parts(&v),
+            hills_m: 0.0,
             exclusions,
+            structured: None,
         }
     }
 
@@ -1366,7 +1769,7 @@ struct CtxTables {
 }
 
 /// An edge with nothing set (for the context tables).
-const ZERO_VIEW: View = View {
+pub(crate) const ZERO_VIEW: View = View {
     hw: 0,
     surf: 0,
     tt: 0,
@@ -1519,6 +1922,9 @@ impl CostModel {
         let m = g.edge_count();
         if !classes.fits(m) {
             return self.compile_into(g, personal, out);
+        }
+        if let Some(st) = &self.structured {
+            return self.compile_structured_classes(st, g, classes, personal, out);
         }
         let personal = personal.filter(|p| p.fits(m));
         // per tag class: (quality, bonus, `quiet`'s level of the way's own traffic); quality infinite
@@ -1684,6 +2090,772 @@ impl CostModel {
     }
 }
 
+impl CostModel {
+    /// The direction-independent part of an edge under the structured model.
+    #[inline]
+    fn s_edge(
+        &self,
+        st: &Structured,
+        v: &View,
+        surface: (u8, Confidence),
+        pe: Option<(&PersonalLayer, EdgeId)>,
+    ) -> SEdge {
+        let mut acc = GroupAcc::NEW;
+        for (id, t) in &self.quality {
+            acc.quality(
+                usize::from(st.group[id.index()]),
+                at(t, membership(*id, v, surface, pe)),
+            );
+        }
+        if let Some(t) = &self.quiet {
+            acc.quality(
+                Group::Traffic as usize,
+                at(t, membership(PrefId::Quiet, v, surface, pe)),
+            );
+        }
+        for (id, t) in &self.gated {
+            acc.gated(
+                usize::from(st.group[id.index()]),
+                at(t, membership(*id, v, surface, pe)),
+            );
+        }
+        let (mut board_rel, mut board) = (1.0f32, 1.0f32);
+        if st.surface {
+            let f = st.row_factor(surface_row(surface)).unwrap_or(TIER_FINE);
+            board_rel *= f;
+            board *= f / TIER_FINE;
+        }
+        if st.way {
+            let f = way_row(v.kind())
+                .and_then(|r| st.row_factor(r))
+                .unwrap_or(TIER_FINE);
+            board_rel *= f;
+            board *= f / TIER_FINE;
+        }
+        let (q, bonus) = acc.finish();
+        SEdge {
+            q,
+            bonus,
+            board,
+            board_rel,
+            loose: is_loose(surface),
+        }
+    }
+
+    /// Whether no directional preference joins the groups per arc (the ramps, seeking climbs).
+    #[inline]
+    fn undirected(&self) -> bool {
+        self.grades.is_empty() && self.climb_bonus.is_none()
+    }
+
+    /// One arc under the structured model, from its edge's part.
+    #[inline]
+    #[allow(clippy::too_many_arguments, reason = "an arc's inputs")]
+    fn s_arc(
+        &self,
+        st: &Structured,
+        e: &SEdge,
+        len: f32,
+        forest: u8,
+        grade: [f32; 2],
+        asc: [u16; 2],
+        dir: usize,
+    ) -> SArc {
+        let (mut gq, mut bonus) = (e.q, e.bonus);
+        if !self.undirected() {
+            // the Terrain group: the grade ramps and seeking climbs, per arc
+            let mut t = Slot::NEW;
+            for (_, r, tb) in &self.grades {
+                let f = at(tb, r.level(grade[dir], grade[1 - dir]));
+                if f < 1.0 {
+                    t.b = t.b.min(f);
+                } else {
+                    t.p = t.p.max(f);
+                }
+            }
+            if let Some(tb) = &self.climb_bonus {
+                let rate = effective_ascent(asc[dir], len, forest) / len.max(1.0);
+                let f = at(tb, lv(rate / CLIMB_FULL_GRADE));
+                if f < 1.0 {
+                    t.gb = t.gb.min(f);
+                } else {
+                    t.p = t.p.max(f);
+                }
+            }
+            gq *= t.b * t.p;
+            bonus *= t.gb;
+        }
+        let q = gq * e.board;
+        let gate = Self::gate(q);
+        let raw = q * (1.0 + (bonus - 1.0) * gate);
+        let rel = raw * st.inv_best;
+        let spread = if (st.k - 1.0).abs() < 1e-6 {
+            rel
+        } else {
+            rel.powf(st.k)
+        };
+        let clamped = spread > self.max_factor;
+        let factor = spread.min(self.max_factor);
+        let (hills_m, per_m, split) = match &st.curve {
+            Some(curve) if !st.flat => {
+                let k = if e.loose { st.loose } else { 1.0 };
+                let sp = curve.split(
+                    len,
+                    grade[dir],
+                    grade[1 - dir],
+                    effective_ascent(asc[dir], len, forest),
+                    effective_ascent(asc[1 - dir], len, forest),
+                    k,
+                );
+                let x = sp.value - 1.0;
+                let x = if x < 0.0 { x * gate } else { x };
+                (len * x, factor + x, Some(sp))
+            }
+            _ => (0.0, factor, None),
+        };
+        SArc {
+            q,
+            bonus,
+            gate,
+            raw,
+            rel,
+            factor,
+            clamped,
+            hills_m,
+            per_m,
+            split,
+        }
+    }
+
+    /// The structured compile: every arc evaluated per edge (`length × factor + penalties +
+    /// climbing + hills`). Returns the A* bound: the smallest factor plus hills metres per metre, at
+    /// most `max_factor`.
+    #[allow(clippy::cast_possible_truncation, reason = "edge ids fit u32")]
+    fn compile_structured(
+        &self,
+        st: &Structured,
+        g: &Graph,
+        personal: Option<&PersonalLayer>,
+        out: &mut Vec<f32>,
+    ) -> f32 {
+        let c = g.edge_columns();
+        let m = g.edge_count();
+        out.clear();
+        out.resize(m * 2, f32::INFINITY);
+        let personal = personal.filter(|p| p.fits(m));
+        let need_grade = !self.grades.is_empty() || self.limits.max_grade.is_some() || st.curved();
+        let mut min_per_m = f32::INFINITY;
+        for e in 0..m {
+            let v = View::decode(c, e);
+            let surface = v.surface();
+            let asc = [c.ascent_fwd_dm[e], c.ascent_bwd_dm[e]];
+            let grade = if need_grade {
+                [
+                    tamed_grade(c.grade_fwd[e], asc[0], v.length, v.forest),
+                    tamed_grade(c.grade_bwd[e], asc[1], v.length, v.forest),
+                ]
+            } else {
+                [0.0; 2]
+            };
+            if self.excluded(&v, surface, grade[0], grade[1]).is_some() {
+                continue;
+            }
+            let se = self.s_edge(st, &v, surface, personal.map(|p| (p, e as EdgeId)));
+            let penalty = Self::penalty_m(&v);
+            let oneway = crate::attrs::oneway_of(c.surf[e]);
+            for dir in 0..2 {
+                if !oneway.allows(dir == 1) {
+                    continue;
+                }
+                let sa = self.s_arc(st, &se, v.length, v.forest, grade, asc, dir);
+                let climb = if self.climb_cost > 0.0 {
+                    self.climb_cost * effective_ascent(asc[dir], v.length, v.forest)
+                } else {
+                    0.0
+                };
+                min_per_m = min_per_m.min(sa.per_m);
+                out[e * 2 + dir] = v.length * sa.factor + penalty + climb + sa.hills_m;
+            }
+        }
+        if min_per_m.is_finite() {
+            min_per_m.min(self.max_factor)
+        } else {
+            1.0
+        }
+    }
+
+    /// One arc under the structured model and its other additive metres (penalties, climbing).
+    fn structured_arc_of(
+        &self,
+        st: &Structured,
+        g: &Graph,
+        personal: Option<&PersonalLayer>,
+        a: crate::ArcId,
+    ) -> (SArc, f32) {
+        let c = g.edge_columns();
+        let e = arc_edge(a) as usize;
+        let dir = usize::from(arc_is_reverse(a));
+        let v = View::decode(c, e);
+        let surface = v.surface();
+        let asc = [c.ascent_fwd_dm[e], c.ascent_bwd_dm[e]];
+        let grade = [
+            tamed_grade(c.grade_fwd[e], asc[0], v.length, v.forest),
+            tamed_grade(c.grade_bwd[e], asc[1], v.length, v.forest),
+        ];
+        #[allow(clippy::cast_possible_truncation, reason = "edge ids fit u32")]
+        let pe = personal
+            .filter(|p| p.fits(g.edge_count()))
+            .map(|p| (p, e as EdgeId));
+        let se = self.s_edge(st, &v, surface, pe);
+        let sa = self.s_arc(st, &se, v.length, v.forest, grade, asc, dir);
+        let climb = if self.climb_cost > 0.0 {
+            self.climb_cost * effective_ascent(asc[dir], v.length, v.forest)
+        } else {
+            0.0
+        };
+        (sa, Self::penalty_m(&v) + climb)
+    }
+
+    /// [`CostModel::breakdown`] under the structured model.
+    #[allow(clippy::too_many_lines, reason = "the cost's steps, one after the other")]
+    fn breakdown_structured(
+        &self,
+        st: &Structured,
+        g: &Graph,
+        personal: Option<&PersonalLayer>,
+        a: crate::ArcId,
+    ) -> ArcBreakdown {
+        let c = g.edge_columns();
+        let e = arc_edge(a) as usize;
+        let dir = usize::from(arc_is_reverse(a));
+        let v = View::decode(c, e);
+        let surface = v.surface();
+        let personal = personal.filter(|p| p.fits(g.edge_count()));
+        #[allow(clippy::cast_possible_truncation, reason = "edge ids fit u32")]
+        let pe = personal.map(|p| (p, e as EdgeId));
+        let asc = [c.ascent_fwd_dm[e], c.ascent_bwd_dm[e]];
+        let grade = [
+            tamed_grade(c.grade_fwd[e], asc[0], v.length, v.forest),
+            tamed_grade(c.grade_bwd[e], asc[1], v.length, v.forest),
+        ];
+        let level = |m: i8| f32::from(m) / 15.0;
+        let mut terms = Vec::new();
+        let mut term = |id: PrefId, m: i8, f: f32, role: Role| {
+            terms.push(Term {
+                id,
+                membership: level(m),
+                factor: f,
+                role,
+                counted: false,
+            });
+        };
+        for (id, t) in &self.quality {
+            let m = membership(*id, &v, surface, pe);
+            term(*id, m, at(t, m), Role::Quality);
+        }
+        if let Some(t) = &self.quiet {
+            let m = membership(PrefId::Quiet, &v, surface, pe);
+            term(PrefId::Quiet, m, at(t, m), Role::Quality);
+        }
+        for (id, t) in &self.gated {
+            let m = membership(*id, &v, surface, pe);
+            let f = at(t, m);
+            term(
+                *id,
+                m,
+                f,
+                if f > 1.0 {
+                    Role::GatedPenalty
+                } else {
+                    Role::GatedBonus
+                },
+            );
+        }
+        for (id, r, t) in &self.grades {
+            let m = r.level(grade[dir], grade[1 - dir]);
+            term(*id, m, at(t, m), Role::Quality);
+        }
+        let ascent_m = effective_ascent(asc[dir], v.length, v.forest);
+        let rate = ascent_m / v.length.max(1.0);
+        if let Some(t) = &self.climb_bonus {
+            let m = lv(rate / CLIMB_FULL_GRADE);
+            term(PrefId::Climb, m, at(t, m), Role::GatedBonus);
+        } else if self.climb_cost > 0.0 {
+            term(PrefId::Climb, lv(rate / CLIMB_FULL_GRADE), 1.0, Role::Additive);
+        }
+        terms.sort_by_key(|t| t.id.index());
+        // what counts, as `GroupAcc` picks it: per group the strongest quality bonus, the strongest
+        // penalty (quality or gated) and the strongest gated bonus (the first on a tie)
+        let mut groups: Vec<GroupPart> = Vec::new();
+        for gi in 0..GROUPS {
+            let in_group: Vec<usize> = (0..terms.len())
+                .filter(|&i| {
+                    usize::from(st.group[terms[i].id.index()]) == gi && terms[i].role != Role::Additive
+                })
+                .collect();
+            if in_group.is_empty() {
+                continue;
+            }
+            let pick = |want: &dyn Fn(&Term) -> bool, smaller: bool| {
+                let mut best: Option<usize> = None;
+                for &i in &in_group {
+                    let t = &terms[i];
+                    if !want(t) {
+                        continue;
+                    }
+                    let better = best.is_none_or(|b| {
+                        if smaller {
+                            t.factor < terms[b].factor
+                        } else {
+                            t.factor > terms[b].factor
+                        }
+                    });
+                    if better {
+                        best = Some(i);
+                    }
+                }
+                best
+            };
+            let b = pick(&|t| t.role == Role::Quality && t.factor < 1.0, true);
+            let p = pick(&|t| t.role != Role::GatedBonus && t.factor > 1.0, false);
+            let gb = pick(&|t| t.role == Role::GatedBonus && t.factor < 1.0, true);
+            for i in [b, p, gb].into_iter().flatten() {
+                terms[i].counted = true;
+            }
+            let part = |i: Option<usize>| {
+                i.map(|i| crate::route::Reason {
+                    id: terms[i].id,
+                    factor: terms[i].factor,
+                })
+            };
+            let (bb, gbb) = st.best_groups[gi];
+            groups.push(GroupPart {
+                group: group_of(gi),
+                bonus: part(b),
+                penalty: part(p),
+                gated_bonus: part(gb),
+                best: bb * gbb,
+            });
+        }
+        for t in &mut terms {
+            if t.role == Role::Additive {
+                t.counted = true;
+            }
+        }
+        let se = self.s_edge(st, &v, surface, pe);
+        let sa = self.s_arc(st, &se, v.length, v.forest, grade, asc, dir);
+        let mut boards = Vec::new();
+        if st.surface {
+            let row = surface_row(surface);
+            boards.extend(st.tiers[row.index()].map(|t| BoardPart::new(row, t, row_tier_factor(t))));
+        }
+        if st.way
+            && let Some(row) = way_row(v.kind())
+        {
+            boards.extend(st.tiers[row.index()].map(|t| BoardPart::new(row, t, row_tier_factor(t))));
+        }
+        let mut exclusions = Vec::new();
+        self.exclusions(&v, surface, grade[0], grade[1], |x| {
+            exclusions.push(x);
+            false
+        });
+        if !crate::attrs::oneway_of(c.surf[e]).allows(dir == 1) {
+            exclusions.push(Exclusion::Oneway);
+        }
+        ArcBreakdown {
+            terms,
+            quality: sa.q,
+            bonus: sa.bonus,
+            gate: sa.gate,
+            raw: sa.raw,
+            factor: sa.factor,
+            clamp: sa.clamped.then_some(Clamp::Max),
+            ascent_m,
+            grade_up_pct: grade[dir],
+            grade_down_pct: grade[1 - dir],
+            climb_m: if self.climb_cost > 0.0 {
+                self.climb_cost * ascent_m
+            } else {
+                0.0
+            },
+            penalties_m: Self::penalty_parts(&v),
+            hills_m: sa.hills_m,
+            exclusions,
+            structured: Some(StructuredParts {
+                boards,
+                board_factor: se.board_rel,
+                groups,
+                best: st.best,
+                relative: sa.rel,
+                detours: st.k,
+                hills: sa
+                    .split
+                    .map(|sp| HillsPart::new(sp, sa.hills_m, se.loose, sa.gate)),
+            }),
+        }
+    }
+
+    /// The parts of an arc the hills curve reads, as metres per signed grade (percent, as the
+    /// curve reads it: loose ground steeper): wall, climbing, descending. `None` without a curve.
+    #[must_use]
+    pub fn hills_parts(&self, g: &Graph, a: crate::ArcId) -> Option<[(f32, f32); 3]> {
+        let st = self.structured.as_ref()?;
+        let curve = st.curve.as_ref()?;
+        let c = g.edge_columns();
+        let e = arc_edge(a) as usize;
+        let dir = usize::from(arc_is_reverse(a));
+        let v = View::decode(c, e);
+        let asc = [c.ascent_fwd_dm[e], c.ascent_bwd_dm[e]];
+        let grade = [
+            tamed_grade(c.grade_fwd[e], asc[0], v.length, v.forest),
+            tamed_grade(c.grade_bwd[e], asc[1], v.length, v.forest),
+        ];
+        let k = if is_loose(v.surface()) { st.loose } else { 1.0 };
+        let sp = curve.split(
+            v.length,
+            grade[dir],
+            grade[1 - dir],
+            effective_ascent(asc[dir], v.length, v.forest),
+            effective_ascent(asc[1 - dir], v.length, v.forest),
+            k,
+        );
+        Some([
+            (sp.wall_pct, sp.wall_m),
+            (sp.climb_pct, sp.climb_m),
+            (sp.descent_pct, sp.descent_m),
+        ])
+    }
+}
+
+/// The structured model's context tables: per context nibble the slot of the group its
+/// preferences are in (landscape; traffic and way type beside roads).
+struct SCtx {
+    forest_built: [Slot; 256],
+    forest_edge: [Slot; 16],
+    water: [Slot; 16],
+    /// By road-near | bike path << 4 | road with a cycle track << 5: (traffic, way type).
+    road: [(Slot, Slot); 64],
+    alongside: [i8; 256],
+}
+
+const TRAFFIC: usize = Group::Traffic as usize;
+const WAYS: usize = Group::Ways as usize;
+
+impl CostModel {
+    /// The slot of some context-side preferences on a synthetic edge.
+    fn ctx_slot(&self, only: &[PrefId], v: &View) -> Slot {
+        let mut s = Slot::NEW;
+        let none = (0, Confidence::Tagged);
+        for (list, gated) in [(&self.quality, false), (&self.gated, true)] {
+            for (id, t) in list.iter().filter(|(id, _)| only.contains(id)) {
+                let f = at(t, membership(*id, v, none, None));
+                if f < 1.0 {
+                    if gated {
+                        s.gb = s.gb.min(f);
+                    } else {
+                        s.b = s.b.min(f);
+                    }
+                } else {
+                    s.p = s.p.max(f);
+                }
+            }
+        }
+        s
+    }
+
+    #[allow(clippy::cast_possible_truncation, reason = "nibbles")]
+    fn s_ctx_tables(&self) -> SCtx {
+        let mut t = SCtx {
+            forest_built: [Slot::NEW; 256],
+            forest_edge: [Slot::NEW; 16],
+            water: [Slot::NEW; 16],
+            road: [(Slot::NEW, Slot::NEW); 64],
+            alongside: [0; 256],
+        };
+        for i in 0..256usize {
+            let lo = (i & 15) as u8;
+            t.alongside[i] = membership(
+                PrefId::Quiet,
+                &View {
+                    road_near: lo,
+                    near_traffic: (i >> 4) as u8,
+                    ..ZERO_VIEW
+                },
+                (0, Confidence::Tagged),
+                None,
+            );
+            t.forest_built[i] = self.ctx_slot(
+                &[PrefId::Forest, PrefId::Built, PrefId::Open],
+                &View {
+                    forest: lo,
+                    built: (i >> 4) as u8,
+                    ..ZERO_VIEW
+                },
+            );
+            if i < 16 {
+                t.forest_edge[i] = self.ctx_slot(
+                    &[PrefId::ForestEdge],
+                    &View {
+                        forest_edge: lo,
+                        ..ZERO_VIEW
+                    },
+                );
+                t.water[i] = self.ctx_slot(
+                    &[PrefId::Water],
+                    &View {
+                        water: lo,
+                        ..ZERO_VIEW
+                    },
+                );
+            }
+            let (bike_path, roadside) = (i & 16 != 0, i & 32 != 0);
+            if i < 64 && !(bike_path && roadside) {
+                let v = View {
+                    road_near: lo,
+                    hw: if bike_path {
+                        hw::CYCLEWAY
+                    } else if roadside {
+                        3
+                    } else {
+                        0
+                    },
+                    cyc: if roadside { 3 } else { 0 },
+                    ..ZERO_VIEW
+                };
+                t.road[i] = (
+                    self.ctx_slot(&[PrefId::NearRoad], &v),
+                    self.ctx_slot(&[PrefId::CyclewaySep, PrefId::CyclewayRoad], &v),
+                );
+            }
+        }
+        t
+    }
+
+    /// [`CostModel::compile_structured`] through edge classes: the same costs, faster.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::too_many_lines,
+        reason = "edge ids fit u32; one pass"
+    )]
+    fn compile_structured_classes(
+        &self,
+        st: &Structured,
+        g: &Graph,
+        classes: &EdgeClasses,
+        personal: Option<&PersonalLayer>,
+        out: &mut Vec<f32>,
+    ) -> f32 {
+        let c = g.edge_columns();
+        let m = g.edge_count();
+        let personal = personal.filter(|p| p.fits(m));
+        let tags: Vec<STag> = classes
+            .rep
+            .iter()
+            .map(|&r| {
+                let v = View::decode(c, r as usize);
+                let surface = v.surface();
+                let mut acc = GroupAcc::NEW;
+                for (id, t) in &self.quality {
+                    if side(*id) == Side::Tag {
+                        acc.quality(
+                            usize::from(st.group[id.index()]),
+                            at(t, membership(*id, &v, surface, None)),
+                        );
+                    }
+                }
+                for (id, t) in &self.gated {
+                    if side(*id) == Side::Tag {
+                        acc.gated(
+                            usize::from(st.group[id.index()]),
+                            at(t, membership(*id, &v, surface, None)),
+                        );
+                    }
+                }
+                let own = View {
+                    road_near: 0,
+                    near_traffic: 0,
+                    ..v
+                };
+                // landscape and history have no tag side: only traffic and way type stay open
+                let (mut q, mut bonus) = (1.0f32, 1.0f32);
+                for g in 0..GROUPS {
+                    if g != TRAFFIC && g != WAYS {
+                        q *= acc.b[g] * acc.p[g];
+                        bonus *= acc.gb[g];
+                    }
+                }
+                let mut tag = STag {
+                    q,
+                    bonus,
+                    traffic: Slot::of(&acc, TRAFFIC),
+                    ways: Slot::of(&acc, WAYS),
+                    quiet_own: membership(PrefId::Quiet, &own, surface, None),
+                    loose: is_loose(surface),
+                    closed: [false; 2],
+                    board: [1.0; 2],
+                    board_rel: [1.0; 2],
+                };
+                for (k, near) in [0u8, 15].into_iter().enumerate() {
+                    let vk = View { road_near: near, ..v };
+                    tag.closed[k] = self.excluded(&vk, surface, 0.0, 0.0).is_some();
+                    // (only the boards of it: they read the tags and whether a cycle path is near a road)
+                    let se = self.s_edge(st, &vk, surface, None);
+                    tag.board_rel[k] = se.board_rel;
+                    tag.board[k] = se.board;
+                }
+                tag
+            })
+            .collect();
+        let ct = self.s_ctx_tables();
+        let history: Vec<(PrefId, Table)> = if personal.is_some() {
+            self.gated
+                .iter()
+                .filter(|(id, _)| side(*id) == Side::Edge)
+                .copied()
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let need_grade = !self.grades.is_empty() || self.limits.max_grade.is_some() || st.curved();
+        let per_arc = st.curved() || !self.undirected() || self.climb_cost > 0.0;
+        out.clear();
+        out.resize(m * 2, f32::INFINITY);
+        let mut min_per_m = f32::INFINITY;
+        for (e, pair) in out.as_chunks_mut::<2>().0.iter_mut().enumerate() {
+            let road_near = usize::from(c.ctx2[e] & 15);
+            let near = usize::from(road_near > usize::from(HALF));
+            let tag = &tags[usize::from(classes.tag[e])];
+            if tag.closed[near] {
+                continue;
+            }
+            let ctx = c.ctx[e];
+            let nib = |s: u16| usize::from((ctx >> s) & 15);
+            let forest = nib(0);
+            let hwy = c.highway[e];
+            let cyc = c.road[e] & 7;
+            let motor_road = (hw::TRUNK..=hw::ROAD).contains(&hwy);
+            let bike_path = hwy == hw::CYCLEWAY || (cyc == 4 && !motor_road);
+            let roadside = motor_road && cyc == 3 && !bike_path;
+            let road_key = road_near | usize::from(bike_path) << 4 | usize::from(roadside) << 5;
+            let mut land = ct.forest_built[forest | nib(12) << 4];
+            land.merge(ct.forest_edge[nib(4)]);
+            land.merge(ct.water[nib(8)]);
+            let (tr, wy) = ct.road[road_key];
+            let mut traffic = tag.traffic;
+            traffic.merge(tr);
+            let mut ways = tag.ways;
+            ways.merge(wy);
+            if let Some(t) = &self.quiet {
+                let along = ct.alongside[road_near | usize::from(c.ctx3[e] & 15) << 4];
+                let f = at(t, tag.quiet_own.min(along));
+                if f < 1.0 {
+                    traffic.b = traffic.b.min(f);
+                } else {
+                    traffic.p = traffic.p.max(f);
+                }
+            }
+            let mut hist = Slot::NEW;
+            if let Some(p) = personal
+                && !history.is_empty()
+            {
+                let v = View::decode(c, e);
+                for (id, t) in &history {
+                    let f = at(
+                        t,
+                        membership(*id, &v, (0, Confidence::Tagged), Some((p, e as EdgeId))),
+                    );
+                    if f < 1.0 {
+                        hist.gb = hist.gb.min(f);
+                    } else {
+                        hist.p = hist.p.max(f);
+                    }
+                }
+            }
+            let len = crate::attrs::length_m_of(c.length_dm[e]);
+            let mut penalty = f32::from(c.diff[e] >> 6) * BARRIER_M;
+            if hwy == hw::STEPS {
+                penalty += len * STEPS_PER_M + STEPS_EACH_M;
+            } else if hwy == hw::FERRY {
+                penalty += FERRY_M;
+            }
+            if c.access[e] & 15 == ba::DISMOUNT {
+                penalty += len * DISMOUNT_PER_M;
+            }
+            let se = SEdge {
+                q: tag.q
+                    * (land.b * land.p)
+                    * (traffic.b * traffic.p)
+                    * (ways.b * ways.p)
+                    * (hist.b * hist.p),
+                bonus: tag.bonus * land.gb * traffic.gb * ways.gb * hist.gb,
+                board: tag.board[near],
+                board_rel: tag.board_rel[near],
+                loose: tag.loose,
+            };
+            let forest = forest as u8;
+            let asc = [c.ascent_fwd_dm[e], c.ascent_bwd_dm[e]];
+            let grade = if need_grade {
+                [
+                    tamed_grade(c.grade_fwd[e], asc[0], len, forest),
+                    tamed_grade(c.grade_bwd[e], asc[1], len, forest),
+                ]
+            } else {
+                [0.0; 2]
+            };
+            if let Some(max) = self.limits.max_grade
+                && grade[0].max(grade[1]) > max
+            {
+                continue;
+            }
+            let oneway = crate::attrs::oneway_of(c.surf[e]);
+            if !per_arc {
+                // nothing differs by direction: one evaluation for both
+                let sa = self.s_arc(st, &se, len, forest, grade, asc, 0);
+                min_per_m = min_per_m.min(sa.per_m);
+                let cost = len * sa.factor + penalty;
+                for (dir, slot) in pair.iter_mut().enumerate() {
+                    if oneway.allows(dir == 1) {
+                        *slot = cost;
+                    }
+                }
+                continue;
+            }
+            for (dir, slot) in pair.iter_mut().enumerate() {
+                if !oneway.allows(dir == 1) {
+                    continue;
+                }
+                let sa = self.s_arc(st, &se, len, forest, grade, asc, dir);
+                let climb = if self.climb_cost > 0.0 {
+                    self.climb_cost * effective_ascent(asc[dir], len, forest)
+                } else {
+                    0.0
+                };
+                min_per_m = min_per_m.min(sa.per_m);
+                *slot = len * sa.factor + penalty + climb + sa.hills_m;
+            }
+        }
+        if min_per_m.is_finite() {
+            min_per_m.min(self.max_factor)
+        } else {
+            1.0
+        }
+    }
+}
+
+/// A group by its index.
+fn group_of(i: usize) -> Group {
+    [
+        Group::Surface,
+        Group::Ways,
+        Group::Traffic,
+        Group::Landscape,
+        Group::Terrain,
+        Group::Signs,
+        Group::Trail,
+        Group::History,
+    ][i.min(GROUPS - 1)]
+}
+
 /// The surface class the cost uses for an edge and how sure it is.
 #[must_use]
 pub(crate) fn cost_surface(g: &Graph, e: EdgeId) -> (SurfaceClass, Confidence) {
@@ -1704,10 +2876,15 @@ impl CostModel {
     /// The additive metres of an arc (climbing, barriers, steps, dismount, ferry), as the compile
     /// adds them.
     #[must_use]
-    pub(crate) fn extra_m(&self, g: &Graph, a: crate::ArcId) -> f32 {
+    pub(crate) fn extra_m(&self, g: &Graph, personal: Option<&PersonalLayer>, a: crate::ArcId) -> f32 {
+        if let Some(st) = &self.structured {
+            let (sa, extra) = self.structured_arc_of(st, g, personal, a);
+            return sa.hills_m + extra;
+        }
         let c = g.edge_columns();
         let e = arc_edge(a) as usize;
         let v = View::decode(c, e);
+        let _ = personal;
         let climb = if self.climb_cost > 0.0 {
             let dm = if arc_is_reverse(a) {
                 c.ascent_bwd_dm[e]
@@ -1793,26 +2970,33 @@ pub fn arc_ascent_m(g: &Graph, a: crate::ArcId) -> f32 {
 /// The way kind a route reports.
 #[must_use]
 pub fn way_kind(g: &Graph, e: EdgeId) -> WayKind {
-    let v = View::decode(g.edge_columns(), e as usize);
-    if v.is_bike_path() {
-        return if v.road_near > HALF {
-            WayKind::BikePathRoadside
-        } else {
-            WayKind::BikePath
-        };
-    }
-    match v.hw {
-        // riding the road's own cycle track
-        1..=13 if v.cyc == 3 => WayKind::BikePathRoadside,
-        1..=6 => WayKind::MainRoad,
-        hw::TERTIARY | hw::TERTIARY_LINK | hw::UNCLASSIFIED | hw::ROAD => WayKind::CountryRoad,
-        hw::RESIDENTIAL | hw::LIVING_STREET | hw::PEDESTRIAN => WayKind::Residential,
-        hw::SERVICE => WayKind::Service,
-        hw::TRACK => WayKind::Track,
-        hw::PATH | hw::FOOTWAY | hw::BRIDLEWAY => WayKind::Path,
-        hw::STEPS => WayKind::Steps,
-        hw::FERRY => WayKind::Ferry,
-        _ => WayKind::Other,
+    View::decode(g.edge_columns(), e as usize).kind()
+}
+
+impl View {
+    /// The way kind a route reports (and the way board's row, [`way_row`]).
+    #[inline]
+    pub(crate) fn kind(&self) -> WayKind {
+        if self.is_bike_path() {
+            return if self.road_near > HALF {
+                WayKind::BikePathRoadside
+            } else {
+                WayKind::BikePath
+            };
+        }
+        match self.hw {
+            // riding the road's own cycle track
+            1..=13 if self.cyc == 3 => WayKind::BikePathRoadside,
+            1..=6 => WayKind::MainRoad,
+            hw::TERTIARY | hw::TERTIARY_LINK | hw::UNCLASSIFIED | hw::ROAD => WayKind::CountryRoad,
+            hw::RESIDENTIAL | hw::LIVING_STREET | hw::PEDESTRIAN => WayKind::Residential,
+            hw::SERVICE => WayKind::Service,
+            hw::TRACK => WayKind::Track,
+            hw::PATH | hw::FOOTWAY | hw::BRIDLEWAY => WayKind::Path,
+            hw::STEPS => WayKind::Steps,
+            hw::FERRY => WayKind::Ferry,
+            _ => WayKind::Other,
+        }
     }
 }
 
@@ -1880,4 +3064,26 @@ pub fn coverage(g: &Graph, personal: Option<&PersonalLayer>) -> BTreeMap<&'stati
     acc.into_iter()
         .map(|(k, (m, r))| (k, if r > 0.0 { (m / r) as f32 } else { 0.0 }))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_structured_class_compile_knows_where_each_group_comes_from() {
+        // `compile_structured_classes` finishes every group but traffic and way type per class:
+        // landscape and history must have no tag side, the others no context or personal side;
+        // terrain is all directional (per arc)
+        for &id in PrefId::ALL {
+            let g = pref_meta(id).group;
+            match g {
+                Group::Traffic | Group::Ways => {}
+                Group::Landscape => assert_eq!(side(id), Side::Ctx, "{id}"),
+                Group::History => assert_eq!(side(id), Side::Edge, "{id}"),
+                Group::Terrain => assert!(id == PrefId::Climb || grade_ramp(id).is_some(), "{id}"),
+                _ => assert_eq!(side(id), Side::Tag, "{id}"),
+            }
+        }
+    }
 }

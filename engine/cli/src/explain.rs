@@ -242,6 +242,7 @@ fn value(v: Option<&AttrValue>) -> String {
     }
 }
 
+#[allow(clippy::too_many_lines, reason = "one direction, every step")]
 fn direction(out: &mut String, name: &str, len: f32, d: &ArcCostExplanation) {
     let _ = writeln!(out, "\n{name} (arc {}):", d.arc);
     if !d.closed_by.is_empty() {
@@ -255,11 +256,48 @@ fn direction(out: &mut String, name: &str, len: f32, d: &ArcCostExplanation) {
             .ok()
             .and_then(|v| v.as_str().map(str::to_owned))
             .unwrap_or_default();
+        let counted = if t.counted == Some(false) && (t.factor - 1.0).abs() > 1e-4 {
+            " (does not count: a stronger one in its group)"
+        } else {
+            ""
+        };
         let _ = writeln!(
             out,
-            "  | {} | {} | {:.2} | {:.3} | {role} |",
+            "  | {} | {} | {:.2} | {:.3} | {role}{counted} |",
             t.id, t.weight, t.membership, t.factor
         );
+    }
+    if let Some(st) = &d.structured {
+        for b in &st.boards {
+            let _ = writeln!(
+                out,
+                "  {}: {}, counts {:.2}× (relative to fine {:.2}×)",
+                kompass_core::structured::row_label(b.row),
+                b.tier,
+                b.factor,
+                b.vs_fine
+            );
+        }
+        let _ = writeln!(
+            out,
+            "  relative to the profile's best ({:.3}): {:.3}, spread ^{:.2}",
+            st.best, st.relative, st.detours
+        );
+        if let Some(h) = &st.hills {
+            let _ = writeln!(
+                out,
+                "  hills {:+.1} m (a metre counts {:.2}): {:.0} m at {:+.1} %, {:.0} m at {:+.1} %, {:.0} m at {:+.1} %{}",
+                h.metres,
+                h.value,
+                h.wall_m,
+                h.wall_pct,
+                h.climb_m,
+                h.climb_pct,
+                h.descent_m,
+                h.descent_pct,
+                if h.loose { " (loose ground)" } else { "" }
+            );
+        }
     }
     let clamp = d.clamp.map_or(String::new(), |c| {
         format!(

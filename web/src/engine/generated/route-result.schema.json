@@ -207,6 +207,27 @@
             "$ref": "#/$defs/Part3"
           },
           "default": []
+        },
+        "rows": {
+          "description": "Structured model: per row of the boards the profile has, the length of the route in it\n(board order, 0 m included): what each row \"touches\".",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/Part4"
+          }
+        },
+        "grades": {
+          "description": "Structured model with a hills curve: the route's length per grade as the curve reads it\n(the distribution behind the curve).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GradeHistogram"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -398,6 +419,74 @@
         "novel",
         "stale",
         "familiar"
+      ]
+    },
+    "Part4": {
+      "description": "A length per key.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/BoardRow"
+        },
+        "length_m": {
+          "type": "number",
+          "format": "float"
+        },
+        "share": {
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "required": [
+        "key",
+        "length_m",
+        "share"
+      ]
+    },
+    "BoardRow": {
+      "description": "A row of a board: every way is in exactly one row of each board ([`BoardRow::board`]).",
+      "type": "string",
+      "enum": [
+        "paved",
+        "rough_paved",
+        "compacted",
+        "gravel",
+        "soft",
+        "unknown",
+        "main",
+        "country_road",
+        "residential",
+        "service",
+        "track",
+        "path",
+        "cycle_path",
+        "cycle_path_roadside"
+      ]
+    },
+    "GradeHistogram": {
+      "description": "Metres per grade band: `metres[i]` lies in `[from_pct + i × step_pct, from_pct + (i + 1) ×\nstep_pct)`, the first and last band also hold everything beyond. Signed (< 0 downhill), as the\nhills curve reads it (the steepest 50 m of each arc, the rest split by ascent and descent; loose\nground steeper).",
+      "type": "object",
+      "properties": {
+        "from_pct": {
+          "type": "number",
+          "format": "float"
+        },
+        "step_pct": {
+          "type": "number",
+          "format": "float"
+        },
+        "metres": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          }
+        }
+      },
+      "required": [
+        "from_pct",
+        "step_pct",
+        "metres"
       ]
     },
     "Snapped": {
@@ -616,11 +705,29 @@
           "format": "float"
         },
         "why": {
-          "description": "Why this way: the strongest preferences here (length-weighted geometric means), at most 3,\nstrongest first.",
+          "description": "Why this way: the strongest preferences here (length-weighted geometric means), at most 3,\nstrongest first. Structured model: only what counts (per group its strongest bonus and\npenalty).",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Reason"
           }
+        },
+        "tiers": {
+          "description": "Structured model: the segment's row and tier on each board the profile has.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/RowTier"
+          }
+        },
+        "hills_m": {
+          "description": "Structured model with a hills curve: its metres here (part of `extra_m`).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
         }
       },
       "required": [
@@ -650,6 +757,33 @@
       "required": [
         "id",
         "factor"
+      ]
+    },
+    "RowTier": {
+      "description": "A way's row on a board and the tier the profile puts it in.",
+      "type": "object",
+      "properties": {
+        "row": {
+          "$ref": "#/$defs/BoardRow"
+        },
+        "tier": {
+          "$ref": "#/$defs/Tier"
+        }
+      },
+      "required": [
+        "row",
+        "tier"
+      ]
+    },
+    "Tier": {
+      "description": "A tier of a board: how much the rider likes the ways of a row, best first in [`Tier::BEST_FIRST`].",
+      "type": "string",
+      "enum": [
+        "avoid",
+        "dislike",
+        "fine",
+        "like",
+        "love"
       ]
     },
     "RouteGeometry": {

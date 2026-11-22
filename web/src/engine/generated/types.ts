@@ -38,6 +38,63 @@ min_factor: number,
 max_factor: number, };
 
 /**
+ * A tier of a board: how much the rider likes the ways of a row, best first in [`Tier::BEST_FIRST`].
+ */
+export type Tier = "avoid" | "dislike" | "fine" | "like" | "love";
+
+/**
+ * A board of the structured model.
+ */
+export type BoardId = "surface" | "way";
+
+/**
+ * A row of a board: every way is in exactly one row of each board ([`BoardRow::board`]).
+ */
+export type BoardRow = "paved" | "rough_paved" | "compacted" | "gravel" | "soft" | "unknown" | "main" | "country_road" | "residential" | "service" | "track" | "path" | "cycle_path" | "cycle_path_roadside";
+
+/**
+ * The surface board: a tier per surface class of the way (the tag, else a safe guess; weak
+ * guesses and unusual surfaces are `unknown`).
+ */
+export type SurfaceBoard = { paved: Tier, rough_paved: Tier, compacted: Tier, gravel: Tier, soft: Tier, unknown: Tier, };
+
+/**
+ * The way board: a tier per kind of way (the route's way types; steps count as paths).
+ */
+export type WayBoard = { main: Tier, country_road: Tier, residential: Tier, service: Tier, track: Tier, path: Tier, cycle_path: Tier, cycle_path_roadside: Tier, };
+
+/**
+ * The tier boards (structured model): each board present replaces its slider preferences.
+ */
+export type Boards = { surface?: SurfaceBoard, way?: WayBoard, };
+
+/**
+ * The hills curve's climbing handles: the cost of a metre at that grade (percent, uphill) relative
+ * to a flat metre (0 % is pinned at 1). Below 1 seeks climbs (counts through the gate).
+ */
+export type UpHandles = { "3": number, "6": number, "10": number, "15": number, };
+
+/**
+ * The hills curve's descending handles (percent downhill), 1 or more.
+ */
+export type DownHandles = { "8": number, "15": number, };
+
+/**
+ * The hills curve (structured model): what a metre costs against its grade, an additive term in
+ * metres (`length × (curve − 1)`). Replaces `climb`, `steep` and `ramps_over_*`.
+ */
+export type Hills = { up: UpHandles, 
+/**
+ * Absent: a descent counts like a climb of half its grade (at least 1).
+ */
+down?: DownHandles, 
+/**
+ * On loose ground (gravel, soft, unusual surfaces) grades count this many percent steeper,
+ * 0..=50 (default 0).
+ */
+loose_pct: number, };
+
+/**
  * A routing profile.
  */
 export type Profile = { 
@@ -59,7 +116,8 @@ weights: { [key in PrefId]?: Weight },
  */
 limits: { [key in LimitId]?: LimitValue }, 
 /**
- * The factor clamp; defaults apply when absent.
+ * The factor clamp; defaults apply when absent. In the structured model only `max_factor`
+ * counts (`min_factor` must stay at its default: `detours` takes its place).
  */
 bounds?: Bounds, 
 /**
@@ -67,7 +125,20 @@ bounds?: Bounds,
  * [`TURN_M`]; 0: turns are free). Straight on costs nothing, a U-turn twice this; leaving the
  * through road at least half of it (`docs/routing.md#turns`).
  */
-turn_m?: number, };
+turn_m?: number, 
+/**
+ * Structured model: the tier boards.
+ */
+boards?: Boards, 
+/**
+ * Structured model: the hills curve.
+ */
+hills?: Hills, 
+/**
+ * Structured model: the spread of the relative factors, an exponent 0.5..=2 (default 1; more
+ * is "Detours: more", a loved way is worth a longer ride).
+ */
+detours?: number, };
 
 /**
  * A preset.
@@ -184,13 +255,81 @@ export type BoundRange = { min: number, max: number, default: number, };
 export type BoundsInfo = { min_factor: BoundRange, max_factor: BoundRange, };
 
 /**
+ * A row of a board, for the UI.
+ */
+export type RowInfo = { id: BoardRow, label: string, hint: string, 
+/**
+ * Which ways fall in it.
+ */
+ways: string, };
+
+/**
+ * A board, for the UI.
+ */
+export type BoardInfo = { id: BoardId, label: string, hint: string, rows: Array<RowInfo>, 
+/**
+ * The slider preferences and limits it replaces (rejected in a profile that has it).
+ */
+replaces: Array<PrefId>, replaces_limits: Array<LimitId>, };
+
+/**
+ * A tier, for the UI.
+ */
+export type TierInfo = { id: Tier, label: string, hint: string, 
+/**
+ * A metre's factor relative to `love`; absent for `avoid` (closed: a limit).
+ */
+factor?: number, };
+
+/**
+ * A handle of the hills curve: its grade and the range of its value.
+ */
+export type HandleInfo = { 
+/**
+ * Percent, signed (< 0 downhill).
+ */
+grade_pct: number, min: number, max: number, step: number, };
+
+/**
+ * A named curve.
+ */
+export type CurvePreset = { id: string, label: string, blurb: string, hills: Hills, };
+
+/**
+ * The hills curve, for the UI.
+ */
+export type HillsInfo = { label: string, hint: string, 
+/**
+ * The handles in grade order: `down` (−15, −8), then `up` (3, 6, 10, 15); 0 % is pinned at 1.
+ */
+handles: Array<HandleInfo>, 
+/**
+ * The curve is flat beyond ±this many percent.
+ */
+flat_beyond_pct: number, loose_pct: BoundRange, loose_label: string, curves: Array<CurvePreset>, replaces: Array<PrefId>, };
+
+/**
+ * The structured controls (`catalogue().structured`): boards, tiers, the hills curve, detours.
+ */
+export type StructuredInfo = { boards: Array<BoardInfo>, 
+/**
+ * Best first.
+ */
+tiers: Array<TierInfo>, hills: HillsInfo, detours: BoundRange, detours_hint: string, };
+
+/**
  * The whole catalogue (`kompass profile catalogue`).
  */
 export type Catalogue = { version: number, groups: Array<GroupInfo>, preferences: Array<Preference>, limits: Array<Limit>, bounds: BoundsInfo, 
 /**
  * The range of `turn_m`, what a right-angle turn at a junction costs (metres-equivalent).
  */
-turn_m: BoundRange, };
+turn_m: BoundRange, 
+/**
+ * The structured controls (boards, tiers, the hills curve, detours; a prototype). Always
+ * present.
+ */
+structured?: StructuredInfo, };
 
 /**
  * A coordinate in degrees.
@@ -338,6 +477,11 @@ excluded_by?: string, };
 export type Reason = { id: PrefId, factor: number, };
 
 /**
+ * A way's row on a board and the tier the profile puts it in.
+ */
+export type RowTier = { row: BoardRow, tier: Tier, };
+
+/**
  * A stretch of the route with one surface, way type and ridden state.
  */
 export type Segment = { 
@@ -367,9 +511,18 @@ factor: number,
 extra_m: number, 
 /**
  * Why this way: the strongest preferences here (length-weighted geometric means), at most 3,
- * strongest first.
+ * strongest first. Structured model: only what counts (per group its strongest bonus and
+ * penalty).
  */
-why: Array<Reason>, };
+why: Array<Reason>, 
+/**
+ * Structured model: the segment's row and tier on each board the profile has.
+ */
+tiers?: Array<RowTier>, 
+/**
+ * Structured model with a hills curve: its metres here (part of `extra_m`).
+ */
+hills_m?: number, };
 
 /**
  * One leg (waypoint `i` → `i + 1`).
@@ -468,6 +621,14 @@ export type Part<K> = { key: K, length_m: number, share: number, };
 export type RiddenParts = { new_m: number, ridden_m: number, new_share: number, };
 
 /**
+ * Metres per grade band: `metres[i]` lies in `[from_pct + i × step_pct, from_pct + (i + 1) ×
+ * step_pct)`, the first and last band also hold everything beyond. Signed (< 0 downhill), as the
+ * hills curve reads it (the steepest 50 m of each arc, the rest split by ascent and descent; loose
+ * ground steeper).
+ */
+export type GradeHistogram = { from_pct: number, step_pct: number, metres: Array<number>, };
+
+/**
  * The breakdowns, longest first.
  */
 export type Breakdown = { surface: Array<Part<SurfaceKind>>, way: Array<Part<WayKind>>, ridden?: RiddenParts, 
@@ -476,7 +637,17 @@ export type Breakdown = { surface: Array<Part<SurfaceKind>>, way: Array<Part<Way
  * where it applies at all (membership ≠ 0): what each slider "touches". Catalogue order; 0 m
  * where it touches nothing.
  */
-touched: Array<Part<PrefId>>, };
+touched: Array<Part<PrefId>>, 
+/**
+ * Structured model: per row of the boards the profile has, the length of the route in it
+ * (board order, 0 m included): what each row "touches".
+ */
+rows?: Array<Part<BoardRow>>, 
+/**
+ * Structured model with a hills curve: the route's length per grade as the curve reads it
+ * (the distribution behind the curve).
+ */
+grades?: GradeHistogram, };
 
 /**
  * The line: coordinates, and per vertex the distance from the start and the elevation.
@@ -573,7 +744,11 @@ cost?: number, factor: number,
  */
 gate: number, climb_m: number, penalty_m: number, 
 /**
- * Every preference whose factor is not 1 here.
+ * The hills curve's metres (structured model).
+ */
+hills_m: number, 
+/**
+ * Every preference whose factor is not 1 here (structured model: that counts).
  */
 reasons: Array<Reason>, excluded_by?: string, };
 
@@ -591,7 +766,7 @@ export type Clamp = "min" | "max";
  * What closes an arc: a limit of the profile (the catalogue's limit ids) or a rule that holds
  * whatever the profile. In typed arrays as [`ClosedBy::code`].
  */
-export type ClosedBy = "no_main_roads" | "paved_only" | "no_unknown_surface" | "max_grade" | "max_mtb_scale" | "no_stairs" | "legal_only" | "no_ferries" | "no_bikes" | "oneway";
+export type ClosedBy = "no_main_roads" | "paved_only" | "no_unknown_surface" | "max_grade" | "max_mtb_scale" | "no_stairs" | "legal_only" | "no_ferries" | "no_bikes" | "oneway" | "avoided_surface" | "avoided_way";
 
 /**
  * `explainEdge`: one edge under a profile.
@@ -641,12 +816,18 @@ membership: number,
  * Its factor here (1: no effect; < 1 cheaper, > 1 dearer). A `gated_bonus` counts only
  * through the gate; an `additive` one (avoiding climbs) has none, its metres are in `additive`.
  */
-factor: number, role: Role, };
+factor: number, role: Role, 
+/**
+ * Structured model: whether it counts (only the strongest bonus and penalty of its group do;
+ * one with factor 1 here counts for nothing either way). Absent in the slider model, where every
+ * preference counts.
+ */
+counted?: boolean, };
 
 /**
  * What an additive term is.
  */
-export type AdditiveKind = "climb" | "barriers" | "steps" | "dismount" | "ferry";
+export type AdditiveKind = "climb" | "barriers" | "steps" | "dismount" | "ferry" | "hills";
 
 /**
  * An additive term: metres of cost on top of `length × factor`.
@@ -661,6 +842,83 @@ export type Closure = { by: ClosedBy,
  * The `edges.parquet` column (or `tamed_grade_pct`, `surface_guess`) and its value here.
  */
 attribute: string, value: AttrValue, };
+
+/**
+ * A board's part in an arc's cost: the way's row and its tier.
+ */
+export type BoardPart = { board: BoardId, row: BoardRow, tier: Tier, 
+/**
+ * The tier's factor relative to `love` (`avoid`: `dislike`'s, what it counts where this plan
+ * allows it).
+ */
+factor: number, 
+/**
+ * The same relative to `fine` (the neutral tier).
+ */
+vs_fine: number, };
+
+/**
+ * A catalogue group's part in an arc's cost (structured model): of its active slider
+ * preferences only the strongest bonus and the strongest penalty count (and the strongest gated
+ * bonus, through the gate).
+ */
+export type GroupPart = { group: Group, bonus?: Reason, penalty?: Reason, gated_bonus?: Reason, 
+/**
+ * The best this group can do anywhere (its part of the profile's `best`).
+ */
+best: number, };
+
+/**
+ * The hills curve's part in an arc's cost.
+ */
+export type HillsPart = { 
+/**
+ * `length × (value − 1)`, through the gate where < 0 (seeking climbs).
+ */
+metres: number, 
+/**
+ * What a metre of the arc counts relative to flat.
+ */
+value: number, 
+/**
+ * The grades the curve read (percent, signed: < 0 downhill; loose ground steeper) and the
+ * metres at each: the steepest 50 m, the rest's climbing and descending part.
+ */
+wall_pct: number, wall_m: number, climb_pct: number, climb_m: number, descent_pct: number, descent_m: number, 
+/**
+ * Loose ground (gravel, soft, unusual): its grades read `loose_pct` steeper.
+ */
+loose: boolean, gate: number, };
+
+/**
+ * An arc's cost under the structured model, its parts.
+ */
+export type StructuredParts = { 
+/**
+ * The way's row and tier on each board present.
+ */
+boards: Array<BoardPart>, 
+/**
+ * The boards' factors multiplied (relative to `love`).
+ */
+board_factor: number, 
+/**
+ * Per catalogue group with active sliders: what counts.
+ */
+groups: Array<GroupPart>, 
+/**
+ * The profile's best absolute factor (boards at love, every group at its strongest bonus):
+ * `relative = raw_factor / best`.
+ */
+best: number, 
+/**
+ * The factor relative to the best, before the spread: ≥ 1.
+ */
+relative: number, 
+/**
+ * The spread exponent: `factor = min(relative ^ detours, max_factor)`.
+ */
+detours: number, hills?: HillsPart, };
 
 /**
  * One direction of an edge, explained.
@@ -727,7 +985,12 @@ closed_by: Array<Closure>,
 /**
  * The limits this plan's override (allow, prefer) lifts here: they would close it.
  */
-lifted: Array<Closure>, };
+lifted: Array<Closure>, 
+/**
+ * Structured model: the boards' rows and tiers, what counts per group, the relative factor,
+ * the hills curve's reading.
+ */
+structured?: StructuredParts, };
 
 /**
  * `explainEdge`'s answer.
@@ -826,7 +1089,15 @@ overrides: Array<OverridePart>,
  * Turns that cost something, the moves onto the stretch and off it included (where a detour
  * leaves the other route and rejoins it), and what they cost (metres-equivalent, in `cost`).
  */
-turns: number, turn_cost: number, };
+turns: number, turn_cost: number, 
+/**
+ * Structured model: length per row of the boards present, board order (0 m included).
+ */
+rows?: Array<Part<BoardRow>>, 
+/**
+ * Structured model with a hills curve: its metres here (in `extra_m`).
+ */
+hills_m?: number, };
 
 /**
  * One stretch where the routes part, both sides costed.

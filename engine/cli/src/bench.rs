@@ -76,11 +76,20 @@ fn profile_list(a: &Args, default: &str) -> Result<Vec<Profile>, Failure> {
 }
 
 fn name(p: &Profile) -> String {
-    p.name.clone().unwrap_or_else(|| "(unnamed)".into())
+    let n = p.name.clone().unwrap_or_else(|| "(unnamed)".into());
+    if p.structured() {
+        format!("{n} (structured)")
+    } else {
+        n
+    }
 }
 
 /// `kompass bench`.
-#[allow(clippy::cast_precision_loss, reason = "timings and counts for display")]
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::too_many_lines,
+    reason = "timings and counts for display; one report"
+)]
 pub(crate) fn bench(a: &Args) -> Result<(), Failure> {
     a.only(&["--build", "--pairs", "--seed", "--profiles"])?;
     let build = a.build()?;
@@ -116,11 +125,19 @@ pub(crate) fn bench(a: &Args) -> Result<(), Failure> {
             ms.push(t.elapsed().as_secs_f64() * 1e3);
         }
         ms.sort_by(f64::total_cmp);
+        let mut direct = Vec::new();
+        for _ in 0..3 {
+            let t = Instant::now();
+            model.compile_into(&graph, None, &mut buf);
+            direct.push(t.elapsed().as_secs_f64() * 1e3);
+        }
+        direct.sort_by(f64::total_cmp);
         println!(
-            "compile {}: median {:.1} ms, min {:.1} ms ({} arcs, bound factor {bound:.2})",
+            "compile {}: median {:.1} ms, min {:.1} ms; per edge (no classes) {:.1} ms ({} arcs, bound factor {bound:.2})",
             name(p),
             percentile(&ms, 0.5),
             ms[0],
+            direct[0],
             buf.len()
         );
     }

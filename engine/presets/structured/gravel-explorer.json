@@ -1,0 +1,53 @@
+{
+  "id": "gravel_explorer_structured",
+  "blurb": "Tracks, forest edges, something new",
+  "profile": {
+    "name": "Gravel explorer",
+    "weights": {
+      "quiet": 70,
+      "forest_edge": 50,
+      "built": -30,
+      "sketchy": -50,
+      "novel": 60
+    },
+    "limits": {
+      "no_stairs": true,
+      "legal_only": true
+    },
+    "boards": {
+      "surface": {
+        "paved": "fine",
+        "rough_paved": "fine",
+        "compacted": "love",
+        "gravel": "love",
+        "soft": "dislike",
+        "unknown": "like"
+      },
+      "way": {
+        "main": "dislike",
+        "country_road": "fine",
+        "residential": "fine",
+        "service": "fine",
+        "track": "like",
+        "path": "fine",
+        "cycle_path": "fine",
+        "cycle_path_roadside": "fine"
+      }
+    },
+    "hills": {
+      "up": {
+        "3": 0.96,
+        "6": 0.93,
+        "10": 0.93,
+        "15": 0.93
+      },
+      "down": {
+        "8": 1.0,
+        "15": 1.0
+      },
+      "loose_pct": 0.0
+    },
+    "detours": 1.0,
+    "turn_m": 40.0
+  }
+}

@@ -113,6 +113,7 @@ const FIXED: Record<Exclude<AdditiveKind, "climb">, string> = {
   steps: "Carrying up steps",
   dismount: "Walking (dismount)",
   ferry: "Waiting for the ferry",
+  hills: "Hills (the curve)",
 };
 
 /** How much a way is what a preference names, in words. */

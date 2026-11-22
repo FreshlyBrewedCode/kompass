@@ -123,6 +123,7 @@ const ADDITIVE: Record<AdditiveKind, string> = {
   steps: "carrying up steps",
   dismount: "walking",
   ferry: "waiting for the ferry",
+  hills: "hills",
 };
 
 export const metresText = (m: number) =>

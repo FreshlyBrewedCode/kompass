@@ -204,6 +204,132 @@ on every build since edge ids change). Without it they do nothing, and the resul
 state. Membership: never ridden 1; not ridden for 180 days → 0, rising to 1 at two years; ridden 1×
 0.25, 2× 0.45, 3–4× 0.7, 5+ 1.
 
+## The structured model (prototype, behind a switch)
+
+Epic #58, task #66: tier boards for surfaces and way types, a hills curve with a loose-ground
+modifier, and Detours as the spread, built on the verdict of spike #60
+([report](reports/2026-11-22-hills-and-saturation.md)): the clamp was not the main reason the sliders
+felt dead, overlapping preferences and bonuses pushed onto the floor were. The user decides by trying
+it next to today's sliders, so it is **opt-in per profile**: a profile with `boards`, `hills` or
+`detours` uses this model, one without routes exactly as before (a test pins the compiled costs of the
+presets and random slider profiles to checksums recorded before it existed). Code:
+`engine/core/src/structured.rs` (the curve, the conversion, the catalogue part), the structured paths
+of `cost.rs`; the twins in `engine/presets/structured/`.
+
+```json
+{ "name": "Gravel explorer",
+  "weights": { "quiet": 70, "forest_edge": 50, "built": -30, "sketchy": -50, "novel": 60 },
+  "limits": { "no_stairs": true, "legal_only": true },
+  "boards": {
+    "surface": { "paved": "fine", "rough_paved": "fine", "compacted": "love", "gravel": "love",
+                 "soft": "dislike", "unknown": "like" },
+    "way": { "main": "dislike", "country_road": "fine", "residential": "fine", "service": "fine",
+             "track": "like", "path": "fine", "cycle_path": "fine", "cycle_path_roadside": "fine" } },
+  "hills": { "up": { "3": 0.96, "6": 0.93, "10": 0.93, "15": 0.93 },
+             "down": { "8": 1.0, "15": 1.0 }, "loose_pct": 0 },
+  "detours": 1 }
+```
+
+```
+cost(arc) = length × min(relative ^ detours, max_factor) + length × (hills(arc) − 1) + fixed costs
+relative  = Π boards tier(row) × Π groups (strongest bonus × strongest penalty) / best
+```
+
+- **Boards.** Every way is in exactly one row of each board, the same kinds the route reports: the
+  surface board by the surface the cost uses (`paved`, `rough_paved`, `compacted`, `gravel`, `soft`;
+  weak guesses and unusual surfaces are `unknown`), the way board by the way type (`main`,
+  `country_road`, `residential`, `service` (also ways of no known kind), `track`, `path` (steps
+  included), `cycle_path`, `cycle_path_roadside`; a ferry is in no row and counts as `fine`). A board
+  lists every row (no defaults). Tiers: **love 1.0, like 1.15, fine 1.35, dislike 2.0** (a metre's
+  factor relative to love), **avoid** closes the row like a limit (`closed_by`: `avoided_surface`,
+  `avoided_way`, the closure's attribute `board_row`); where this plan allows such a way it counts as
+  dislike. Love against fine at 1.35 is the tuned Gravel explorer's exchange (a compacted track against
+  a paved farm track).
+- **The remaining sliders** (traffic, landscape, trail, signs, history, and modifiers such as
+  `tracktype`, `smoothness`) combine **within their catalogue group**: its strongest bonus × its
+  strongest penalty (gated bonuses: the strongest one, through the gate). Overlaps no longer stack;
+  `explainEdge` says which counted (`counted` per preference, `groups`).
+- **Relative, no floor.** Everything is divided by the profile's `best`: the boards at love and every
+  group at its strongest bonus (the table's best value over the memberships the preference can reach).
+  A way that is the best of everything costs 1 × its length; there is no `min_factor` (a structured
+  profile keeps `bounds.min_factor` at its default, else it is rejected), `max_factor` still caps. A
+  board without a loved row has no way at 1 (the Gravel explorer's twin: nothing on the way board is
+  loved, its best way is 1.15 × the rest). The gate reads the **absolute** quality, the boards as
+  `tier / fine` (fine is neutral), with today's thresholds: a disliked row lets 80 % of the gated
+  bonuses through, a loved one all.
+- **Detours** is the spread: an exponent on the relative factor, 0.5 … 2 (default 1). At 1 a loved way
+  is worth a 1.35× longer ride than a fine one, at 2 a 1.82× longer one. The conversion maps
+  `bounds.min_factor` onto it (`ln(min_factor) / ln(0.5)`: 0.5 is 1, 0.3 is 1.74).
+- **The hills curve**: what a metre costs against its grade relative to a flat metre, handles at fixed
+  grades: up 3, 6, 10, 15 % (0.5 … 10; below 1 seeks climbs), down 8, 15 % (1 … 10; absent: a descent
+  counts like a climb of half its grade), 0 % pinned at 1; linear in grade and in log value between,
+  flat beyond ±15 %. It enters as **metres**, `length × (curve − 1)`, outside the factor product, so it
+  never saturates; below 1 it counts through the gate. The metres are metres of the best way (the
+  scale where the best way costs 1 per metre): a fine way on both boards costs 1.82 per metre, so a
+  curve value of 2.5 adds 1.5 m per metre to it. Per arc the curve reads **split + steepest 50 m**
+  from the four grade numbers an arc has (spike #60: within 15 % of a 10 m grade histogram on 95 % of
+  the length): 50 m at the steeper of the tamed steepest grades up and down (the whole arc when
+  shorter), the rest split into a climbing and a descending part by the ascent and descent beyond the
+  deadband. `loose_pct` (0 … 50): on gravel, soft and unusual surfaces (weak guesses included) grades
+  read that much steeper. The wall is the side the curve values furthest from flat (the dearer one; for
+  a curve that seeks climbs, the climb). `max_grade` stays a limit.
+- **What a board or the curve replaces is rejected** (validation names the board): with the surface
+  board `unpaved`, `paved_smooth`, `paved_rough`, `fine_gravel`, `soft_ground`, `unknown_surface` and
+  the limits `paved_only`, `no_unknown_surface`; with the way board `track`, `path`, `cycleway_sep`,
+  `cycleway_road`, `residential`, `service`, `minor`, `main` and `no_main_roads`; with the curve
+  `climb`, `steep`, `ramps_over_*`. A limit set to `false` is as if absent. Without the curve the slider
+  hills keep working (in the Terrain group, per arc).
+- **The A* bound** is the smallest factor plus hills metres per metre any arc has (the other additive
+  terms are ≥ 0); A* equals Dijkstra under random structured profiles (a test).
+- **Fixed costs weigh less.** Barriers (15 m), steps, a ferry, the reuse penalty, U-turns and turns
+  are metres too, and a typical way now costs about 2.2 per metre where it cost 0.85: against the
+  factors they count roughly 2.5× less than in the slider model. The conversion doubles `turn_m`
+  (replay matches today's turns per km at 40 m); the others are not rescaled yet (open).
+
+**Conversion** (`to_structured`, wasm `toStructured`, `kompass profile convert <file|preset>`): a
+pure function from a slider profile. Every row of both boards gets the tier nearest (in log space, fine
+= 1) to its factor today: the board's slider weights on a representative way of the row (a tagged
+compacted track, an untagged track for `unknown`, a cycle path away from roads, …); limits become
+`avoid` (`paved_only`: compacted, gravel, soft, unknown; `no_unknown_surface`: unknown; `no_main_roads`:
+main). Soft weights never become `avoid` (a strength, not a limit): `main −80` is `dislike`, which is
+weaker (1.48 × fine against 3.6 ×). The curve's handles are today's factor of `climb`, `steep` and
+`ramps_over_*` at the handles' grades on a way of factor 1 (`climb −w` is additive, 1 + 0.25 w (g −
+0.4) uphill; `steep` and the ramps their tables at that grade, descents half). The other weights and
+limits stay, `turn_m` doubles (above); a structured profile comes back unchanged.
+
+**Twins** (`structured_presets()`, wasm `structuredPresets`, `kompass profile presets --structured`):
+each shipped preset converted, id `<id>_structured`, the same name. Tuned after replay: River valley's
+climbing handles × 1.6 (2.22 / 2.94 / 4.27 / 6.62; the curve charges only the steepest 50 m where
+`steep` charged the whole arc, so the converted curve climbed 14 % more). A test checks that every
+twin is the conversion plus exactly these tunings.
+
+**What a structured profile adds to the results.** `breakdown.rows`: per row of the boards present, the
+route's length in it (0 m included: what each row touches); `breakdown.grades`: the route's length per
+1 % grade band from −20 to +20 % as the curve reads it (the distribution behind the curve); per
+segment `tiers` (its row and tier per board) and `hills_m`; per `compare` side `rows` and `hills_m`;
+in `explainEdge` per direction `structured`: the boards' rows, tiers and factors (`factor` against
+love, `vs_fine`), per group what counts, `best`, `relative`, `detours`, and `hills` (its metres, the
+mean value, the wall's, the climbing and the descending part's grade and length, loose, the gate).
+The additive term is `hills`. The `why` lists name only what counts.
+
+**The catalogue** has `structured`: the boards with their rows (id, label, hint, which ways fall in
+it) and what each replaces, the tiers with their factors, the curve's handles with ranges, the named
+curves (Flat please, Don't mind, Climber, No walls) and the loose and detours ranges.
+
+**Evidence** (the PR of #66; real region, aggregates only, with #74's turn cost). Replay on the
+rider's 24 legs (as the route-quality report): the Gravel explorer's twin reproduces as much as today
+(37 / 37 % against 38 / 34 % of the ridden length, all / median leg) at the same 1.48 turns per km;
+with the history minus the replayed rides 27 / 23 % both, 1.61 against 1.64 turns per km. Paved &
+quiet's reproduces more (38 / 34 % against 37 / 26 %) and is shorter (1.00 against 1.10 of the
+ridden length) but rides 41 km of main road against 24 (`dislike` is weaker than `main −60`; `avoid`
+or more detours reproduced less). River valley's (tuned) 44 / 41 % against 44 / 43 %, with the
+history 44 / 41 % against 49 / 45 % (open). Length at the floor on 30 seeded pairs with the history:
+16 % today (Gravel explorer), 0 % structured. One control nudged (sliders ±25, a tier one step, a
+handle × or ÷ 1.25, detours ±0.25) changes on average 8.9 % of the twin's route (11.4 % today), a
+tier step 12 %, a handle 1.9 %, Detours 17 %; making something cheaper or dearer moves it alike
+(7.9 / 9.8 %; today 10.5 / 12.2 %). Compile 90–166 ms natively (today 26–77 ms; the curve per arc is
+most of it), settled nodes 0–8 % fewer.
+
 ## The catalogue
 
 Membership per id (the code in `cost.rs` is the source; `max_bonus` / `max_penalty` from the

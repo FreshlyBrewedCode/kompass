@@ -48,6 +48,20 @@ pub fn presets() -> String {
     engine::presets_json()
 }
 
+/// The structured twins of the shipped presets, JSON (`Preset[]`; #66, the prototype's switch).
+#[wasm_bindgen(js_name = structuredPresets)]
+#[must_use]
+pub fn structured_presets() -> String {
+    engine::structured_presets_json()
+}
+
+/// A profile (JSON `Profile`) in the structured form: boards, hills and detours from its sliders
+/// and limits (`to_structured`), JSON `Profile`.
+#[wasm_bindgen(js_name = toStructured)]
+pub fn to_structured(profile: &str) -> Result<String, JsError> {
+    engine::to_structured_json(profile).map_err(js)
+}
+
 /// The catalogue without a region's coverage, JSON (`Catalogue`).
 #[wasm_bindgen]
 #[must_use]

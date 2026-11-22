@@ -33,6 +33,17 @@
     "turn_m": {
       "description": "The range of `turn_m`, what a right-angle turn at a junction costs (metres-equivalent).",
       "$ref": "#/$defs/BoundRange"
+    },
+    "structured": {
+      "description": "The structured controls (boards, tiers, the hills curve, detours; a prototype). Always\npresent.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/StructuredInfo"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
@@ -381,6 +392,358 @@
         "min",
         "max",
         "default"
+      ]
+    },
+    "StructuredInfo": {
+      "description": "The structured controls (`catalogue().structured`): boards, tiers, the hills curve, detours.",
+      "type": "object",
+      "properties": {
+        "boards": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BoardInfo"
+          }
+        },
+        "tiers": {
+          "description": "Best first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TierInfo"
+          }
+        },
+        "hills": {
+          "$ref": "#/$defs/HillsInfo"
+        },
+        "detours": {
+          "$ref": "#/$defs/BoundRange"
+        },
+        "detours_hint": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "boards",
+        "tiers",
+        "hills",
+        "detours",
+        "detours_hint"
+      ]
+    },
+    "BoardInfo": {
+      "description": "A board, for the UI.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/BoardId"
+        },
+        "label": {
+          "type": "string"
+        },
+        "hint": {
+          "type": "string"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RowInfo"
+          }
+        },
+        "replaces": {
+          "description": "The slider preferences and limits it replaces (rejected in a profile that has it).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PrefId"
+          }
+        },
+        "replaces_limits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LimitId"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "hint",
+        "rows",
+        "replaces",
+        "replaces_limits"
+      ]
+    },
+    "BoardId": {
+      "description": "A board of the structured model.",
+      "type": "string",
+      "enum": [
+        "surface",
+        "way"
+      ]
+    },
+    "RowInfo": {
+      "description": "A row of a board, for the UI.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/BoardRow"
+        },
+        "label": {
+          "type": "string"
+        },
+        "hint": {
+          "type": "string"
+        },
+        "ways": {
+          "description": "Which ways fall in it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "hint",
+        "ways"
+      ]
+    },
+    "BoardRow": {
+      "description": "A row of a board: every way is in exactly one row of each board ([`BoardRow::board`]).",
+      "type": "string",
+      "enum": [
+        "paved",
+        "rough_paved",
+        "compacted",
+        "gravel",
+        "soft",
+        "unknown",
+        "main",
+        "country_road",
+        "residential",
+        "service",
+        "track",
+        "path",
+        "cycle_path",
+        "cycle_path_roadside"
+      ]
+    },
+    "TierInfo": {
+      "description": "A tier, for the UI.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Tier"
+        },
+        "label": {
+          "type": "string"
+        },
+        "hint": {
+          "type": "string"
+        },
+        "factor": {
+          "description": "A metre's factor relative to `love`; absent for `avoid` (closed: a limit).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "hint"
+      ]
+    },
+    "Tier": {
+      "description": "A tier of a board: how much the rider likes the ways of a row, best first in [`Tier::BEST_FIRST`].",
+      "type": "string",
+      "enum": [
+        "avoid",
+        "dislike",
+        "fine",
+        "like",
+        "love"
+      ]
+    },
+    "HillsInfo": {
+      "description": "The hills curve, for the UI.",
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "hint": {
+          "type": "string"
+        },
+        "handles": {
+          "description": "The handles in grade order: `down` (−15, −8), then `up` (3, 6, 10, 15); 0 % is pinned at 1.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/HandleInfo"
+          }
+        },
+        "flat_beyond_pct": {
+          "description": "The curve is flat beyond ±this many percent.",
+          "type": "number",
+          "format": "float"
+        },
+        "loose_pct": {
+          "$ref": "#/$defs/BoundRange"
+        },
+        "loose_label": {
+          "type": "string"
+        },
+        "curves": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CurvePreset"
+          }
+        },
+        "replaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PrefId"
+          }
+        }
+      },
+      "required": [
+        "label",
+        "hint",
+        "handles",
+        "flat_beyond_pct",
+        "loose_pct",
+        "loose_label",
+        "curves",
+        "replaces"
+      ]
+    },
+    "HandleInfo": {
+      "description": "A handle of the hills curve: its grade and the range of its value.",
+      "type": "object",
+      "properties": {
+        "grade_pct": {
+          "description": "Percent, signed (< 0 downhill).",
+          "type": "number",
+          "format": "float"
+        },
+        "min": {
+          "type": "number",
+          "format": "float"
+        },
+        "max": {
+          "type": "number",
+          "format": "float"
+        },
+        "step": {
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "required": [
+        "grade_pct",
+        "min",
+        "max",
+        "step"
+      ]
+    },
+    "CurvePreset": {
+      "description": "A named curve.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "blurb": {
+          "type": "string"
+        },
+        "hills": {
+          "$ref": "#/$defs/Hills"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "blurb",
+        "hills"
+      ]
+    },
+    "Hills": {
+      "description": "The hills curve (structured model): what a metre costs against its grade, an additive term in\nmetres (`length × (curve − 1)`). Replaces `climb`, `steep` and `ramps_over_*`.",
+      "type": "object",
+      "properties": {
+        "up": {
+          "$ref": "#/$defs/UpHandles"
+        },
+        "down": {
+          "description": "Absent: a descent counts like a climb of half its grade (at least 1).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DownHandles"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "loose_pct": {
+          "description": "On loose ground (gravel, soft, unusual surfaces) grades count this many percent steeper,\n0..=50 (default 0).",
+          "type": "number",
+          "format": "float",
+          "default": 0.0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "up"
+      ]
+    },
+    "UpHandles": {
+      "description": "The hills curve's climbing handles: the cost of a metre at that grade (percent, uphill) relative\nto a flat metre (0 % is pinned at 1). Below 1 seeks climbs (counts through the gate).",
+      "type": "object",
+      "properties": {
+        "3": {
+          "type": "number",
+          "format": "float"
+        },
+        "6": {
+          "type": "number",
+          "format": "float"
+        },
+        "10": {
+          "type": "number",
+          "format": "float"
+        },
+        "15": {
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "3",
+        "6",
+        "10",
+        "15"
+      ]
+    },
+    "DownHandles": {
+      "description": "The hills curve's descending handles (percent downhill), 1 or more.",
+      "type": "object",
+      "properties": {
+        "8": {
+          "type": "number",
+          "format": "float"
+        },
+        "15": {
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "8",
+        "15"
       ]
     }
   }

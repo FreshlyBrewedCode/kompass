@@ -11,8 +11,9 @@
 //!   `--out`).
 //! - `kompass explain --build <dir> --profile <file|preset> --edge <id> [--json] | --time`: one
 //!   edge's cost, every step, both directions; `--time` times the bulk edge costs.
-//! - `kompass profile schema | catalogue [--build <dir>] | presets`: the profile's JSON Schema, the
-//!   catalogue (with coverage shares of a region), the shipped presets.
+//! - `kompass profile schema | catalogue [--build <dir>] | presets [--structured] | convert
+//!   <file|preset>`: the profile's JSON Schema, the catalogue (with coverage shares of a region), the
+//!   shipped presets (or their structured twins), a profile in the structured form.
 //! - `kompass schema --write <dir> | --check <dir> [--traffic <file>]`: the generated JSON Schemas and TypeScript types (and the traffic model for the pipeline).
 //! - `kompass bench --build <dir>`: seeded random routes at ~10/50/100 km under the main presets.
 //! - `kompass compare --build <dir> --profiles a,b`: route quality of profiles on seeded random pairs;
@@ -21,6 +22,7 @@
 //!   map-matches recorded tracks, prints aggregate numbers (`docs/matching.md`).
 //! - `kompass replay --build <dir> --profiles <a,b> [--ref name=dir]... <gpx files>`: route quality
 //!   against the lines the rider actually rode, leg by leg (overlap, surfaces, roads, turns).
+//! - `kompass sensitivity --build <dir> --profiles <a,b>`: how far one control moves a route.
 
 #![allow(
     clippy::doc_markdown,
@@ -34,8 +36,10 @@ mod bench;
 mod explain;
 mod gpx;
 mod matchcmd;
+mod personal;
 mod replay;
 mod route;
+mod sensitivity;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -49,15 +53,16 @@ const USAGE: &str = "usage: kompass [--version | --help]
        kompass info --build <dir> [--snaps <n>]
        kompass match --build <dir> [--geojson <dir>] [--explored <file>] [--no-geometry]
                      [--radius|--candidates|--sigma|--beta|--step|--skip|--gap|--spur <v>] <gpx files or directories>
-       kompass replay --build <dir> [--profiles <a,b,...>] [--ref <name>=<dir>]... [--leg-km <km>] [--min-straight <r>]
+       kompass replay --build <dir> [--profiles <a,b,...>] [--ref <name>=<dir>]... [--leg-km <km>] [--min-straight <r>] [--personal <explored.json>]
                       [--leg ride<k>-leg<j>] [--out-dir <dir>]
                       <gpx files or directories>
        kompass route --build <dir> --profile <file|preset> --from <lon,lat> [--via <lon,lat>]... --to <lon,lat>
                      [--out <file>] [--segments] [--radius <m>] [--explain] [--why-not <lon,lat>] [--reuse off|<per_m>/<u_turn_m>]
        kompass explain --build <dir> --profile <file|preset> (--edge <id> [--json] | --time)
-       kompass profile schema | catalogue [--build <dir>] | presets
+       kompass profile schema | catalogue [--build <dir>] | presets [--structured] | convert <file|preset>
        kompass schema --write <dir> | --check <dir> [--traffic <file>]
        kompass bench --build <dir> [--pairs <n>] [--seed <n>] [--profiles <a,b>]
+       kompass sensitivity --build <dir> [--profiles <a,b,...>] [--pairs <n>] [--km <min-max>] [--seed <n>] [--personal <explored.json>]
        kompass compare --build <dir> --profiles <a,b,...> [--pairs <n>] [--km <min-max>] [--seed <n>] [--out-dir <dir>] [--grade <pct>]
        kompass compare --build <dir> --loop <corners> [--profiles <a,b,...>] [--reuse off,on,<per_m>/<u_turn_m>,...] [--corners through|any] [--pairs <n>] [--km <min-max>] [--seed <n>]";
 
@@ -83,6 +88,7 @@ fn main() -> ExitCode {
         Some("schema") => Args::parse(rest, &[]).and_then(|a| schema(&a)),
         Some("bench") => Args::parse(rest, &[]).and_then(|a| bench::bench(&a)),
         Some("compare") => Args::parse(rest, &[]).and_then(|a| bench::compare(&a)),
+        Some("sensitivity") => Args::parse(rest, &[]).and_then(|a| sensitivity::run(&a)),
         Some(other) => Err(Failure::Usage(format!("unknown command `{other}`"))),
     };
     match result {
@@ -424,15 +430,28 @@ fn profile(rest: &[String]) -> Result<(), Failure> {
             Ok(())
         }
         Some("presets") => {
-            Args::parse(&rest[1..], &[])?.only(&[])?;
-            println!(
-                "{}",
-                json(&serde_json::to_value(kompass_core::presets()).unwrap_or_default())
-            );
+            let a = Args::parse(&rest[1..], &["--structured"])?;
+            a.only(&["--structured"])?;
+            let list = if a.switch("--structured") {
+                kompass_core::presets::structured_presets()
+            } else {
+                kompass_core::presets()
+            };
+            println!("{}", json(&serde_json::to_value(list).unwrap_or_default()));
+            Ok(())
+        }
+        Some("convert") => {
+            let [spec] = &rest[1..] else {
+                return Err(Failure::Usage("profile convert takes one <file|preset>".into()));
+            };
+            let p = crate::route::load_profile(spec)?;
+            let s = kompass_core::structured::to_structured(&p);
+            // (straight from the f32s: no f64 detour, 0.96 stays 0.96)
+            println!("{}", serde_json::to_string_pretty(&s).unwrap_or_default());
             Ok(())
         }
         _ => Err(Failure::Usage(
-            "profile needs one of: schema, catalogue, presets".into(),
+            "profile needs one of: schema, catalogue, presets [--structured], convert <file|preset>".into(),
         )),
     }
 }

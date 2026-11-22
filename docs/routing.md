@@ -129,7 +129,8 @@ the partial arcs at the waypoints.
   `overrides`). A stop on the edge still works: a part of the edge costs that part of the penalty, so
   the route leaves by the nearer end and rides no more of it than it must.
 - **prefer**: the edge counts `min_factor × length` plus its additive terms (climbing, barriers): as
-  cheap as the profile's bounds allow, the Detours slider's floor. The limits do not close it.
+  cheap as the profile's bounds allow, the Detours slider's floor (in the structured model, which has
+  no floor, 1 × length: the best a way can be). The limits do not close it.
 - **allow**: the limits do not close the edge; it is costed as the profile has it without them. A
   bicycle ban and one-way still hold (for prefer too): an exception never makes a route illegal in a
   way the profile cannot switch off either.
@@ -243,7 +244,8 @@ Plain A* per leg (spike #4: no landmarks, no corridor, no contraction), from the
 snapped point: the search starts with labels on the source edge's two end nodes (the partial arcs
 from the point) and ends at the target edge's end nodes plus the partial arc into the point (and the
 turn onto it); two points on one edge also try the direct way. The bound is the straight line × the
-smallest factor the compile produced, on a plane that never overestimates, so it is consistent.
+smallest factor the compile produced (the structured model: the smallest factor plus hills metres
+per metre, since the curve may be below 1), on a plane that never overestimates, so it is consistent.
 
 A label is an **arc**, having arrived at its head by it, because the turn cost depends on it. Beside
 the labels each node keeps its cheapest label so far, and a label dearer than that by more than the
@@ -293,9 +295,12 @@ and a 6×-throttled phone estimate ~7×.
   `bike_path`, `bike_path_roadside`, `steps`, `ferry`, `other`) and one ridden state; each with its
   start and length, `[first, end)` into `arcs`, `[first, last]` vertices, the mean factor, additive
   metres, and **why**: the up to three strongest preferences there (length-weighted geometric mean
-  factor, `< 1` made it cheaper, `> 1` dearer).
+  factor, `< 1` made it cheaper, `> 1` dearer). Under a structured profile only what counts (per
+  group the strongest bonus and penalty), plus `tiers` (the segment's row and tier per board) and
+  `hills_m` ([profile.md](profile.md#the-structured-model-prototype-behind-a-switch)).
 - `breakdown`: length and share per surface and per way type, longest first; ridden vs. new with a
-  personal layer. `legs`: per leg the same totals and its ranges of arcs and segments.
+  personal layer; `touched` per named preference; under a structured profile `rows` (length per board
+  row) and `grades` (length per 1 % grade band as the hills curve reads it). `legs`: per leg the same totals and its ranges of arcs and segments.
 - `waypoints`: where each one snapped (point, distance, edge, fraction, `excluded_by`). `notes`.
 - `overrides`: the plan's exceptions the route rides ([above](#this-plans-exceptions)).
 
@@ -326,7 +331,8 @@ few just outside, ascending), or every edge. Flat arrays (typed arrays in the br
 `edges`, `factor` and `costPerM` two per edge (`[2i]` along the geometry, `[2i + 1]` against it; the
 factor after the clamp, the cost per metre with the additive terms; 0 where that direction may not
 be ridden), `closed` one per edge (0 when one direction at least is open, else the code of what closes
-it: `codes[code − 1]`, a limit id, `no_bikes` or `oneway`), and `minFactor`, `maxFactor`, `bound`.
+it: `codes[code − 1]`, a limit id, `no_bikes`, `oneway`, `avoided_surface` or `avoided_way`), and
+`minFactor`, `maxFactor`, `bound`.
 Native: every edge of the demo region (51 k) in 1.3 ms, 25 k listed in 0.5 ms, a box of 2.4 k in 0.08 ms
 (so ~60 ms for 2.34 M); the browser worker: 2.2 ms for the 51 k, 1.2 ms for 25 k listed (round trip
 included, `?bench`).
@@ -342,6 +348,9 @@ clamp), `factor`, `clamp` (`min` / `max` when it bit), ascent beyond the deadban
 the additive terms (`climb`, `barriers`, `steps`, `dismount`, `ferry`) and their sum `extra_m`, the
 router's `cost` and `cost_per_m` (absent when closed), and `closed_by`: every closure in the order the
 engine checks, each with the attribute that triggers it (`legal_only (bike_access = agri_forestry)`).
+Under a structured profile each preference says whether it `counted`, the additive terms include
+`hills`, and `structured` has the boards' rows and tiers, what counts per group, `best`, `relative`,
+`detours` and the hills curve's reading ([profile.md](profile.md#the-structured-model-prototype-behind-a-switch)).
 
 **`compare`: why not this way?** Route as usual, route again with a via on the wanted line, then
 `compare({ profile, a, b, overrides? })` with both routes' `arcs` and the profile (and the plan's
@@ -350,7 +359,8 @@ whole routes and every `diff` stretch, each side a `StretchCost`: its span, cost
 (closed arcs at `max_factor` per metre, as near a waypoint), mean factor, additive metres, length at the
 clamp (`clamped_min_m`: the bonuses wanted it lower, more seeking changes nothing; `clamped_max_m`),
 the up to five strongest preferences (length-weighted geometric mean factor), the way types and the
-length on closed arcs by closure, the turns (`turns`, `turn_cost`, in `cost`: [turns](#turns)); per
+length on closed arcs by closure (structured: also `rows`, length per board row, and `hills_m`), the
+turns (`turns`, `turn_cost`, in `cost`: [turns](#turns)); per
 stretch `cost_delta` (b − a; > 0 is why the router took `a`) and
 `length_delta_m`. Edges count in full (the routes' partial first and last arcs too). The `segments` of a
 route stay as they are (three reasons, no closures); `compare` is the on-demand detail.
@@ -388,3 +398,12 @@ alike:
 Stdout holds numbers and ride/leg indices only; `--out-dir` gets the private detail (`legs.json` with the
 end points, a GeoJSON per leg with every line, `stretches.txt`), so it belongs under `data/` or a temporary
 directory. The first round is [the route-quality report](reports/2026-11-21-route-quality.md).
+`--personal <explored.json>` routes with a ride history (`kompass match --explored`, best without the
+replayed rides: the playtest's condition), also private.
+
+**How far one control moves a route**: `kompass sensitivity --build <dir> --profiles <a,b,...>
+[--pairs 30] [--km 15-35] [--personal <explored.json>]` (spike #60's measure, for both models): on
+seeded pairs (never printed), every control nudged one step each way (a slider ±25, a board row one
+tier, a hills handle × or ÷ 1.25, the loose modifier ±10, detours ±0.25), the share of the route's length
+that changes, averaged; plus the length at the floor and the mean factor under each profile's own
+model.

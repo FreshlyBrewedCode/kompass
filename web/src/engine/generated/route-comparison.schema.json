@@ -99,6 +99,24 @@
         "turn_cost": {
           "type": "number",
           "format": "float"
+        },
+        "rows": {
+          "description": "Structured model: length per row of the boards present, board order (0 m included).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/Part2"
+          }
+        },
+        "hills_m": {
+          "description": "Structured model with a hills curve: its metres here (in `extra_m`).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
         }
       },
       "required": [
@@ -311,6 +329,16 @@
           "description": "Against a one-way: never.",
           "type": "string",
           "const": "oneway"
+        },
+        {
+          "description": "A surface row on `avoid` (structured model: the surface board's limit).",
+          "type": "string",
+          "const": "avoided_surface"
+        },
+        {
+          "description": "A way row on `avoid` (structured model: the way board's limit).",
+          "type": "string",
+          "const": "avoided_way"
         }
       ]
     },
@@ -349,6 +377,48 @@
           "type": "string",
           "const": "allow"
         }
+      ]
+    },
+    "Part2": {
+      "description": "A length per key.",
+      "type": "object",
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/BoardRow"
+        },
+        "length_m": {
+          "type": "number",
+          "format": "float"
+        },
+        "share": {
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "required": [
+        "key",
+        "length_m",
+        "share"
+      ]
+    },
+    "BoardRow": {
+      "description": "A row of a board: every way is in exactly one row of each board ([`BoardRow::board`]).",
+      "type": "string",
+      "enum": [
+        "paved",
+        "rough_paved",
+        "compacted",
+        "gravel",
+        "soft",
+        "unknown",
+        "main",
+        "country_road",
+        "residential",
+        "service",
+        "track",
+        "path",
+        "cycle_path",
+        "cycle_path_roadside"
       ]
     },
     "StretchComparison": {

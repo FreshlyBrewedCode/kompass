@@ -58,8 +58,12 @@ cd engine && cargo run --release -p kompass-cli -- match --build ../data/build/<
 cd engine && cargo run --release -p kompass-cli -- route --build ../data/build/<name> --profile <file|preset> \
     --from lon,lat [--via lon,lat]... --to lon,lat [--out route.geojson] [--segments]
                          # one route as GeoJSON (summary + breakdowns in properties; segments as features)
-cd engine && cargo run -p kompass-cli -- profile schema | catalogue [--build <dir>] | presets
-                         # the profile's JSON Schema, the catalogue (coverage of a region), the presets
+cd engine && cargo run -p kompass-cli -- profile schema | catalogue [--build <dir>] | presets [--structured] | convert <file|preset>
+                         # the profile's JSON Schema, the catalogue (coverage of a region), the presets (or
+                         # their structured twins), a slider profile in the structured form (docs/profile.md)
+cd engine && cargo run --release -p kompass-cli -- sensitivity --build ../data/build/<name> --profiles a,b [--personal <explored.json>]
+                         # how far one control (slider, tier, hills handle, detours) moves a route, seeded
+                         # pairs, aggregates only (docs/routing.md)
 cd engine && cargo run --release -p kompass-cli -- bench --build ../data/build/<name>
                          # seeded random routes at ~10/50/100 km, both main presets: compile and route
                          # times, settled nodes, result size (pairs never printed or stored)
@@ -70,7 +74,7 @@ cd engine && cargo run --release -p kompass-cli -- compare --build ../data/build
                          # seeded loops of waypoints (3+ corners): share ridden twice, U-turns at vias, the
                          # price in km and cost per "don't ride the same way twice" setting (docs/routing.md)
 cd engine && cargo run --release -p kompass-cli -- replay --build ../data/build/<name> --profiles a,b [--ref name=<dir>]... \
-    [--leg-km 14] [--min-straight 0.55] [--leg ride<k>-leg<j>] [--out-dir <dir>] <gpx files or dirs>
+    [--leg-km 14] [--min-straight 0.55] [--leg ride<k>-leg<j>] [--out-dir <dir>] [--personal <explored.json>] <gpx files or dirs>
                          # route quality against the rider's own rides: each ride matched and cut into A→B
                          # legs, routed per profile; --ref adds another router's GPX per leg (matched too);
                          # overlap with the ridden line, surfaces, roads, closures, turns (docs/routing.md).

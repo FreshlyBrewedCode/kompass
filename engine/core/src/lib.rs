@@ -46,6 +46,7 @@ pub mod route;
 pub mod schema;
 pub mod search;
 pub mod spatial;
+pub mod structured;
 pub mod testing;
 pub mod traffic;
 pub mod turns;

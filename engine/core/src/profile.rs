@@ -3,6 +3,10 @@
 //! [`LimitId`], and the factor clamp ([`Bounds`]) keeps every profile routable and the A* bound
 //! valid. The meaning of every id is in [`crate::catalogue`]; how a profile becomes a cost is
 //! [`crate::cost`]. Semantics for the UI: `docs/profile.md`.
+//!
+//! The structured parts ([`Boards`], [`Hills`], `detours`; #66, a prototype behind a switch) are
+//! optional: a profile with any of them uses the structured model ([`crate::structured`]), one
+//! without routes exactly as before.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -118,6 +122,345 @@ id_enum! {
         NoFerries = "no_ferries",
     }
 }
+
+id_enum! {
+    /// A tier of a board: how much the rider likes the ways of a row, best first in [`Tier::BEST_FIRST`].
+    Tier {
+        Avoid = "avoid",
+        Dislike = "dislike",
+        Fine = "fine",
+        Like = "like",
+        Love = "love",
+    }
+}
+
+impl Tier {
+    /// Love first, avoid last (the order of a board on screen).
+    pub const BEST_FIRST: [Tier; 5] = [Tier::Love, Tier::Like, Tier::Fine, Tier::Dislike, Tier::Avoid];
+
+    /// The factor of a metre in this tier, relative to `love`; `None` for `avoid` (closed: a limit).
+    #[must_use]
+    pub fn factor(self) -> Option<f32> {
+        match self {
+            Tier::Love => Some(1.0),
+            Tier::Like => Some(1.15),
+            Tier::Fine => Some(TIER_FINE),
+            Tier::Dislike => Some(2.0),
+            Tier::Avoid => None,
+        }
+    }
+}
+
+/// The factor of `fine`: the neutral tier (what a way counts with no opinion), the gate's 1.
+pub const TIER_FINE: f32 = 1.35;
+
+id_enum! {
+    /// A board of the structured model.
+    BoardId {
+        Surface = "surface",
+        Way = "way",
+    }
+}
+
+id_enum! {
+    /// A row of a board: every way is in exactly one row of each board ([`BoardRow::board`]).
+    BoardRow {
+        Paved = "paved",
+        RoughPaved = "rough_paved",
+        Compacted = "compacted",
+        Gravel = "gravel",
+        Soft = "soft",
+        Unknown = "unknown",
+        Main = "main",
+        CountryRoad = "country_road",
+        Residential = "residential",
+        Service = "service",
+        Track = "track",
+        Path = "path",
+        CyclePath = "cycle_path",
+        CyclePathRoadside = "cycle_path_roadside",
+    }
+}
+
+impl BoardRow {
+    pub const SURFACE: [BoardRow; 6] = [
+        BoardRow::Paved,
+        BoardRow::RoughPaved,
+        BoardRow::Compacted,
+        BoardRow::Gravel,
+        BoardRow::Soft,
+        BoardRow::Unknown,
+    ];
+    pub const WAY: [BoardRow; 8] = [
+        BoardRow::Main,
+        BoardRow::CountryRoad,
+        BoardRow::Residential,
+        BoardRow::Service,
+        BoardRow::Track,
+        BoardRow::Path,
+        BoardRow::CyclePath,
+        BoardRow::CyclePathRoadside,
+    ];
+
+    /// The board the row is on.
+    #[must_use]
+    pub fn board(self) -> BoardId {
+        if self.index() < BoardRow::SURFACE.len() {
+            BoardId::Surface
+        } else {
+            BoardId::Way
+        }
+    }
+}
+
+/// The surface board: a tier per surface class of the way (the tag, else a safe guess; weak
+/// guesses and unusual surfaces are `unknown`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema, TS))]
+pub struct SurfaceBoard {
+    pub paved: Tier,
+    pub rough_paved: Tier,
+    pub compacted: Tier,
+    pub gravel: Tier,
+    pub soft: Tier,
+    pub unknown: Tier,
+}
+
+/// The way board: a tier per kind of way (the route's way types; steps count as paths).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema, TS))]
+pub struct WayBoard {
+    pub main: Tier,
+    pub country_road: Tier,
+    pub residential: Tier,
+    pub service: Tier,
+    pub track: Tier,
+    pub path: Tier,
+    pub cycle_path: Tier,
+    pub cycle_path_roadside: Tier,
+}
+
+/// The tier boards (structured model): each board present replaces its slider preferences.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema, TS), ts(optional_fields))]
+pub struct Boards {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<SurfaceBoard>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub way: Option<WayBoard>,
+}
+
+impl Boards {
+    /// The tier of a row, `None` when its board is absent.
+    #[must_use]
+    pub fn tier(&self, row: BoardRow) -> Option<Tier> {
+        use BoardRow as R;
+        if row.board() == BoardId::Surface {
+            let s = self.surface.as_ref()?;
+            Some(match row {
+                R::Paved => s.paved,
+                R::RoughPaved => s.rough_paved,
+                R::Compacted => s.compacted,
+                R::Gravel => s.gravel,
+                R::Soft => s.soft,
+                _ => s.unknown,
+            })
+        } else {
+            let w = self.way.as_ref()?;
+            Some(match row {
+                R::Main => w.main,
+                R::CountryRoad => w.country_road,
+                R::Residential => w.residential,
+                R::Service => w.service,
+                R::Track => w.track,
+                R::Path => w.path,
+                R::CyclePath => w.cycle_path,
+                _ => w.cycle_path_roadside,
+            })
+        }
+    }
+
+    /// Sets the tier of a row (creating its board, every other row `fine`).
+    pub fn set(&mut self, row: BoardRow, t: Tier) {
+        use BoardRow as R;
+        if row.board() == BoardId::Surface {
+            let s = self.surface.get_or_insert(SurfaceBoard {
+                paved: Tier::Fine,
+                rough_paved: Tier::Fine,
+                compacted: Tier::Fine,
+                gravel: Tier::Fine,
+                soft: Tier::Fine,
+                unknown: Tier::Fine,
+            });
+            *match row {
+                R::Paved => &mut s.paved,
+                R::RoughPaved => &mut s.rough_paved,
+                R::Compacted => &mut s.compacted,
+                R::Gravel => &mut s.gravel,
+                R::Soft => &mut s.soft,
+                _ => &mut s.unknown,
+            } = t;
+        } else {
+            let w = self.way.get_or_insert(WayBoard {
+                main: Tier::Fine,
+                country_road: Tier::Fine,
+                residential: Tier::Fine,
+                service: Tier::Fine,
+                track: Tier::Fine,
+                path: Tier::Fine,
+                cycle_path: Tier::Fine,
+                cycle_path_roadside: Tier::Fine,
+            });
+            *match row {
+                R::Main => &mut w.main,
+                R::CountryRoad => &mut w.country_road,
+                R::Residential => &mut w.residential,
+                R::Service => &mut w.service,
+                R::Track => &mut w.track,
+                R::Path => &mut w.path,
+                R::CyclePath => &mut w.cycle_path,
+                _ => &mut w.cycle_path_roadside,
+            } = t;
+        }
+    }
+
+    /// The rows of the boards present, board order.
+    #[must_use]
+    pub fn rows(&self) -> Vec<BoardRow> {
+        let mut out = Vec::new();
+        if self.surface.is_some() {
+            out.extend(BoardRow::SURFACE);
+        }
+        if self.way.is_some() {
+            out.extend(BoardRow::WAY);
+        }
+        out
+    }
+}
+
+/// The hills curve's climbing handles: the cost of a metre at that grade (percent, uphill) relative
+/// to a flat metre (0 % is pinned at 1). Below 1 seeks climbs (counts through the gate).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema, TS))]
+pub struct UpHandles {
+    #[serde(rename = "3")]
+    pub at3: f32,
+    #[serde(rename = "6")]
+    pub at6: f32,
+    #[serde(rename = "10")]
+    pub at10: f32,
+    #[serde(rename = "15")]
+    pub at15: f32,
+}
+
+/// The hills curve's descending handles (percent downhill), 1 or more.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema, TS))]
+pub struct DownHandles {
+    #[serde(rename = "8")]
+    pub at8: f32,
+    #[serde(rename = "15")]
+    pub at15: f32,
+}
+
+/// The hills curve (structured model): what a metre costs against its grade, an additive term in
+/// metres (`length × (curve − 1)`). Replaces `climb`, `steep` and `ramps_over_*`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema, TS), ts(optional_fields))]
+pub struct Hills {
+    pub up: UpHandles,
+    /// Absent: a descent counts like a climb of half its grade (at least 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub down: Option<DownHandles>,
+    /// On loose ground (gravel, soft, unusual surfaces) grades count this many percent steeper,
+    /// 0..=50 (default 0).
+    #[serde(default)]
+    pub loose_pct: f32,
+}
+
+impl Hills {
+    pub const UP_GRADES: [f32; 4] = [3.0, 6.0, 10.0, 15.0];
+    pub const DOWN_GRADES: [f32; 2] = [8.0, 15.0];
+    pub const UP_RANGE: (f32, f32) = (0.5, 10.0);
+    pub const DOWN_RANGE: (f32, f32) = (1.0, 10.0);
+    pub const LOOSE_RANGE: (f32, f32) = (0.0, 50.0);
+
+    /// The climbing handles in grade order.
+    #[must_use]
+    pub fn up_values(&self) -> [f32; 4] {
+        [self.up.at3, self.up.at6, self.up.at10, self.up.at15]
+    }
+
+    /// The flat curve (every handle 1): no cost for hills.
+    #[must_use]
+    pub fn flat() -> Hills {
+        Hills {
+            up: UpHandles {
+                at3: 1.0,
+                at6: 1.0,
+                at10: 1.0,
+                at15: 1.0,
+            },
+            down: None,
+            loose_pct: 0.0,
+        }
+    }
+}
+
+/// The range of `detours` (structured model), and its default.
+pub const DETOURS_RANGE: (f32, f32) = (0.5, 2.0);
+pub const DETOURS_DEFAULT: f32 = 1.0;
+
+/// The slider preferences a board replaces (rejected in a profile that has the board).
+#[must_use]
+pub fn replaced_by_board(b: BoardId) -> &'static [PrefId] {
+    match b {
+        BoardId::Surface => &[
+            PrefId::Unpaved,
+            PrefId::PavedSmooth,
+            PrefId::PavedRough,
+            PrefId::FineGravel,
+            PrefId::SoftGround,
+            PrefId::UnknownSurface,
+        ],
+        BoardId::Way => &[
+            PrefId::Track,
+            PrefId::Path,
+            PrefId::CyclewaySep,
+            PrefId::CyclewayRoad,
+            PrefId::Residential,
+            PrefId::Service,
+            PrefId::Minor,
+            PrefId::Main,
+        ],
+    }
+}
+
+/// The limits a board replaces (its `avoid` tier).
+#[must_use]
+pub fn limits_replaced_by_board(b: BoardId) -> &'static [LimitId] {
+    match b {
+        BoardId::Surface => &[LimitId::PavedOnly, LimitId::NoUnknownSurface],
+        BoardId::Way => &[LimitId::NoMainRoads],
+    }
+}
+
+/// The slider preferences the hills curve replaces.
+pub const REPLACED_BY_HILLS: &[PrefId] = &[
+    PrefId::Climb,
+    PrefId::Steep,
+    PrefId::RampsOver6,
+    PrefId::RampsOver8,
+    PrefId::RampsOver10,
+    PrefId::RampsOver12,
+    PrefId::RampsOver15,
+];
 
 /// Number of preferences (per-preference arrays).
 pub const PREF_COUNT: usize = PrefId::ALL.len();
@@ -236,7 +579,8 @@ pub struct Profile {
     /// Hard limits.
     #[serde(default)]
     pub limits: BTreeMap<LimitId, LimitValue>,
-    /// The factor clamp; defaults apply when absent.
+    /// The factor clamp; defaults apply when absent. In the structured model only `max_factor`
+    /// counts (`min_factor` must stay at its default: `detours` takes its place).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bounds: Option<Bounds>,
     /// What a right-angle turn at a junction costs, metres-equivalent (0..=500; absent:
@@ -244,6 +588,16 @@ pub struct Profile {
     /// through road at least half of it (`docs/routing.md#turns`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_m: Option<f32>,
+    /// Structured model: the tier boards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boards: Option<Boards>,
+    /// Structured model: the hills curve.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hills: Option<Hills>,
+    /// Structured model: the spread of the relative factors, an exponent 0.5..=2 (default 1; more
+    /// is "Detours: more", a loved way is worth a longer ride).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detours: Option<f32>,
 }
 
 /// The default of [`Profile::turn_m`].
@@ -302,6 +656,18 @@ impl Profile {
         self.turn_m.unwrap_or(TURN_M)
     }
 
+    /// Whether the profile uses the structured model (it has `boards`, `hills` or `detours`).
+    #[must_use]
+    pub fn structured(&self) -> bool {
+        self.boards.is_some() || self.hills.is_some() || self.detours.is_some()
+    }
+
+    /// The spread exponent of the structured model.
+    #[must_use]
+    pub fn detours(&self) -> f32 {
+        self.detours.unwrap_or(DETOURS_DEFAULT)
+    }
+
     /// The effective setting of a limit: `None` off, `Some(None)` on (a switch), `Some(Some(n))` on
     /// with its number (the default if given as `true`).
     #[must_use]
@@ -353,6 +719,69 @@ impl Profile {
         if !(lo..=hi).contains(&t) {
             return Err(ProfileError(format!("turn_m {t} is outside {lo}..{hi}")));
         }
+        if self.structured() {
+            self.validate_structured()?;
+        }
+        Ok(())
+    }
+
+    /// The structured parts: ranges, and no slider or limit a board or the curve replaces.
+    fn validate_structured(&self) -> Result<(), ProfileError> {
+        let range = |what: &str, v: f32, (lo, hi): (f32, f32)| {
+            if (lo..=hi).contains(&v) {
+                Ok(())
+            } else {
+                Err(ProfileError(format!("{what} {v} is outside {lo}..{hi}")))
+            }
+        };
+        if (self.bounds().min_factor - Bounds::default().min_factor).abs() > 1e-6 {
+            return Err(ProfileError(
+                "bounds.min_factor has no meaning in the structured model (there is no floor): set `detours`"
+                    .into(),
+            ));
+        }
+        range("detours", self.detours(), DETOURS_RANGE)?;
+        let boards = self.boards.unwrap_or_default();
+        for (board, present) in [
+            (BoardId::Surface, boards.surface.is_some()),
+            (BoardId::Way, boards.way.is_some()),
+        ] {
+            if !present {
+                continue;
+            }
+            if let Some(id) = replaced_by_board(board)
+                .iter()
+                .find(|id| self.weights.contains_key(id))
+            {
+                return Err(ProfileError(format!(
+                    "preference `{id}` is the {board} board's job: rank its rows on `boards.{board}` instead"
+                )));
+            }
+            if let Some(id) = limits_replaced_by_board(board)
+                .iter()
+                .find(|&&id| self.limit(id).is_some())
+            {
+                return Err(ProfileError(format!(
+                    "limit `{id}` is the {board} board's job: put the rows it closes on `avoid`"
+                )));
+            }
+        }
+        if let Some(h) = &self.hills {
+            if let Some(id) = REPLACED_BY_HILLS.iter().find(|id| self.weights.contains_key(id)) {
+                return Err(ProfileError(format!(
+                    "preference `{id}` is the hills curve's job: set its handles instead"
+                )));
+            }
+            for (g, v) in Hills::UP_GRADES.iter().zip(h.up_values()) {
+                range(&format!("hills.up.{g}"), v, Hills::UP_RANGE)?;
+            }
+            if let Some(d) = &h.down {
+                for (g, v) in Hills::DOWN_GRADES.iter().zip([d.at8, d.at15]) {
+                    range(&format!("hills.down.{g}"), v, Hills::DOWN_RANGE)?;
+                }
+            }
+            range("hills.loose_pct", h.loose_pct, Hills::LOOSE_RANGE)?;
+        }
         Ok(())
     }
 
@@ -375,6 +804,15 @@ impl Profile {
         }
         let b = self.bounds();
         let _ = write!(s, "[{},{}]", b.min_factor, b.max_factor);
+        if self.structured() {
+            let _ = write!(
+                s,
+                "|boards={};hills={};detours={}",
+                serde_json::to_string(&self.boards).unwrap_or_default(),
+                serde_json::to_string(&self.hills).unwrap_or_default(),
+                self.detours()
+            );
+        }
         s
     }
 }
