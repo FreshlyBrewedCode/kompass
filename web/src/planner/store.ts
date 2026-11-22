@@ -10,11 +10,13 @@
 import { createContext, useContext, useSyncExternalStore } from "react";
 import { isSuperseded, type Superseded } from "@/engine/client";
 import type {
+  BoardRow,
   Catalogue,
   CompareRequest,
   EdgeExplanation,
   EdgeRun,
   ExplainEdgeRequest,
+  Hills,
   LimitId,
   LimitValue,
   OverrideKind,
@@ -26,6 +28,7 @@ import type {
   RouteError,
   RouteRequest,
   RouteResult,
+  Tier,
 } from "@/engine/generated/types";
 import type { EdgeCostsParams, EdgeCostsResult, RouteOutcome } from "@/engine/protocol";
 import type { EngineStore } from "@/engine/store";
@@ -67,10 +70,44 @@ import {
   type SavedOverrides,
   withOverride,
 } from "./overrides";
+import {
+  boardOf,
+  cleanHills,
+  setHandle as curveWithHandle,
+  fromSliders,
+  isStructured,
+  moveRow,
+  parseStructured,
+  partsOf,
+  replaced,
+  type SavedStructured,
+  type StructuredParts,
+  sameParts,
+  snapSpread,
+  structuredChanges,
+  structuredProfile,
+  twinId,
+} from "./structured/model";
+
+/** Which controls edit the profile (#66): today's sliders, or the structured prototype behind a switch. */
+export type Controls = "sliders" | "structured";
+/** The plan of the mode not on screen: kept so the rider can flip back and forth and compare. */
+type ModePlan = {
+  baseId: string;
+  weights: Weights;
+  limits: Limits;
+  detours: number | null;
+  parts: StructuredParts | null;
+  edited: boolean;
+};
 
 /** What the store needs of the engine (an adapter over `EngineStore`; a fake in tests). */
 export interface PlannerEngine {
   presets(): Promise<Preset[]>;
+  /** the structured twins of the shipped presets (#66) */
+  structuredPresets(): Promise<Preset[]>;
+  /** a slider profile in the structured form (#66) */
+  toStructured(profile: Profile): Promise<Profile>;
   catalogue(): Promise<Catalogue>;
   route(request: RouteRequest, lane: string): Promise<RouteOutcome | Superseded>;
   diff(a: number[], b: number[], lane: string): Promise<RouteDiff | Superseded>;
@@ -86,6 +123,8 @@ export interface PlannerEngine {
 export function engineAdapter(engine: EngineStore): PlannerEngine {
   return {
     presets: () => engine.call("presets"),
+    structuredPresets: () => engine.call("structuredPresets"),
+    toStructured: (profile) => engine.call("toStructured", profile),
     catalogue: () => engine.call("catalogue"),
     route: (request, lane) => engine.routeLatest(request, lane),
     diff: (a, b, lane) => engine.client.latest(lane, "diff", { a, b }),
@@ -136,10 +175,20 @@ export type PlanState = {
   overrideUndo: { text: string; before: PlanOverride[]; seq: number } | null;
   /** the inspected way's run of edges between junctions: what an exception would apply to */
   run: { edge: number; result: EdgeRun } | null;
+  /** which controls edit the profile (an app setting, saved on the device; #66) */
+  controls: Controls;
+  /** switching to the structured controls: the engine converts the slider profile */
+  converting: boolean;
+  /** structured controls: the boards, the curve, the spread (`null` with the sliders) */
+  structured: StructuredParts | null;
+  /** the structured profile was edited since it was converted (it no longer follows the sliders) */
+  structuredEdited: boolean;
   // derived from the above (kept in the snapshot so selectors stay cheap and stable)
   base: PlanPreset | undefined;
   baseWeights: Weights;
   baseLimits: Limits;
+  /** structured controls: the base preset's boards, curve and spread */
+  baseParts: StructuredParts | null;
   /** the `min_factor` in force and the base's */
   minFactor: number;
   baseMinFactor: number;
@@ -179,6 +228,8 @@ export type PlanState = {
 
 const PLAN_KEY = "kompass.plan.v1";
 const PRESETS_KEY = "kompass.presets.v1";
+/** the structured controls switch (#66): "structured" or absent */
+export const CONTROLS_KEY = "kompass.controls.v1";
 export const DEFAULT_BASE = "gravel_explorer";
 const OPTIONS = { snap_radius_m: 250, geometry: true, avoid_reuse: true };
 /** how long the main route may take before the shell says "Routing…" */
@@ -195,6 +246,8 @@ export type StoreOptions = {
   bounds?: readonly [number, number, number, number];
   /** the region build's id: exceptions (edge ids) are saved with it and dropped on another one */
   build?: string;
+  /** the controls asked for in the URL (`?controls=structured`): saved like the switch */
+  controls?: Controls;
   schedule?: Schedule;
   now?: () => number;
 };
@@ -216,6 +269,18 @@ export class PlannerStore {
   /** a lane of "why not" whose answer is on its way: comparing now would pair stale routes */
   #mainPending = false;
   #throughPending = false;
+  /** every preset: the shipped ones, their structured twins and the own (of both kinds) */
+  #all: { shipped: PlanPreset[]; twins: PlanPreset[]; own: PlanPreset[] } = {
+    shipped: [],
+    twins: [],
+    own: [],
+  };
+  /** the plan of the other controls (the sliders' while structured is on, and the other way round) */
+  #other: ModePlan | null = null;
+  /** the controls asked for (storage or URL); applied by `init` */
+  #wantControls: Controls;
+  /** bumped per switch: an older conversion answering late is dropped */
+  #switchSeq = 0;
 
   constructor(engine: PlannerEngine, options: StoreOptions = {}) {
     this.#engine = engine;
@@ -225,11 +290,17 @@ export class PlannerStore {
     this.#build = options.build;
     this.#restored = parsePlan(this.#read(PLAN_KEY), options.bounds);
     const own = parsePresets(this.#read(PRESETS_KEY));
+    this.#all.own = own;
     const r = this.#restored;
     const saved = parseOverrides(r?.overrides, this.#build);
+    const st = parseStructured(r?.structured);
+    if (st) this.#other = modePlanOf(st);
+    this.#wantControls =
+      options.controls ?? (this.#read(CONTROLS_KEY) === "structured" ? "structured" : "sliders");
+    if (options.controls) this.#saveControls(options.controls);
     this.#state = derive({
       catalogue: null,
-      presets: own,
+      presets: own.filter((p) => !isStructured(p.profile)),
       waypoints: r?.waypoints ?? [],
       baseId: r?.baseId ?? DEFAULT_BASE,
       weights: r?.weights ?? {},
@@ -240,6 +311,10 @@ export class PlannerStore {
       overridesDropped: saved.dropped,
       overrideUndo: null,
       run: null,
+      controls: "sliders",
+      converting: false,
+      structured: null,
+      structuredEdited: false,
       engineReady: false,
       main: NO_LINE,
       ghost: NO_LINE,
@@ -270,15 +345,13 @@ export class PlannerStore {
 
   readonly getSnapshot = (): PlanState => this.#state;
 
-  #set(patch: Partial<PlanState>, opts: { route?: boolean; save?: boolean } = {}) {
+  #set(patch: Partial<PlanState>, opts: { route?: boolean; save?: boolean; converted?: boolean } = {}) {
     const next = { ...this.#state, ...patch };
+    const edit = "weights" in patch || "limits" in patch || "baseId" in patch || "structured" in patch;
+    if (next.controls === "structured" && edit && !opts.converted && !("controls" in patch))
+      next.structuredEdited = true;
     const plan =
-      "weights" in patch ||
-      "limits" in patch ||
-      "detours" in patch ||
-      "baseId" in patch ||
-      "presets" in patch ||
-      "catalogue" in patch;
+      edit || "detours" in patch || "presets" in patch || "controls" in patch || "catalogue" in patch;
     this.#state = plan ? derive(next) : next;
     for (const listener of [...this.#listeners]) listener();
     if (opts.route) this.#reroute();
@@ -311,34 +384,90 @@ export class PlannerStore {
     if (this.#saveTimer) clearTimeout(this.#saveTimer);
     this.#saveTimer = null;
     const s = this.#state;
+    // the sliders' plan stays where it always was; the structured one beside it
+    const here = this.#modePlan();
+    const sliders = s.controls === "sliders" ? here : this.#other;
+    const structured = s.controls === "structured" ? here : this.#other;
+    const st: SavedStructured | null =
+      structured?.parts && structured !== sliders
+        ? {
+            baseId: structured.baseId,
+            weights: structured.weights,
+            limits: structured.limits,
+            boards: structured.parts.boards,
+            hills: structured.parts.hills,
+            spread: structured.parts.spread,
+            edited: structured.edited,
+          }
+        : null;
+    const compareId =
+      s.controls === "structured" && s.compareId ? s.compareId.replace(/_structured$/, "") : s.compareId;
     const plan: SavedPlan = {
       v: 1,
       waypoints: s.waypoints,
-      baseId: s.baseId,
-      weights: s.weights,
-      limits: s.limits,
-      ...(s.detours !== null ? { detours: s.detours } : {}),
-      compareId: s.compareId,
+      baseId: sliders?.baseId ?? s.baseId,
+      weights: sliders?.weights ?? s.weights,
+      limits: sliders?.limits ?? s.limits,
+      ...((sliders?.detours ?? null) !== null ? { detours: sliders?.detours as number } : {}),
+      compareId,
       lineBy: s.lineBy,
       ...(s.overrides.length > 0 && this.#build !== undefined
         ? { overrides: { build: this.#build, list: s.overrides } satisfies SavedOverrides }
         : {}),
+      ...(st ? { structured: st } : {}),
     };
     this.#write(PLAN_KEY, JSON.stringify(plan));
   }
 
   #saveOwn() {
-    const own = this.#state.presets.filter((p) => p.own).map(({ own: _, ...p }) => p);
+    const own = this.#all.own.map(({ own: _, ...p }) => p);
     this.#write(PRESETS_KEY, JSON.stringify(own));
+  }
+
+  #saveControls(controls: Controls) {
+    if (controls === "structured") this.#write(CONTROLS_KEY, "structured");
+    else
+      try {
+        this.#storage?.setItem(CONTROLS_KEY, "sliders");
+      } catch {
+        // storage blocked: the switch holds for this session
+      }
+  }
+
+  /** The presets the picker offers under these controls: the shipped (or their twins) and the own of that kind. */
+  #presetsFor(controls: Controls): PlanPreset[] {
+    const structured = controls === "structured";
+    return [
+      ...(structured ? this.#all.twins : this.#all.shipped),
+      ...this.#all.own.filter((p) => isStructured(p.profile) === structured),
+    ];
+  }
+
+  /** The plan on screen, as one mode's part. */
+  #modePlan(): ModePlan {
+    const s = this.#state;
+    return {
+      baseId: s.baseId,
+      weights: s.weights,
+      limits: s.limits,
+      detours: s.detours,
+      parts: s.structured,
+      edited: s.structuredEdited,
+    };
   }
 
   // ---------------------------------------------------------------- start
 
   /** Fetches the presets and the catalogue (they do not need the region graph). */
   async init() {
-    const [shipped, catalogue] = await Promise.all([this.#engine.presets(), this.#engine.catalogue()]);
-    const own = this.#state.presets.filter((p) => p.own);
-    const presets = [...shipped, ...own];
+    const [shipped, catalogue, twins] = await Promise.all([
+      this.#engine.presets(),
+      this.#engine.catalogue(),
+      this.#engine.structuredPresets().catch(() => [] as Preset[]),
+    ]);
+    this.#all.shipped = shipped;
+    this.#all.twins = twins;
+    const presets = this.#presetsFor("sliders");
     const restored = this.#restored;
     const patch: Partial<PlanState> = { presets, catalogue };
     if (!presets.some((p) => p.id === this.#state.baseId)) {
@@ -359,7 +488,188 @@ export class PlannerStore {
     }
     if (this.#state.compareId && !presets.some((p) => p.id === this.#state.compareId)) patch.compareId = null;
     if (restored && restored.waypoints.length >= 2) patch.fitSeq = this.#state.fitSeq + 1;
+    if (this.#wantControls === "structured") {
+      // no slider route first: the structured one follows at once
+      this.#set(patch);
+      await this.#switchOn();
+      return;
+    }
     this.#set(patch, { route: true });
+  }
+
+  // ---------------------------------------------------------------- the controls (#66)
+
+  /**
+   * The structured controls on or off (an app setting, saved on the device). On: the plan's slider
+   * profile converted by the engine, or the structured profile edited before; off: the slider profile
+   * as it was. Both stay in the plan, so the rider can flip between them and compare routes.
+   */
+  async setControls(controls: Controls) {
+    this.#wantControls = controls;
+    this.#saveControls(controls);
+    if (controls === this.#state.controls) return;
+    if (controls === "structured") await this.#switchOn();
+    else this.#switchOff();
+  }
+
+  async #switchOn() {
+    const seq = ++this.#switchSeq;
+    const s = this.#state;
+    const sliders = this.#modePlan();
+    const twins = this.#all.twins;
+    const twin =
+      twins.find((p) => p.id === twinId(s.baseId)) ??
+      twins.find((p) => p.id === twinId(DEFAULT_BASE)) ??
+      twins[0];
+    let next: ModePlan | null = this.#other?.parts && this.#other.edited ? this.#other : null;
+    // a saved structured profile on an own preset that is gone falls back to the twin
+    if (next && !this.#presetsFor("structured").some((p) => p.id === next?.baseId)) next = null;
+    if (!next && twin) {
+      const exact = twin.id === twinId(s.baseId) && !s.changed;
+      if (exact) {
+        next = {
+          baseId: twin.id,
+          weights: { ...twin.profile.weights },
+          limits: normaliseLimits(twin.profile.limits, s.catalogue),
+          detours: null,
+          parts: partsOf(twin.profile),
+          edited: false,
+        };
+      } else {
+        this.#set({ converting: true });
+        let converted: Profile;
+        try {
+          converted = await this.#engine.toStructured(this.profile());
+        } catch {
+          if (seq === this.#switchSeq) this.#set({ converting: false });
+          return;
+        }
+        if (seq !== this.#switchSeq) return;
+        const now = this.#state;
+        const r = fromSliders({
+          converted,
+          twin: twin.id === twinId(now.baseId) ? twin : undefined,
+          plan: { weights: now.weights, limits: now.limits },
+          base: { weights: now.baseWeights, limits: now.baseLimits },
+          catalogue: now.catalogue,
+        });
+        next = {
+          baseId: twin.id,
+          weights: r.weights,
+          limits: normaliseLimits(r.limits, now.catalogue),
+          detours: null,
+          parts: r.parts,
+          edited: false,
+        };
+      }
+    }
+    if (!next?.parts) {
+      this.#set({ converting: false });
+      return;
+    }
+    this.#other = { ...this.#modePlan(), ...sliders, parts: null };
+    const compareId = s.compareId ? twinId(s.compareId) : null;
+    const presets = this.#presetsFor("structured");
+    this.#set(
+      {
+        controls: "structured",
+        converting: false,
+        presets,
+        baseId: next.baseId,
+        weights: next.weights,
+        limits: next.limits,
+        detours: null,
+        structured: next.parts,
+        structuredEdited: next.edited,
+        compareId: compareId && presets.some((p) => p.id === compareId) ? compareId : null,
+        chip: null,
+      },
+      { route: true, save: true, converted: true },
+    );
+  }
+
+  #switchOff() {
+    this.#switchSeq++;
+    const s = this.#state;
+    const here = this.#modePlan();
+    const back = this.#other;
+    this.#other = here.parts ? here : this.#other;
+    const presets = this.#presetsFor("sliders");
+    const baseId =
+      back && presets.some((p) => p.id === back.baseId)
+        ? back.baseId
+        : presets.some((p) => p.id === DEFAULT_BASE)
+          ? DEFAULT_BASE
+          : (presets[0]?.id ?? DEFAULT_BASE);
+    const base = presets.find((p) => p.id === baseId);
+    const compareId = s.compareId?.replace(/_structured$/, "") ?? null;
+    this.#set(
+      {
+        controls: "sliders",
+        converting: false,
+        presets,
+        baseId,
+        weights: back?.weights ?? { ...(base?.profile.weights ?? {}) },
+        limits: back?.limits ?? normaliseLimits(base?.profile.limits ?? {}, s.catalogue),
+        detours: back?.detours ?? null,
+        structured: null,
+        structuredEdited: false,
+        compareId: compareId && presets.some((p) => p.id === compareId) ? compareId : null,
+        chip: null,
+      },
+      { route: true, save: true },
+    );
+  }
+
+  // ---------------------------------------------------------------- the structured controls
+
+  /** A board row to another tier (tap a chip, pick a tier). */
+  setRow(row: BoardRow, tier: Tier) {
+    const p = this.#state.structured;
+    if (!p) return;
+    this.#set({ structured: { ...p, boards: moveRow(p.boards, row, tier) } }, { route: true, save: true });
+  }
+
+  /** The change dot of a row: back to the base preset's tier. */
+  resetRow(row: BoardRow) {
+    const b = this.#state.baseParts;
+    const board = (b?.boards[boardOf(row)] ?? {}) as Partial<Record<BoardRow, Tier>>;
+    const tier = board[row];
+    if (tier) this.setRow(row, tier);
+  }
+
+  /** One handle of the hills curve (0 % stays pinned). */
+  setHandle(grade: number, value: number) {
+    const p = this.#state.structured;
+    if (!p) return;
+    const hills = curveWithHandle(p.hills, grade, value, this.#state.catalogue?.structured);
+    this.#set({ structured: { ...p, hills } }, { route: true, save: true });
+  }
+
+  /** A whole curve: a named one from the catalogue, or the loose-ground step. */
+  setHills(hills: Hills) {
+    const p = this.#state.structured;
+    if (!p) return;
+    this.#set({ structured: { ...p, hills: cleanHills(hills) } }, { route: true, save: true });
+  }
+
+  resetHills() {
+    const b = this.#state.baseParts;
+    if (b) this.setHills(b.hills);
+  }
+
+  /** Detours under the structured controls: the spread of the tiers, 0.5 … 2. */
+  setSpread(value: number) {
+    const p = this.#state.structured;
+    if (!p) return;
+    const spread = snapSpread(value);
+    if (spread === p.spread) return;
+    this.#set({ structured: { ...p, spread } }, { route: true, save: true });
+  }
+
+  resetSpread() {
+    const b = this.#state.baseParts;
+    if (b) this.setSpread(b.spread);
   }
 
   /** The region graph is loaded (or gone): route, and refresh the catalogue's coverage. */
@@ -422,6 +732,7 @@ export class PlannerStore {
         weights: { ...base.profile.weights },
         limits: normaliseLimits(base.profile.limits, this.#state.catalogue),
         detours: null,
+        ...(this.#state.controls === "structured" ? { structured: partsOf(base.profile) } : {}),
         compareId: this.#state.compareId === id ? null : this.#state.compareId,
         chip: null,
       },
@@ -510,6 +821,19 @@ export class PlannerStore {
 
   savePreset(name: string) {
     const s = this.#state;
+    if (s.controls === "structured") {
+      const { base: _, ...profile } = this.profile();
+      const preset: PlanPreset = {
+        id: `own-${Date.now().toString(36)}`,
+        blurb: s.base ? `Made from ${presetName(s.base)}` : "Your own",
+        profile: { ...profile, name: name.trim() || `${presetName(s.base)} +` },
+        own: true,
+      };
+      this.#all.own = [...this.#all.own, preset];
+      this.#set({ presets: [...s.presets, preset], baseId: preset.id }, { save: true });
+      this.#saveOwn();
+      return;
+    }
     const preset = ownPreset(
       name.trim() || `${presetName(s.base)} +`,
       s.base,
@@ -518,14 +842,16 @@ export class PlannerStore {
       undefined,
       planProfile(s.base, s.weights, s.limits, s.minFactor).bounds,
     );
+    this.#all.own = [...this.#all.own, preset];
     this.#set({ presets: [...s.presets, preset], baseId: preset.id }, { save: true });
     this.#saveOwn();
   }
 
   renamePreset(id: string, name: string) {
-    const presets = this.#state.presets.map((p) =>
-      p.id === id && p.own ? { ...p, profile: { ...p.profile, name: name.trim() || presetName(p) } } : p,
-    );
+    const rename = (p: PlanPreset) =>
+      p.id === id && p.own ? { ...p, profile: { ...p.profile, name: name.trim() || presetName(p) } } : p;
+    this.#all.own = this.#all.own.map(rename);
+    const presets = this.#state.presets.map(rename);
     this.#set({ presets });
     this.#saveOwn();
   }
@@ -534,11 +860,11 @@ export class PlannerStore {
   deletePreset(id: string) {
     const s = this.#state;
     const presets = s.presets.filter((p) => !(p.id === id && p.own));
+    this.#all.own = this.#all.own.filter((p) => p.id !== id);
     const patch: Partial<PlanState> = { presets, compareId: s.compareId === id ? null : s.compareId };
+    const fallback = s.controls === "structured" ? twinId(DEFAULT_BASE) : DEFAULT_BASE;
     if (s.baseId === id)
-      patch.baseId = presets.some((p) => p.id === DEFAULT_BASE)
-        ? DEFAULT_BASE
-        : (presets[0]?.id ?? DEFAULT_BASE);
+      patch.baseId = presets.some((p) => p.id === fallback) ? fallback : (presets[0]?.id ?? DEFAULT_BASE);
     this.#set(patch, { route: true, save: true });
     this.#saveOwn();
   }
@@ -569,8 +895,23 @@ export class PlannerStore {
 
   /** The profile the plan routes with, the detours included (the cost layer and the inspector use the same). */
   profile(): Profile {
+    return this.#profileWith(this.#state.limits);
+  }
+
+  /** The plan's profile with other limits (the probe lifts them one at a time). */
+  #profileWith(limits: Limits): Profile {
     const s = this.#state;
-    return planProfile(s.base, s.weights, s.limits, s.minFactor);
+    if (s.controls === "structured" && s.structured)
+      return structuredProfile(s.base, s.weights, limits, s.structured, s.catalogue);
+    return planProfile(s.base, s.weights, limits, s.minFactor);
+  }
+
+  /** A preset's own profile under the controls on screen (the ghost, a compared preset). */
+  #presetProfile(p: PlanPreset, weights: Weights, limits: Limits, minFactor?: number): Profile {
+    const s = this.#state;
+    if (s.controls === "structured")
+      return structuredProfile(p, weights, limits, partsOf(p.profile), s.catalogue);
+    return planProfile(p, weights, limits, minFactor);
   }
 
   /**
@@ -757,6 +1098,10 @@ export class PlannerStore {
       request.profile.limits,
       request.profile.bounds,
       request.overrides ?? [],
+      request.profile.boards,
+      request.profile.hills,
+      request.profile.detours,
+      request.profile.turn_m,
     ]);
     if (this.#sent.get(lane) === key) return;
     this.#sent.set(lane, key);
@@ -810,7 +1155,7 @@ export class PlannerStore {
         });
       return;
     }
-    const profile = planProfile(s.base, s.weights, s.limits, s.minFactor);
+    const profile = this.profile();
     const before = this.#sent.get("route");
     if (s.whyNot) this.#mainPending = true;
     this.#send("route", this.#request(profile), (main, key) => {
@@ -833,7 +1178,7 @@ export class PlannerStore {
     const base = s.base;
     const ghost =
       s.changed && !s.compareId && base
-        ? this.#request(planProfile(base, s.baseWeights, s.baseLimits, s.baseMinFactor))
+        ? this.#request(this.#presetProfile(base, s.baseWeights, s.baseLimits, s.baseMinFactor))
         : null;
     this.#send("ghost", ghost, (line) => {
       this.#set({ ghost: line });
@@ -842,7 +1187,11 @@ export class PlannerStore {
     const other = s.presets.find((p) => p.id === s.compareId);
     const compare = other
       ? this.#request(
-          planProfile(other, other.profile.weights, normaliseLimits(other.profile.limits, s.catalogue)),
+          this.#presetProfile(
+            other,
+            other.profile.weights,
+            normaliseLimits(other.profile.limits, s.catalogue),
+          ),
         )
       : null;
     this.#send("compare", compare, (line) => {
@@ -958,10 +1307,7 @@ export class PlannerStore {
     for (let i = 0; i < tries.length; i++) {
       if (this.#sent.get("route") !== key) return;
       const limits = tries[i] as Limits;
-      const outcome = await this.#engine.route(
-        this.#request(planProfile(s.base, s.weights, limits, s.minFactor)),
-        "probe",
-      );
+      const outcome = await this.#engine.route(this.#request(this.#profileWith(limits)), "probe");
       if (this.#sent.get("route") !== key) return;
       if (!isSuperseded(outcome) && outcome.ok) {
         this.#set({ blame: { limit: ids[i] ?? null, result: outcome.result, searching: false } });
@@ -979,6 +1325,37 @@ function derive(s: PlanState): PlanState {
   const baseLimits = normaliseLimits(base?.profile.limits ?? {}, s.catalogue);
   const baseMin = baseMinFactor(base);
   const minFactor = s.detours ?? baseMin;
+  if (s.controls === "structured" && s.structured) {
+    // the structured controls (#66): the boards, the curve and the spread are changes too
+    const baseParts = partsOf(base?.profile);
+    const hidden = replaced(s.catalogue);
+    const list: Change[] = [
+      ...changes({ weights: baseWeights, limits: baseLimits }, s.weights, s.limits, s.catalogue),
+      ...structuredChanges(baseParts, s.structured, s.catalogue?.structured).map((c) => ({
+        id: c.id as Change["id"],
+        kind: c.kind,
+        added: false,
+        removed: false,
+        text: c.text,
+      })),
+    ];
+    return {
+      ...s,
+      base,
+      baseWeights,
+      baseLimits,
+      baseParts,
+      minFactor: baseMin,
+      baseMinFactor: baseMin,
+      changes: list,
+      sentence: changeSentence(presetName(base), list),
+      prefIds: prefRows(s.weights).filter((id) => !hidden.prefs.has(id)),
+      limitIds: limitRows(baseLimits, s.limits).filter((id) => !hidden.limits.has(id)),
+      changed:
+        !sameCost({ weights: baseWeights, limits: baseLimits }, { weights: s.weights, limits: s.limits }) ||
+        !sameParts(baseParts, s.structured),
+    };
+  }
   const list = changes({ weights: baseWeights, limits: baseLimits }, s.weights, s.limits, s.catalogue, {
     base: baseMin,
     plan: minFactor,
@@ -988,6 +1365,7 @@ function derive(s: PlanState): PlanState {
     base,
     baseWeights,
     baseLimits,
+    baseParts: null,
     minFactor,
     baseMinFactor: baseMin,
     changes: list,
@@ -998,6 +1376,18 @@ function derive(s: PlanState): PlanState {
       { weights: baseWeights, limits: baseLimits, minFactor: baseMin },
       { weights: s.weights, limits: s.limits, minFactor },
     ),
+  };
+}
+
+/** A saved structured profile as the plan of its mode. */
+function modePlanOf(st: SavedStructured): ModePlan {
+  return {
+    baseId: st.baseId,
+    weights: st.weights,
+    limits: st.limits,
+    detours: null,
+    parts: { boards: st.boards, hills: st.hills, spread: st.spread },
+    edited: st.edited,
   };
 }
 

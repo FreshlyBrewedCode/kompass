@@ -3,13 +3,15 @@
 // requests (protocol.ts, docs/engine-web.md). Requests run one at a time, in order: the wasm engine is
 // one object and a request may wait for files (geometry) halfway through.
 import type { DataFile, GraphFiles } from "@/map/manifest";
-import type { Catalogue, ClosedBy, Preset, RouteError, RouteResult } from "./generated/types";
+import type { Catalogue, ClosedBy, Preset, Profile, RouteError, RouteResult } from "./generated/types";
 import { type CacheStorageLike, GraphStore, graphFileList, wireBytes } from "./graph-cache";
 import init, {
   closedCodes,
   Engine,
   catalogue as plainCatalogue,
   presets as presetList,
+  structuredPresets as structuredPresetList,
+  toStructured,
   version,
 } from "./pkg/kompass_wasm.js";
 import {
@@ -40,6 +42,7 @@ type Region = {
 
 let region: Region | null = null;
 let presetsCache: Preset[] | null = null;
+let structuredCache: Preset[] | null = null;
 let closedCodesCache: ClosedBy[] | null = null;
 
 function ready(): Region {
@@ -105,6 +108,15 @@ const handlers: EngineHandlers = {
     await wasm;
     presetsCache ??= JSON.parse(presetList()) as Preset[];
     return presetsCache;
+  },
+  structuredPresets: async () => {
+    await wasm;
+    structuredCache ??= JSON.parse(structuredPresetList()) as Preset[];
+    return structuredCache;
+  },
+  toStructured: async (profile) => {
+    await wasm;
+    return JSON.parse(toStructured(JSON.stringify(profile))) as Profile;
   },
   catalogue: async () => {
     await wasm;

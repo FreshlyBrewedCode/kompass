@@ -3,7 +3,7 @@
 // (whose explored teal and unknown grey they reuse). The chrome stays neutral (index.css); this is
 // the only colour on screen, and the same colour means the same thing on the map, in a lane and in a
 // legend. `dataVars(theme)` hands them to the chrome as CSS variables.
-import type { OverrideKind } from "@/engine/generated/types";
+import type { BoardRow, OverrideKind } from "@/engine/generated/types";
 import type { Theme } from "@/map/palette";
 import { EXPLORED, UNKNOWN } from "@/map/palette";
 import type { SurfaceGroup, WayGroup } from "./model";
@@ -33,6 +33,26 @@ export const WAY: { key: WayGroup; label: string; color: Pair }[] = [
   { key: "minor", label: "Minor road", color: { light: "#dcae2f", dark: "#e6c456" } },
   { key: "main", label: "Main road", color: { light: "#8e2f3c", dark: "#d0677a" } },
 ];
+/**
+ * The rows of the tier boards (structured controls, #66): the same hues as the surface and way-type
+ * colours above, a lighter shade for the row next to its sibling (gravel next to compacted).
+ */
+export const ROW: Record<BoardRow, Pair> = {
+  paved: { light: "#5d6b7c", dark: "#93a3b8" },
+  rough_paved: { light: "#8d97a4", dark: "#6c7785" },
+  compacted: { light: "#c98a1e", dark: "#e3ab45" },
+  gravel: { light: "#e2b45e", dark: "#b8862e" },
+  soft: { light: "#8f5630", dark: "#b9794d" },
+  unknown: UNKNOWN,
+  main: { light: "#8e2f3c", dark: "#d0677a" },
+  country_road: { light: "#dcae2f", dark: "#e6c456" },
+  residential: { light: "#a8aeb6", dark: "#7d858e" },
+  service: { light: "#c9cdd2", dark: "#5c636b" },
+  track: { light: "#86a845", dark: "#a9c865" },
+  path: { light: "#1f7a5c", dark: "#4fb891" },
+  cycle_path: { light: "#6f5df0", dark: "#a59cff" },
+  cycle_path_roadside: { light: "#a59cff", dark: "#7d70e0" },
+};
 export const RIDDEN: Pair = EXPLORED;
 /**
  * This plan's exceptions, a quiet mark under the route: avoided in ink (dotted on the map), preferred
@@ -59,5 +79,6 @@ export function dataVars(theme: Theme): Record<string, string> {
     ...Object.fromEntries(Object.entries(OVERRIDE).map(([k, c]) => [`--override-${k}`, c[theme]])),
     ...Object.fromEntries(SURFACE.map((s) => [`--surface-${s.key}`, s.color[theme]])),
     ...Object.fromEntries(WAY.map((s) => [`--way-${s.key}`, s.color[theme]])),
+    ...Object.fromEntries(Object.entries(ROW).map(([k, c]) => [`--row-${k}`, c[theme]])),
   };
 }

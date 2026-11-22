@@ -5,16 +5,19 @@
 import type {
   AdditiveKind,
   ArcCostExplanation,
+  BoardRow,
   Catalogue,
   EdgeExplanation,
   LimitId,
   PrefId,
   PrefPart,
   RouteComparison,
+  Tier,
 } from "@/engine/generated/types";
 import { formatFactor } from "@/map/cost";
 import { isOpen, metresText, NEUTRAL } from "../cost/model";
 import type { Weights } from "../model";
+import { boardOf, rowLabel, type StructuredParts, TIER_LABEL, tierFactor } from "../structured/model";
 
 /** A preference whose factor is this close to 1 has no effect worth a line. */
 const NO_EFFECT = 0.005;
@@ -301,7 +304,10 @@ export type Blame =
   | { kind: "pref"; id: PrefId; text: string }
   | { kind: "limit"; id: LimitId; text: string }
   | { kind: "rule"; text: string }
-  | { kind: "distance"; text: string };
+  | { kind: "distance"; text: string }
+  /** structured controls (#66): a board row's tier, or the hills curve */
+  | { kind: "row"; row: BoardRow; text: string }
+  | { kind: "hills"; text: string };
 
 export type WhyNotVerdict = {
   /** `same`: through here is the route already; `tie`: about the same; `cheaper`: the plan is not cheapest */
@@ -325,6 +331,8 @@ export function whyNotVerdict(
   c: RouteComparison,
   minFactor: number,
   catalogue: Catalogue | null,
+  /** the plan's structured parts (#66): rows and the curve can be to blame too; no floor but 1 */
+  structured?: StructuredParts | null,
 ): WhyNotVerdict {
   const parts = c.stretches.filter((s) => s.a.span.length_m > 0 || s.b.span.length_m > 0);
   if (parts.length === 0)
@@ -380,6 +388,19 @@ export function whyNotVerdict(
       noSlider: `No slider can change this: ${text}.`,
     };
   }
+  const avoided = [...closed].find(([by]) => by === "avoided_surface" || by === "avoided_way");
+  if (avoided && !limit) {
+    const [by, m] = avoided;
+    const board = by === "avoided_surface" ? "Surface" : "Way type";
+    const text = `“Avoid” on the ${board} board closes ${metresText(m)} of it`;
+    return {
+      state: "dearer",
+      title,
+      detail,
+      blame: { kind: "rule", text },
+      noSlider: `No slider can change this: only moving the row out of Avoid on the ${board} board opens it.`,
+    };
+  }
   if (limit) {
     const [by, m] = limit;
     const name = catalogue?.limits.find((l) => l.id === by)?.label ?? by;
@@ -422,8 +443,45 @@ export function whyNotVerdict(
     }
   }
   const best = [...score].sort((x, y) => y[1].s - x[1].s)[0];
+  // structured: a row's tier and the curve compete in the same units (metres × log factor)
+  let other: { s: number; blame: Blame } | null = null;
+  if (structured) {
+    const rows = new Map<BoardRow, { b: number; a: number }>();
+    let hills = 0;
+    for (const s of parts) {
+      for (const r of s.b.rows ?? []) {
+        const v = rows.get(r.key) ?? { b: 0, a: 0 };
+        v.b += r.length_m;
+        rows.set(r.key, v);
+      }
+      for (const r of s.a.rows ?? []) {
+        const v = rows.get(r.key) ?? { b: 0, a: 0 };
+        v.a += r.length_m;
+        rows.set(r.key, v);
+      }
+      const per = Math.max(1, (s.a.factor + s.b.factor) / 2);
+      hills += ((s.b.hills_m ?? 0) - (s.a.hills_m ?? 0)) / per;
+    }
+    for (const [row, v] of rows) {
+      const tier = (structured.boards[boardOf(row)] as Record<string, Tier> | undefined)?.[row];
+      const f = tier ? tierFactor(tier, structured.spread) : null;
+      if (!tier || f === null) continue;
+      const sc = (v.b - v.a) * Math.log(f / (tierFactor("fine", structured.spread) ?? 1));
+      if (!other || sc > other.s) {
+        const name = rowLabel(row, catalogue);
+        const text =
+          v.b >= v.a
+            ? `${name} (${TIER_LABEL[tier].toLowerCase()}): ${metresText(v.b)} of them through here against ${metresText(v.a)} planned`
+            : `${name} (${TIER_LABEL[tier].toLowerCase()}): ${metresText(v.a)} of them planned against ${metresText(v.b)} through here`;
+        other = { s: sc, blame: { kind: "row", row, text } };
+      }
+    }
+    if (hills > (other?.s ?? 0))
+      other = { s: hills, blame: { kind: "hills", text: "The hills: through here they count more" } };
+  }
   let blame: Blame;
-  if (best && best[1].s >= Math.max(20, 0.15 * dCost)) {
+  if (other && other.s >= Math.max(20, 0.15 * dCost) && other.s >= (best?.[1].s ?? 0)) blame = other.blame;
+  else if (best && best[1].s >= Math.max(20, 0.15 * dCost)) {
     const [id, v] = best;
     const label = catalogue?.preferences.find((p) => p.id === id)?.label ?? id;
     const fb = v.fb !== undefined ? formatFactor(v.fb) : "×1.0";
@@ -440,10 +498,17 @@ export function whyNotVerdict(
     blame = { kind: "distance", text: `Mostly the distance: through here is ${metresText(dLength)} longer` };
   else blame = { kind: "distance", text: "No one preference: many small differences add up" };
   // could any slider win it? not if it costs more even with all of it at the detour limit
-  const floor = parts.reduce((s, x) => s + x.b.span.length_m * minFactor + x.b.extra_m, 0);
+  // structured: the best way counts 1 per metre and the curve can be flattened (its metres are not fixed)
+  const floorFactor = structured ? 1 : minFactor;
+  const floor = parts.reduce(
+    (s, x) => s + x.b.span.length_m * floorFactor + x.b.extra_m - (structured ? (x.b.hills_m ?? 0) : 0),
+    0,
+  );
   const noSlider =
     floor >= costA
-      ? `No slider can change this: even if all of it counted at the detour limit (${formatFactor(minFactor)}), through here would count ${metresText(floor)} against the planned ${metresText(costA)}.`
+      ? structured
+        ? `No control can change this: even if all of it were a way you love on the flat, through here would count ${metresText(floor)} against the planned ${metresText(costA)}.`
+        : `No slider can change this: even if all of it counted at the detour limit (${formatFactor(minFactor)}), through here would count ${metresText(floor)} against the planned ${metresText(costA)}.`
       : null;
   return { state: "dearer", title, detail, blame, noSlider };
 }

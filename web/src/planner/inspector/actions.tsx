@@ -77,10 +77,10 @@ export function PreferButton({ x }: { x: EdgeExplanation }) {
 }
 
 /** "Allow here · 140 m": a limit no longer closes this run (for this plan; Lift changes the profile). */
-export function AllowButton({ x, limit }: { x: EdgeExplanation; limit: LimitId }) {
+export function AllowButton({ x, limit }: { x: EdgeExplanation; limit?: LimitId }) {
   const len = useRunText(x.edge);
   return (
-    <OverrideButton kind="allow" x={x} limit={limit}>
+    <OverrideButton kind="allow" x={x} {...(limit ? { limit } : {})}>
       Allow here · {len}
     </OverrideButton>
   );

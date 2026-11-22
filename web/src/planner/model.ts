@@ -202,8 +202,9 @@ export function limitRows(base: Limits, limits: Limits): LimitId[] {
 }
 
 export type Change = {
-  id: PrefId | LimitId | typeof DETOURS_ID;
-  kind: "pref" | "limit" | "detours";
+  /** structured controls (#66): `row:<row>` for a board row, `hills` for the curve */
+  id: PrefId | LimitId | typeof DETOURS_ID | `row:${string}` | "hills";
+  kind: "pref" | "limit" | "detours" | "row" | "hills";
   /** not part of the base at all */
   added: boolean;
   removed: boolean;
@@ -696,6 +697,8 @@ export type SavedPlan = {
   lineBy: LineBy;
   /** this plan's exceptions with the build they were made on (`overrides.ts`; read by the store) */
   overrides?: unknown;
+  /** the structured profile of the plan (#66, the prototype's switch; `structured/model.ts`) */
+  structured?: unknown;
 };
 
 const num = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
@@ -736,6 +739,7 @@ export function parsePlan(
       compareId: typeof raw.compareId === "string" ? raw.compareId : null,
       lineBy: raw.lineBy === "surface" ? "surface" : "plain",
       ...(raw.overrides ? { overrides: raw.overrides } : {}),
+      ...(raw.structured ? { structured: raw.structured } : {}),
     };
   } catch {
     return null;
