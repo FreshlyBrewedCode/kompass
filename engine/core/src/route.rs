@@ -15,8 +15,9 @@ use crate::graph::{ArcId, EdgeId, Graph, NodeId, arc, arc_edge, arc_is_reverse};
 use crate::overrides::{self, EdgeOverride, OverrideKind, OverrideUse, Overrides};
 use crate::personal::PersonalLayer;
 use crate::profile::{PrefId, Profile};
-use crate::search::{Exempt, Overlay, Plane, Query, Search, UTurn};
+use crate::search::{Exempt, Overlay, Plane, Query, Search, Source, Target, Turns, UTurn};
 use crate::spatial::{DEFAULT_CELL_M, Grid, Snap};
+use crate::turns::{Headings, share_between};
 use crate::{LngLat, M_PER_E7};
 
 /// A coordinate in degrees.
@@ -254,6 +255,10 @@ pub struct Leg {
     /// What this plan's edge overrides added on top of `cost` (< 0 where a preferred way counts
     /// less), metres-equivalent.
     pub override_cost: f32,
+    /// Turns that cost something (at junctions, U-turns; the one at the via it starts from too).
+    pub turns: u32,
+    /// What they cost, metres-equivalent: part of `cost` (`turn_m` per right-angle turn).
+    pub turn_cost: f32,
     /// `[first, end)` into `arcs` and `segments`.
     pub arcs: [u32; 2],
     pub segments: [u32; 2],
@@ -271,7 +276,8 @@ pub struct Summary {
     pub descent_m: f32,
     /// A rough riding time from a speed model by surface and grade.
     pub duration_s: f32,
-    /// The profile's cost of the route (metres-equivalent): the compiled cost of every arc ridden.
+    /// The profile's cost of the route (metres-equivalent): the compiled cost of every arc ridden
+    /// plus its turns (`turn_cost`).
     pub cost: f32,
     /// Metres ridden twice: on ways an earlier leg rode (either direction).
     pub reused_m: f32,
@@ -280,6 +286,10 @@ pub struct Summary {
     pub shape_cost: f32,
     /// What this plan's edge overrides added on top of `cost` (< 0 where a preferred way counts less).
     pub override_cost: f32,
+    /// Turns that cost something ([`Leg::turns`]).
+    pub turns: u32,
+    /// What they cost, metres-equivalent: part of `cost`.
+    pub turn_cost: f32,
     /// Shares of the length, 0..1.
     pub unpaved_share: f32,
     pub unknown_surface_share: f32,
@@ -504,6 +514,7 @@ pub struct Planner {
     grid: Grid,
     classes: Option<cost::EdgeClasses>,
     plane: Plane,
+    headings: Headings,
     search: Search,
     compiled: Vec<Compiled>,
     personal: Option<PersonalLayer>,
@@ -519,6 +530,7 @@ pub(crate) struct CostView<'a> {
     pub costs: &'a [f32],
     pub bound: f32,
     pub personal: Option<&'a PersonalLayer>,
+    pub headings: &'a Headings,
 }
 
 struct Endpoint {
@@ -535,6 +547,8 @@ struct LegRaw {
     reused_m: f32,
     shape_cost: f32,
     override_cost: f32,
+    turns: u32,
+    turn_cost: f32,
     settled: u32,
 }
 
@@ -545,6 +559,10 @@ struct Shape<'a> {
     overlay: Option<&'a Overlay>,
     /// Leaving the via back along this arc (the reverse of the one it was reached by) costs this.
     back: Option<(ArcId, f32)>,
+    /// The arc the via this leg starts from was reached by (the turn there counts from it).
+    arrival: Option<ArcId>,
+    /// What a right-angle turn costs (0: free).
+    turn_m: f32,
 }
 
 impl Planner {
@@ -554,12 +572,14 @@ impl Planner {
         let grid = Grid::build(&graph, DEFAULT_CELL_M);
         let classes = cost::EdgeClasses::build(&graph);
         let plane = Plane::for_graph(&graph);
-        let search = Search::new(graph.node_count());
+        let headings = Headings::build(&graph);
+        let search = Search::new(graph.node_count(), graph.arc_count(), Some(&headings));
         Planner {
             graph,
             grid,
             classes,
             plane,
+            headings,
             search,
             compiled: Vec::new(),
             personal: None,
@@ -609,10 +629,17 @@ impl Planner {
         self.personal.as_ref()
     }
 
-    /// Heap bytes of the search state, the edge classes and the compiled profiles.
+    /// The heading of every arc at either end (the turn costs read it).
+    #[must_use]
+    pub fn headings(&self) -> &Headings {
+        &self.headings
+    }
+
+    /// Heap bytes of the search state, the headings, the edge classes and the compiled profiles.
     #[must_use]
     pub fn state_bytes(&self) -> usize {
         self.search.heap_bytes()
+            + self.headings.heap_bytes()
             + self.classes.as_ref().map_or(0, cost::EdgeClasses::heap_bytes)
             + self
                 .compiled
@@ -674,6 +701,7 @@ impl Planner {
             costs: &c.costs,
             bound: c.bound,
             personal: self.personal.as_ref(),
+            headings: &self.headings,
         })
     }
 
@@ -849,11 +877,14 @@ impl Planner {
                 }
             }
             let start = pieces.len();
+            let turn_m = leg_profile(l).turn_m();
             let shape = Shape {
                 overlay: ridden.as_ref().filter(|o| avoid_reuse && !o.is_empty()),
                 back: (avoid_reuse && l > 0)
                     .then(|| pieces.last().map(|p| (p.arc ^ 1, reuse.u_turn_m)))
                     .flatten(),
+                arrival: (l > 0).then(|| pieces.last().map(|p| p.arc)).flatten(),
+                turn_m,
             };
             let (found, settled, uturn) = self.leg(ci, &a, &b, shape, ov, &mut pieces).map_err(|mut e| {
                 e.leg = Some(u32::try_from(l).unwrap_or(u32::MAX));
@@ -903,12 +934,16 @@ impl Planner {
                     o.mark(arc_edge(p.arc), p.t0, p.t1);
                 }
             }
+            // the turns: between the leg's pieces, and from the arrival at the via it starts from
+            let (turns, turn_cost) = self.piece_turns(&pieces[start.saturating_sub(1)..], turn_m);
             legs_raw.push(LegRaw {
                 pieces: (start, pieces.len()),
                 cost: (found - shape_cost - override_cost).max(0.0),
                 reused_m,
                 shape_cost,
                 override_cost,
+                turns,
+                turn_cost,
                 settled,
             });
             models.push(ci);
@@ -935,6 +970,13 @@ impl Planner {
         result.breakdown.touched = self.touched(&pieces, &req.profile);
         result.overrides = uses;
         Ok(result)
+    }
+
+    /// The turns between consecutive pieces (riding on along one arc through a via is none): how
+    /// many cost something and what (`turn_m` per right-angle turn).
+    fn piece_turns(&self, pieces: &[Piece], turn_m: f32) -> (u32, f32) {
+        let arcs: Vec<ArcId> = pieces.iter().map(|p| p.arc).collect();
+        crate::turns::line_turns(&self.graph, &self.headings, turn_m, &arcs)
     }
 
     /// The length of the route each preference of `profile` applies to (`breakdown.touched`).
@@ -1002,6 +1044,14 @@ impl Planner {
         let (ea, ta) = (a.snap.edge, a.snap.fraction as f32);
         let (eb, tb) = (b.snap.edge, b.snap.fraction as f32);
         let (xa, xb) = (a.exempt.is_some(), b.exempt.is_some());
+        let mut scratch = Vec::new();
+        // the turn from the arrival at the via onto a first piece (none at the start)
+        let mut turn_onto = |p: ArcId| match shape.arrival {
+            Some(x) if shape.turn_m > 0.0 => {
+                shape.turn_m * share_between(g, &self.headings, x, p, &mut scratch)
+            }
+            _ => 0.0,
+        };
         // a partial arc's cost with the shape costs: riding again, the U-turn at the via
         let shaped = |cost: f32, a: ArcId, t0: f32, t1: f32| {
             if !cost.is_finite() {
@@ -1018,20 +1068,28 @@ impl Planner {
             }
             c
         };
-        // from the point: to `to` along the edge, to `from` against it
-        let fwd_a = shaped(
-            self.partial(ci, arc(ea, false), 1.0 - ta, xa, ov),
-            arc(ea, false),
-            ta,
-            1.0,
-        );
-        let bwd_a = shaped(
-            self.partial(ci, arc(ea, true), ta, xa, ov),
-            arc(ea, true),
-            0.0,
-            ta,
-        );
-        let sources = [(g.to(ea), fwd_a), (g.from(ea), bwd_a)];
+        // from the point: to `to` along the edge, to `from` against it; a piece of no length
+        // leaves the turn to the node (from the arrival)
+        let source = |cost: f32, a: ArcId, fraction: f32, turn: f32| {
+            let some = fraction > 1e-6;
+            Source {
+                node: g.head(a),
+                arc: a,
+                cost: if some && cost.is_finite() {
+                    cost + turn
+                } else {
+                    cost
+                },
+                turn_from: if some { Some(a) } else { shape.arrival },
+            }
+        };
+        let (fwd, bwd) = (arc(ea, false), arc(ea, true));
+        let fwd_a = shaped(self.partial(ci, fwd, 1.0 - ta, xa, ov), fwd, ta, 1.0);
+        let bwd_a = shaped(self.partial(ci, bwd, ta, xa, ov), bwd, 0.0, ta);
+        let sources = [
+            source(fwd_a, fwd, 1.0 - ta, turn_onto(fwd)),
+            source(bwd_a, bwd, ta, turn_onto(bwd)),
+        ];
         // into the point: from `from` along the edge, from `to` against it (never a U-turn: the
         // U-turn is the first move from the via)
         let into = |cost: f32, e: EdgeId, t0: f32, t1: f32| match shape.overlay {
@@ -1040,7 +1098,18 @@ impl Planner {
         };
         let fwd_b = into(self.partial(ci, arc(eb, false), tb, xb, ov), eb, 0.0, tb);
         let bwd_b = into(self.partial(ci, arc(eb, true), 1.0 - tb, xb, ov), eb, tb, 1.0);
-        let targets = [(g.from(eb), fwd_b), (g.to(eb), bwd_b)];
+        let targets = [
+            Target {
+                node: g.from(eb),
+                arc: (tb > 1e-6).then_some(arc(eb, false)),
+                cost: fwd_b,
+            },
+            Target {
+                node: g.to(eb),
+                arc: (1.0 - tb > 1e-6).then_some(arc(eb, true)),
+                cost: bwd_b,
+            },
+        ];
         // the direct way along one edge
         let mut direct = f32::INFINITY;
         let mut direct_piece = None;
@@ -1053,7 +1122,7 @@ impl Planner {
                 tb,
             );
             if p.is_finite() {
-                direct = p;
+                direct = p + turn_onto(arc(ea, rev));
                 direct_piece = Some(Piece {
                     arc: arc(ea, rev),
                     t0: ta,
@@ -1070,8 +1139,16 @@ impl Planner {
         let c = &self.compiled[ci];
         // an end in a small pocket the limits cut off may get away over excluded ways (checked up
         // front: a search that fails explores everything it can reach)
-        let starts: Vec<NodeId> = sources.iter().filter(|s| s.1.is_finite()).map(|s| s.0).collect();
-        let ends: Vec<NodeId> = targets.iter().filter(|t| t.1.is_finite()).map(|t| t.0).collect();
+        let starts: Vec<NodeId> = sources
+            .iter()
+            .filter(|s| s.cost.is_finite())
+            .map(|s| s.node)
+            .collect();
+        let ends: Vec<NodeId> = targets
+            .iter()
+            .filter(|t| t.cost.is_finite())
+            .map(|t| t.node)
+            .collect();
         let pocket_a = !xa
             && self
                 .search
@@ -1110,6 +1187,10 @@ impl Planner {
                 cost,
             }),
             overrides: ov,
+            turns: (shape.turn_m > 0.0).then_some(Turns {
+                headings: &self.headings,
+                turn_m: shape.turn_m,
+            }),
         };
         let mut found = self.search.run(g, &query);
         let mut settled_all = self.search.settled;
@@ -1127,47 +1208,34 @@ impl Planner {
         let settled = u32::try_from(settled_all).unwrap_or(u32::MAX);
         match found {
             Some(f) => {
-                // the first piece: from the point to the start node
-                let first = if f.start == g.to(ea)
-                    && fwd_a.is_finite()
-                    && (f.start != g.from(ea) || fwd_a <= bwd_a)
-                {
+                // the first piece: from the point to the start node; the last: on to the point
+                let first = Piece {
+                    arc: sources[f.source].arc,
+                    t0: ta,
+                    t1: if f.source == 0 { 1.0 } else { 0.0 },
+                    exempt: xa,
+                };
+                let last = if f.target == 0 {
                     Piece {
-                        arc: arc(ea, false),
-                        t0: ta,
-                        t1: 1.0,
-                        exempt: xa,
+                        arc: arc(eb, false),
+                        t0: 0.0,
+                        t1: tb,
+                        exempt: xb,
                     }
                 } else {
                     Piece {
-                        arc: arc(ea, true),
-                        t0: ta,
-                        t1: 0.0,
-                        exempt: xa,
+                        arc: arc(eb, true),
+                        t0: 1.0,
+                        t1: tb,
+                        exempt: xb,
                     }
                 };
-                let last =
-                    if f.end == g.from(eb) && fwd_b.is_finite() && (f.end != g.to(eb) || fwd_b <= bwd_b) {
-                        Piece {
-                            arc: arc(eb, false),
-                            t0: 0.0,
-                            t1: tb,
-                            exempt: xb,
-                        }
-                    } else {
-                        Piece {
-                            arc: arc(eb, true),
-                            t0: 1.0,
-                            t1: tb,
-                            exempt: xb,
-                        }
-                    };
+                let start = sources[f.source].node;
                 // back along the arrival: the partial from the point, or the first move from the
                 // node the arrival reached (a full arc, or the target's partial arc)
                 let uturn = shape.back.is_some_and(|(back, _)| {
                     first.arc == back
-                        || (f.start == g.tail(back)
-                            && f.arcs.first().map_or(last.arc == back, |&a| a == back))
+                        || (start == g.tail(back) && f.arcs.first().map_or(last.arc == back, |&a| a == back))
                 });
                 // a waypoint on a node rides nothing of its snapped edge
                 if first.fraction() > 1e-6 {
@@ -1240,6 +1308,7 @@ impl Planner {
         let mut dist = 0.0f32;
         let (mut tot_up, mut tot_down, mut tot_secs, mut tot_cost) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
         let (mut tot_reused, mut tot_shape, mut tot_override) = (0.0f32, 0.0f32, 0.0f32);
+        let (mut tot_turns, mut tot_turn) = (0u32, 0.0f32);
         let mut acc = SegAcc::default();
         for (l, raw) in legs_raw.iter().enumerate() {
             let (p0, p1) = raw.pieces;
@@ -1293,6 +1362,8 @@ impl Planner {
             tot_reused += raw.reused_m;
             tot_shape += raw.shape_cost;
             tot_override += raw.override_cost;
+            tot_turns += raw.turns;
+            tot_turn += raw.turn_cost;
             legs.push(Leg {
                 distance_m: dist - leg_start_m,
                 ascent_m: up,
@@ -1302,6 +1373,8 @@ impl Planner {
                 reused_m: raw.reused_m,
                 shape_cost: raw.shape_cost,
                 override_cost: raw.override_cost,
+                turns: raw.turns,
+                turn_cost: raw.turn_cost,
                 arcs: [leg_start_arc as u32, arcs.len() as u32],
                 segments: [leg_start_seg as u32, segments.len() as u32],
                 settled: raw.settled,
@@ -1339,6 +1412,8 @@ impl Planner {
                 reused_m: tot_reused,
                 shape_cost: tot_shape,
                 override_cost: tot_override,
+                turns: tot_turns,
+                turn_cost: tot_turn,
                 unpaved_share: unpaved / total,
                 unknown_surface_share: unknown / total,
                 main_road_m: main,

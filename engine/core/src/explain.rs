@@ -21,6 +21,7 @@ use crate::overrides::{self, EdgeOverride, OverrideKind, Overrides};
 use crate::personal::PersonalLayer;
 use crate::profile::{Bounds, LimitId, PrefId, Profile};
 use crate::route::{Part, Planner, Reason, RouteError, Span, SurfaceKind, diff, invalid_request};
+use crate::turns::{Headings, line_turns};
 
 /// What closes an arc: a limit of the profile (the catalogue's limit ids) or a rule that holds
 /// whatever the profile. In typed arrays as [`ClosedBy::code`].
@@ -359,7 +360,7 @@ pub struct StretchCost {
     /// `[first, end)` into that route's arcs, start and length (edges counted in full).
     pub span: Span,
     /// Under the request's profile and overrides (closed arcs at `max_factor` per metre, as near a
-    /// waypoint).
+    /// waypoint), its turns included (`turn_cost`).
     pub cost: f32,
     /// The mean factor per metre (`Σ length × factor / Σ length`), additive terms not included.
     pub factor: f32,
@@ -378,6 +379,10 @@ pub struct StretchCost {
     /// Length on edges with an override of the plan, by kind.
     #[serde(default)]
     pub overrides: Vec<OverridePart>,
+    /// Turns that cost something, the moves onto the stretch and off it included (where a detour
+    /// leaves the other route and rejoins it), and what they cost (metres-equivalent, in `cost`).
+    pub turns: u32,
+    pub turn_cost: f32,
 }
 
 /// One stretch where the routes part, both sides costed.
@@ -555,8 +560,12 @@ impl Planner {
             start_m: 0.0,
             length_m: r.iter().map(|&a| g.length_m(arc_edge(a))).sum(),
         };
-        let cost_of =
-            |r: &[ArcId], s: Span| stretch_cost(g, v.model, v.personal, v.costs, ov.as_ref(), r, s, WHY_MAX);
+        let turn_m = req.profile.turn_m();
+        let cost_of = |r: &[ArcId], s: Span| {
+            let mut c = stretch_cost(g, v.model, v.personal, v.costs, ov.as_ref(), r, s, WHY_MAX);
+            add_turns(&mut c, g, v.headings, turn_m, r);
+            c
+        };
         Ok(RouteComparison {
             a: cost_of(&req.a, whole(&req.a)),
             b: cost_of(&req.b, whole(&req.b)),
@@ -609,9 +618,25 @@ impl Planner {
                     start_m: start[s as usize],
                     length_m: start[e as usize] - start[s as usize],
                 };
-                stretch_cost(g, v.model, v.personal, v.costs, None, route, span, why_max)
+                let mut c = stretch_cost(g, v.model, v.personal, v.costs, None, route, span, why_max);
+                add_turns(&mut c, g, v.headings, p.turn_m(), route);
+                c
             })
             .collect())
+    }
+}
+
+/// Adds the turns of a stretch to its cost: every move from one arc onto the next of `route` that
+/// enters, crosses or leaves the stretch.
+fn add_turns(c: &mut StretchCost, g: &Graph, h: &Headings, turn_m: f32, route: &[ArcId]) {
+    let [first, end] = c.span.arcs;
+    let lo = (first as usize).max(1) - 1;
+    let hi = (end as usize + 1).min(route.len());
+    if lo < hi {
+        let (n, cost) = line_turns(g, h, turn_m, &route[lo..hi]);
+        c.turns = n;
+        c.turn_cost = cost;
+        c.cost += cost;
     }
 }
 
@@ -709,6 +734,8 @@ fn stretch_cost(
             .into_iter()
             .map(|(kind, length_m)| OverridePart { kind, length_m })
             .collect(),
+        turns: 0,
+        turn_cost: 0.0,
     }
 }
 

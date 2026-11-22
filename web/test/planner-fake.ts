@@ -65,6 +65,7 @@ export const CATALOGUE: Catalogue = {
     },
   ],
   bounds: { min_factor: { min: 0.3, max: 1, default: 0.5 }, max_factor: { min: 2, max: 100, default: 20 } },
+  turn_m: { min: 0, max: 500, default: 20 },
 };
 
 export const PRESETS: Preset[] = [
@@ -112,6 +113,8 @@ export function result(o: {
       reused_m: 0,
       shape_cost: 0,
       override_cost: 0,
+      turns: 0,
+      turn_cost: 0,
       unpaved_share: o.unpaved ?? 0.5,
       unknown_surface_share: 0,
       main_road_m: (o.mainKm ?? 0) * 1000,
@@ -138,6 +141,8 @@ export function result(o: {
       reused_m: 0,
       shape_cost: 0,
       override_cost: 0,
+      turns: 0,
+      turn_cost: 0,
       arcs: [i, i + 1],
       segments: [0, 1],
       settled: 0,
@@ -192,6 +197,8 @@ export function stretchCost(o: {
     ways: [{ key: "track", length_m: o.m, share: 1 }],
     closed: [],
     overrides: [],
+    turns: 0,
+    turn_cost: 0,
   };
 }
 

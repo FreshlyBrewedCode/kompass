@@ -239,7 +239,18 @@ pub struct Profile {
     /// The factor clamp; defaults apply when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bounds: Option<Bounds>,
+    /// What a right-angle turn at a junction costs, metres-equivalent (0..=500; absent:
+    /// [`TURN_M`]; 0: turns are free). Straight on costs nothing, a U-turn twice this; leaving the
+    /// through road at least half of it (`docs/routing.md#turns`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_m: Option<f32>,
 }
+
+/// The default of [`Profile::turn_m`].
+pub const TURN_M: f32 = 20.0;
+
+/// The range of [`Profile::turn_m`].
+pub const TURN_M_RANGE: (f32, f32) = (0.0, 500.0);
 
 /// Why a profile is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -283,6 +294,12 @@ impl Profile {
     #[must_use]
     pub fn bounds(&self) -> Bounds {
         self.bounds.unwrap_or_default()
+    }
+
+    /// The cost of a right-angle turn in force ([`TURN_M`] when absent).
+    #[must_use]
+    pub fn turn_m(&self) -> f32 {
+        self.turn_m.unwrap_or(TURN_M)
     }
 
     /// The effective setting of a limit: `None` off, `Some(None)` on (a switch), `Some(Some(n))` on
@@ -331,11 +348,17 @@ impl Profile {
                 b.max_factor
             )));
         }
+        let (lo, hi) = TURN_M_RANGE;
+        let t = self.turn_m();
+        if !(lo..=hi).contains(&t) {
+            return Err(ProfileError(format!("turn_m {t} is outside {lo}..{hi}")));
+        }
         Ok(())
     }
 
-    /// What decides the cost: the weights (0 dropped), the active limits and the bounds. Two
-    /// profiles with the same key route the same (the name and base do not matter).
+    /// What decides the compiled arc costs: the weights (0 dropped), the active limits and the
+    /// bounds. Two profiles with the same key compile the same (the name and base do not matter,
+    /// nor `turn_m`, which the search adds per turn).
     #[must_use]
     pub fn cost_key(&self) -> String {
         use std::fmt::Write;
@@ -400,6 +423,8 @@ mod tests {
             (r#"{"bounds":{"min_factor":0.1}}"#, "min_factor"),
             (r#"{"bounds":{"max_factor":1.5}}"#, "max_factor"),
             (r#"{"weigths":{}}"#, "unknown field"),
+            (r#"{"turn_m":-1}"#, "turn_m"),
+            (r#"{"turn_m":501}"#, "turn_m"),
         ] {
             let e = Profile::from_json(json).unwrap_err();
             assert!(e.0.contains(want), "{json}: {e}");
@@ -414,6 +439,11 @@ mod tests {
         b.name = Some("other".into());
         b.set_weight(PrefId::Forest, Some(0));
         assert_eq!(a.cost_key(), b.cost_key());
+        // the turn cost is the search's, not the compile's
+        b.turn_m = Some(0.0);
+        assert_eq!(a.cost_key(), b.cost_key());
+        assert_eq!(b.turn_m(), 0.0);
+        assert!((a.turn_m() - TURN_M).abs() < 1e-6);
         b.set_weight(PrefId::Forest, Some(1));
         assert_ne!(a.cost_key(), b.cost_key());
     }

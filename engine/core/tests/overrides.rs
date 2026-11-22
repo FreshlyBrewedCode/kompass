@@ -20,6 +20,7 @@ use kompass_core::graph::{arc, arc_edge};
 use kompass_core::overrides::{AVOID_M, EdgeOverride, OverrideKind, Overrides};
 use kompass_core::route::{ErrorCode, RouteOptions, RouteResult, Waypoint};
 use kompass_core::testing::{Built, GraphBuilder};
+use kompass_core::turns::share_between;
 use kompass_core::{EdgeId, Graph, LimitId, LimitValue, NodeId, Planner, PrefId, Profile, RouteRequest};
 
 struct Rng(u64);
@@ -304,26 +305,42 @@ fn overrides_apply_to_every_leg_and_are_checked() {
     }
 }
 
-/// Dijkstra over a cost per arc.
-fn dijkstra(g: &Graph, cost: &dyn Fn(u32) -> f32, s: NodeId, t: NodeId) -> f32 {
-    let mut dist = vec![f32::INFINITY; g.node_count()];
+/// Dijkstra over a cost per arc and the turns (`turn_m` per right-angle turn): a label per arc,
+/// no U-turns (with free turns: the node search).
+fn dijkstra(
+    g: &Graph,
+    planner: &Planner,
+    turn_m: f32,
+    cost: &dyn Fn(u32) -> f32,
+    s: NodeId,
+    t: NodeId,
+) -> f32 {
+    let mut scratch = Vec::new();
+    let mut dist = vec![f32::INFINITY; g.arc_count()];
     let mut heap = BinaryHeap::new();
-    dist[s as usize] = 0.0;
-    heap.push(Reverse((0u32, s)));
-    while let Some(Reverse((d, v))) = heap.pop() {
+    for b in g.out_arcs(s) {
+        let c = cost(b);
+        if c.is_finite() && c < dist[b as usize] {
+            dist[b as usize] = c;
+            heap.push(Reverse((c.to_bits(), b)));
+        }
+    }
+    while let Some(Reverse((d, a))) = heap.pop() {
         let d = f32::from_bits(d);
-        if d > dist[v as usize] {
+        if d > dist[a as usize] {
             continue;
         }
-        if v == t {
+        if g.head(a) == t {
             return d;
         }
-        for a in g.out_arcs(v) {
-            let c = cost(a);
-            let w = g.head(a);
-            if c.is_finite() && d + c < dist[w as usize] {
-                dist[w as usize] = d + c;
-                heap.push(Reverse(((d + c).to_bits(), w)));
+        for b in g.out_arcs(g.head(a)) {
+            if b == a ^ 1 {
+                continue;
+            }
+            let c = cost(b) + turn_m * share_between(g, planner.headings(), a, b, &mut scratch);
+            if c.is_finite() && d + c < dist[b as usize] {
+                dist[b as usize] = d + c;
+                heap.push(Reverse(((d + c).to_bits(), b)));
             }
         }
     }
@@ -380,7 +397,9 @@ fn a_star_with_overrides_finds_what_dijkstra_finds() {
     p.bounds = Some(bounds);
     p.limits.insert(LimitId::PavedOnly, LimitValue::Flag(true));
     let mut compared = 0;
-    for _ in 0..6 {
+    for round in 0..6 {
+        // turns free, the default, dear
+        p.turn_m = Some([0.0, 20.0, 80.0][round % 3]);
         let built = grid(&mut rng, 10);
         let g = built.graph.clone();
         let mut planner = Planner::new(g.clone());
@@ -406,7 +425,7 @@ fn a_star_with_overrides_finds_what_dijkstra_finds() {
             if s == t {
                 continue;
             }
-            let want = dijkstra(&g, &|a| o.cost(&costs, a), s, t);
+            let want = dijkstra(&g, &planner, p.turn_m(), &|a| o.cost(&costs, a), s, t);
             let (a, b) = (g.node(s), g.node(t));
             let got = planner.route(&request(vec![wp(a.lng, a.lat), wp(b.lng, b.lat)], &p, &list));
             match got {

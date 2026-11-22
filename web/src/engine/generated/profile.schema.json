@@ -191,6 +191,14 @@
           "type": "null"
         }
       ]
+    },
+    "turn_m": {
+      "description": "What a right-angle turn at a junction costs, metres-equivalent (0..=500; absent:\n[`TURN_M`]; 0: turns are free). Straight on costs nothing, a U-turn twice this; leaving the\nthrough road at least half of it (`docs/routing.md#turns`).",
+      "type": [
+        "number",
+        "null"
+      ],
+      "format": "float"
     }
   },
   "additionalProperties": false,

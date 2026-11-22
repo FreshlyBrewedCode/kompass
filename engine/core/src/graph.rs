@@ -430,6 +430,27 @@ impl Graph {
         self.first[v] as usize..self.first[v + 1] as usize
     }
 
+    /// The adjacency slots of `v` (indices of per-slot arrays, contiguous per node: slot `s` holds
+    /// the arc [`Graph::slot_arc`] leaving `v`, in the order of [`Graph::arcs_at`]).
+    #[inline]
+    #[must_use]
+    pub fn slot_range(&self, v: NodeId) -> Range<usize> {
+        self.slots(v)
+    }
+
+    /// The number of adjacency slots (two per edge).
+    #[must_use]
+    pub fn slot_count(&self) -> usize {
+        self.arcs.len()
+    }
+
+    /// The arc of slot `s` (leaving the slot's node).
+    #[inline]
+    #[must_use]
+    pub fn slot_arc(&self, s: usize) -> ArcId {
+        self.arcs[s]
+    }
+
     /// Every arc leaving `v` regardless of one-way, with its [`flags`] (map-matching follows tracks
     /// that ride against a one-way). Each edge at `v` appears once (twice for a loop).
     #[inline]

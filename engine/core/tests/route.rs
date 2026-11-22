@@ -1,7 +1,7 @@
 //! The profile, the cost and the route query on synthetic graphs: every preference and every limit
 //! changes the chosen route in its direction, the class compile equals the direct one, A* equals
-//! Dijkstra under random profiles, legs, snapping onto allowed ways, one-way, the diff, the
-//! personal layer.
+//! Dijkstra under random profiles (turn costs included), legs, snapping onto allowed ways, one-way,
+//! the diff, the personal layer, the turns.
 #![allow(
     clippy::many_single_char_names,
     clippy::too_many_lines,
@@ -24,6 +24,7 @@ use kompass_core::route::{
     DiffRequest, ErrorCode, REUSE_PER_M, ReuseCost, RouteOptions, U_TURN_M, Waypoint, Zone,
 };
 use kompass_core::testing::{Built, GraphBuilder};
+use kompass_core::turns::{line_turns, share_between};
 use kompass_core::{
     ArcId, EdgeId, Graph, LimitId, LimitValue, NodeId, PersonalLayer, Planner, PrefId, Profile, RouteRequest,
 };
@@ -63,6 +64,13 @@ fn request(waypoints: Vec<Waypoint>, profile: &Profile) -> RouteRequest {
         avoid_zones: None,
         sketch: None,
     }
+}
+
+/// The same profile with turns free (tests about preferences on a tiny detour the turn cost would
+/// otherwise price out).
+fn no_turns(mut p: Profile) -> Profile {
+    p.turn_m = Some(0.0);
+    p
 }
 
 fn weights(w: &[(PrefId, i8)]) -> Profile {
@@ -703,6 +711,11 @@ fn random_profile(rng: &mut Rng) -> Profile {
     b.min_factor = 0.3 + rng.unit() * 0.7;
     b.max_factor = 2.0 + rng.unit() * 30.0;
     p.bounds = Some(b);
+    p.turn_m = match rng.below(4) {
+        0 => Some(0.0),
+        1 => None,
+        _ => Some(rng.unit() * 300.0),
+    };
     p
 }
 
@@ -758,26 +771,49 @@ fn the_class_compile_equals_the_direct_compile_and_the_explanation() {
     }
 }
 
-/// Dijkstra over compiled costs from node to node (the reference).
-fn dijkstra(g: &Graph, costs: &[f32], s: NodeId, t: NodeId) -> f32 {
-    let mut dist = vec![f32::INFINITY; g.node_count()];
+/// Dijkstra from node to node over arcs, the reference with turns: a label per arc, every move
+/// costs the next arc (`cost(arc, first move)`) plus its turn (`turn_m` per right-angle turn, the
+/// first move's from `arrival` if given), no U-turns but as the first move.
+fn dijkstra_turns(
+    g: &Graph,
+    planner: &Planner,
+    turn_m: f32,
+    s: NodeId,
+    t: NodeId,
+    arrival: Option<ArcId>,
+    cost: &dyn Fn(ArcId, bool) -> f32,
+) -> f32 {
+    if s == t {
+        return 0.0;
+    }
+    let mut scratch = Vec::new();
+    let mut turn = |a: ArcId, b: ArcId| turn_m * share_between(g, planner.headings(), a, b, &mut scratch);
+    let mut dist = vec![f32::INFINITY; g.arc_count()];
     let mut heap = BinaryHeap::new();
-    dist[s as usize] = 0.0;
-    heap.push(Reverse((0u32, s)));
-    while let Some(Reverse((d, v))) = heap.pop() {
+    for b in g.out_arcs(s) {
+        let c = cost(b, true) + arrival.map_or(0.0, |x| turn(x, b));
+        if c.is_finite() && c < dist[b as usize] {
+            dist[b as usize] = c;
+            heap.push(Reverse((c.to_bits(), b)));
+        }
+    }
+    while let Some(Reverse((d, a))) = heap.pop() {
         let d = f32::from_bits(d);
-        if d > dist[v as usize] {
+        if d > dist[a as usize] {
             continue;
         }
+        let v = g.head(a);
         if v == t {
             return d;
         }
-        for a in g.out_arcs(v) {
-            let c = costs[a as usize];
-            let w = g.head(a);
-            if c.is_finite() && d + c < dist[w as usize] {
-                dist[w as usize] = d + c;
-                heap.push(Reverse(((d + c).to_bits(), w)));
+        for b in g.out_arcs(v) {
+            if b == a ^ 1 {
+                continue;
+            }
+            let c = cost(b, false) + turn(a, b);
+            if c.is_finite() && d + c < dist[b as usize] {
+                dist[b as usize] = d + c;
+                heap.push(Reverse(((d + c).to_bits(), b)));
             }
         }
     }
@@ -799,7 +835,7 @@ fn a_star_finds_what_dijkstra_finds() {
                 let s = rng.below(g.node_count() as u64) as NodeId;
                 let t = rng.below(g.node_count() as u64) as NodeId;
                 let (a, b) = (g.node(s), g.node(t));
-                let want = dijkstra(&g, &costs, s, t);
+                let want = dijkstra_turns(&g, &planner, p.turn_m(), s, t, None, &|a, _| costs[a as usize]);
                 let got = planner.route(&request(vec![wp(a.lng, a.lat), wp(b.lng, b.lat)], &p));
                 match got {
                     // (without detours over excluded ways near the waypoints, which Dijkstra
@@ -820,6 +856,10 @@ fn a_star_finds_what_dijkstra_finds() {
                             "A* {} vs Dijkstra {want}",
                             r.summary.cost
                         );
+                        // the turns counted again from the arcs: the same
+                        let (n, tc) = line_turns(&g, planner.headings(), p.turn_m(), &r.arcs);
+                        assert_eq!(n, r.summary.turns);
+                        assert!((tc - r.summary.turn_cost).abs() <= 1e-3 * tc.max(1.0));
                         compared += 1;
                     }
                     Ok(_) => {}
@@ -984,16 +1024,23 @@ fn a_via_on_a_through_road_is_ridden_through() {
     let off = planner.route(&req).unwrap();
     assert!((off.summary.distance_m - 400.0).abs() < 1.0);
     assert!((off.summary.reused_m - 200.0).abs() < 1.0);
-    // the costs are the profile's, the shape costs on top
+    // the costs are the profile's (the length on these streets, and the turns), the shape costs
+    // on top
     for x in [&r, &no_u, &off] {
         let legs: f32 = x.legs.iter().map(|l| l.cost).sum();
         assert!((legs - x.summary.cost).abs() < 1e-2);
         assert!(
-            (x.summary.cost - x.summary.distance_m).abs() < 1.0,
-            "{}",
-            x.summary.cost
+            (x.summary.cost - x.summary.turn_cost - x.summary.distance_m).abs() < 1.0,
+            "{} {}",
+            x.summary.cost,
+            x.summary.turn_cost
         );
     }
+    // round the block: three corners at a right angle (the corners have two edges: no junctions,
+    // free); back: a U-turn, at twice a turn
+    assert_eq!(r.summary.turns, 0);
+    assert_eq!(no_u.summary.turns, 1);
+    assert!((no_u.summary.turn_cost - 2.0 * Profile::default().turn_m()).abs() < 1e-3);
     // a via near a corner: the U-turn is a full arc from the via's node
     let near = wp(pts[1].0, pts[1].1);
     let r = planner
@@ -1079,33 +1126,6 @@ fn an_out_and_back_the_waypoints_ask_for_still_routes() {
     assert_eq!(planner.route(&req).unwrap_err().code, ErrorCode::InvalidRequest);
 }
 
-/// Dijkstra from node to node over arc costs given per arc and per first arc (the reference with
-/// the shape costs).
-fn dijkstra_by(g: &Graph, s: NodeId, t: NodeId, cost: &dyn Fn(ArcId, bool) -> f32) -> f32 {
-    let mut dist = vec![f32::INFINITY; g.node_count()];
-    let mut heap = BinaryHeap::new();
-    dist[s as usize] = 0.0;
-    heap.push(Reverse((0u32, s)));
-    while let Some(Reverse((d, v))) = heap.pop() {
-        let d = f32::from_bits(d);
-        if d > dist[v as usize] {
-            continue;
-        }
-        if v == t {
-            return d;
-        }
-        for a in g.out_arcs(v) {
-            let c = cost(a, v == s);
-            let w = g.head(a);
-            if c.is_finite() && d + c < dist[w as usize] {
-                dist[w as usize] = d + c;
-                heap.push(Reverse(((d + c).to_bits(), w)));
-            }
-        }
-    }
-    f32::INFINITY
-}
-
 #[test]
 fn every_leg_is_the_cheapest_with_the_shape_costs() {
     let mut rng = Rng(0x0b5e_55ed_100b_5eed);
@@ -1153,22 +1173,28 @@ fn every_leg_is_the_cheapest_with_the_shape_costs() {
                     })
                     .collect();
                 let piece = |i: usize| ridden_m[i] / g.length_m(arc_edge(r.arcs[i])).max(1e-3);
-                // the route's cost is its arcs' compiled cost; the shape costs come on top
+                // the route's cost is its arcs' compiled cost and its turns; the shape costs come on
+                // top
+                // (a waypoint repeated on a node: a piece of no length, whatever its arc costs)
                 let arcs_cost: f32 = r
                     .arcs
                     .iter()
                     .enumerate()
+                    .filter(|&(i, _)| piece(i) > 0.0)
                     .map(|(i, &a)| costs[a as usize] * piece(i))
                     .sum();
+                let (_, turns) = line_turns(&g, planner.headings(), p.turn_m(), &r.arcs);
+                assert!((turns - r.summary.turn_cost).abs() <= 1e-3 * turns.max(1.0));
                 assert!(
-                    (arcs_cost - r.summary.cost).abs() <= 1e-3 * arcs_cost.max(1.0),
-                    "{arcs_cost} vs {}",
+                    (arcs_cost + turns - r.summary.cost).abs() <= 1e-3 * arcs_cost.max(1.0),
+                    "{arcs_cost} + {turns} vs {}",
                     r.summary.cost
                 );
                 // each leg is the cheapest given the legs before it
                 let mut ridden: Vec<EdgeId> = Vec::new();
                 let mut reused = 0.0f32;
                 let mut back: Option<ArcId> = None;
+                let mut arrival: Option<ArcId> = None;
                 for (l, leg) in r.legs.iter().enumerate() {
                     let range = leg.arcs[0] as usize..leg.arcs[1] as usize;
                     let leg_arcs = &r.arcs[range.clone()];
@@ -1187,7 +1213,8 @@ fn every_leg_is_the_cheapest_with_the_shape_costs() {
                         }
                         c + extra
                     };
-                    let want = dijkstra_by(&g, nodes[l], nodes[l + 1], &price);
+                    let want =
+                        dijkstra_turns(&g, &planner, p.turn_m(), nodes[l], nodes[l + 1], arrival, &price);
                     let got = leg.cost + leg.shape_cost;
                     assert!(
                         (got - want).abs() <= 1e-3 * want.max(1.0),
@@ -1207,6 +1234,7 @@ fn every_leg_is_the_cheapest_with_the_shape_costs() {
                     ridden.extend(full.iter().map(|&a| arc_edge(a)));
                     if let Some(&a) = leg_arcs.last() {
                         back = Some(a ^ 1);
+                        arrival = Some(a);
                     }
                     compared += 1;
                 }
@@ -1221,8 +1249,8 @@ fn every_leg_is_the_cheapest_with_the_shape_costs() {
 fn leg_profiles_route_each_leg_their_way() {
     let (built, pts) = line();
     let mut planner = Planner::new(built.graph.clone());
-    let gravel = weights(&[(PrefId::Unpaved, 100)]);
-    let plain = Profile::default();
+    let gravel = no_turns(weights(&[(PrefId::Unpaved, 100)]));
+    let plain = no_turns(Profile::default());
     let wps = vec![
         wp(pts[0].0, pts[0].1),
         wp(pts[6].0, pts[6].1),
@@ -1408,7 +1436,7 @@ fn the_diff_finds_where_two_routes_part() {
     let wps = vec![wp(pts[0].0, pts[0].1), wp(pts[6].0, pts[6].1)];
     let a = planner.route(&request(wps.clone(), &Profile::default())).unwrap();
     let b = planner
-        .route(&request(wps, &weights(&[(PrefId::Unpaved, 100)])))
+        .route(&request(wps, &no_turns(weights(&[(PrefId::Unpaved, 100)]))))
         .unwrap();
     let d = planner.diff(&DiffRequest {
         a: a.arcs.clone(),
@@ -1464,7 +1492,11 @@ fn the_route_says_what_each_preference_touches() {
     let (built, pts) = line();
     let mut planner = Planner::new(built.graph.clone());
     // an explicit 0 is reported too: a row on screen at "no opinion" still learns what it would touch
-    let p = weights(&[(PrefId::Unpaved, 100), (PrefId::Track, 0), (PrefId::Forest, 50)]);
+    let p = no_turns(weights(&[
+        (PrefId::Unpaved, 100),
+        (PrefId::Track, 0),
+        (PrefId::Forest, 50),
+    ]));
     let r = planner
         .route(&request(vec![wp(pts[0].0, pts[0].1), wp(pts[6].0, pts[6].1)], &p))
         .unwrap();
@@ -2216,4 +2248,58 @@ fn roads_keep_their_own_traffic_level() {
         "0.9 is 14/15: {}",
         service.traffic
     );
+}
+
+#[test]
+fn a_turn_cost_keeps_the_route_off_a_short_excursion() {
+    // the line's gravel detour leaves the road at 45° and rejoins it at 45°: worth taking for a
+    // strong gravel preference when turns are free, not when turning costs enough
+    let (built, pts) = line();
+    let mut planner = Planner::new(built.graph.clone());
+    let wps = vec![wp(pts[0].0, pts[0].1), wp(pts[6].0, pts[6].1)];
+    let gravel = |turn_m: f32| {
+        let mut p = weights(&[(PrefId::Unpaved, 100)]);
+        p.turn_m = Some(turn_m);
+        p
+    };
+    let unpaved = |r: &kompass_core::RouteResult| r.summary.unpaved_share * r.summary.distance_m;
+    let free = planner.route(&request(wps.clone(), &gravel(0.0))).unwrap();
+    assert!(unpaved(&free) > 200.0, "{}", unpaved(&free));
+    assert_eq!((free.summary.turns, free.summary.turn_cost), (0, 0.0));
+    // the default: still worth it here, and the turns are counted (leaving the road: half a turn
+    // at least; back onto it at 45°: a quarter)
+    let def = planner
+        .route(&request(wps.clone(), &gravel(Profile::default().turn_m())))
+        .unwrap();
+    assert!(unpaved(&def) > 200.0);
+    assert_eq!(def.summary.turns, 2);
+    let want = 0.75 * Profile::default().turn_m();
+    assert!(
+        (def.summary.turn_cost - want).abs() < 0.05 * want,
+        "{}",
+        def.summary.turn_cost
+    );
+    assert!((def.legs[0].turn_cost - def.summary.turn_cost).abs() < 1e-3);
+    assert_eq!(def.legs[0].turns, 2);
+    // a strong turn cost: straight on along the road
+    let strong = planner.route(&request(wps.clone(), &gravel(100.0))).unwrap();
+    assert!(unpaved(&strong) < 1.0, "{}", unpaved(&strong));
+    assert_eq!(strong.summary.turns, 0);
+    // why not the excursion: by the arcs alone it is cheaper, the two turns make it dearer
+    let c = planner
+        .compare(&kompass_core::explain::CompareRequest {
+            profile: gravel(100.0),
+            a: strong.arcs.clone(),
+            b: free.arcs.clone(),
+            overrides: None,
+        })
+        .unwrap();
+    assert_eq!(c.stretches.len(), 1, "{c:?}");
+    let s = &c.stretches[0];
+    assert_eq!((s.a.turns, s.b.turns), (0, 2));
+    assert!((s.b.turn_cost - 75.0).abs() < 4.0, "{}", s.b.turn_cost);
+    assert!(s.cost_delta > 0.0);
+    assert!(s.b.cost - s.b.turn_cost < s.a.cost, "the arcs alone are cheaper");
+    assert!((c.a.cost + s.cost_delta - c.b.cost).abs() < 1e-2);
+    assert_eq!(c.b.turns, 2);
 }

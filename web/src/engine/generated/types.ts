@@ -61,7 +61,13 @@ limits: { [key in LimitId]?: LimitValue },
 /**
  * The factor clamp; defaults apply when absent.
  */
-bounds?: Bounds, };
+bounds?: Bounds, 
+/**
+ * What a right-angle turn at a junction costs, metres-equivalent (0..=500; absent:
+ * [`TURN_M`]; 0: turns are free). Straight on costs nothing, a U-turn twice this; leaving the
+ * through road at least half of it (`docs/routing.md#turns`).
+ */
+turn_m?: number, };
 
 /**
  * A preset.
@@ -180,7 +186,11 @@ export type BoundsInfo = { min_factor: BoundRange, max_factor: BoundRange, };
 /**
  * The whole catalogue (`kompass profile catalogue`).
  */
-export type Catalogue = { version: number, groups: Array<GroupInfo>, preferences: Array<Preference>, limits: Array<Limit>, bounds: BoundsInfo, };
+export type Catalogue = { version: number, groups: Array<GroupInfo>, preferences: Array<Preference>, limits: Array<Limit>, bounds: BoundsInfo, 
+/**
+ * The range of `turn_m`, what a right-angle turn at a junction costs (metres-equivalent).
+ */
+turn_m: BoundRange, };
 
 /**
  * A coordinate in degrees.
@@ -384,6 +394,14 @@ shape_cost: number,
  */
 override_cost: number, 
 /**
+ * Turns that cost something (at junctions, U-turns; the one at the via it starts from too).
+ */
+turns: number, 
+/**
+ * What they cost, metres-equivalent: part of `cost` (`turn_m` per right-angle turn).
+ */
+turn_cost: number, 
+/**
  * `[first, end)` into `arcs` and `segments`.
  */
 arcs: [number, number], segments: [number, number], 
@@ -405,7 +423,8 @@ ascent_m: number, descent_m: number,
  */
 duration_s: number, 
 /**
- * The profile's cost of the route (metres-equivalent): the compiled cost of every arc ridden.
+ * The profile's cost of the route (metres-equivalent): the compiled cost of every arc ridden
+ * plus its turns (`turn_cost`).
  */
 cost: number, 
 /**
@@ -421,6 +440,14 @@ shape_cost: number,
  * What this plan's edge overrides added on top of `cost` (< 0 where a preferred way counts less).
  */
 override_cost: number, 
+/**
+ * Turns that cost something ([`Leg::turns`]).
+ */
+turns: number, 
+/**
+ * What they cost, metres-equivalent: part of `cost`.
+ */
+turn_cost: number, 
 /**
  * Shares of the length, 0..1.
  */
@@ -766,7 +793,7 @@ export type StretchCost = {
 span: Span, 
 /**
  * Under the request's profile and overrides (closed arcs at `max_factor` per metre, as near a
- * waypoint).
+ * waypoint), its turns included (`turn_cost`).
  */
 cost: number, 
 /**
@@ -794,7 +821,12 @@ closed: Array<ClosedPart>,
 /**
  * Length on edges with an override of the plan, by kind.
  */
-overrides: Array<OverridePart>, };
+overrides: Array<OverridePart>, 
+/**
+ * Turns that cost something, the moves onto the stretch and off it included (where a detour
+ * leaves the other route and rejoins it), and what they cost (metres-equivalent, in `cost`).
+ */
+turns: number, turn_cost: number, };
 
 /**
  * One stretch where the routes part, both sides costed.

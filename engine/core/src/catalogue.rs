@@ -147,6 +147,8 @@ pub struct Catalogue {
     pub preferences: Vec<Preference>,
     pub limits: Vec<Limit>,
     pub bounds: BoundsInfo,
+    /// The range of `turn_m`, what a right-angle turn at a junction costs (metres-equivalent).
+    pub turn_m: BoundRange,
 }
 
 /// The static facts of a preference.
@@ -777,6 +779,11 @@ pub fn catalogue() -> Catalogue {
                 max: Bounds::MAX_FACTOR_RANGE.1,
                 default: d.max_factor,
             },
+        },
+        turn_m: BoundRange {
+            min: crate::profile::TURN_M_RANGE.0,
+            max: crate::profile::TURN_M_RANGE.1,
+            default: crate::profile::TURN_M,
         },
     }
 }
