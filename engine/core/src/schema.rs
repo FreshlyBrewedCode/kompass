@@ -17,9 +17,9 @@ use crate::explain::{
 use crate::presets::Preset;
 use crate::profile::{Bounds, LimitId, LimitValue, PrefId, Profile, Weight};
 use crate::route::{
-    ArcExplanation, Breakdown, Coord, DiffRequest, ErrorCode, Leg, Part, Reason, RiddenParts, RouteDiff,
-    RouteError, RouteGeometry, RouteOptions, RouteRequest, RouteResult, Segment, Sketch, Snapped, Span,
-    Stretch, Summary, SurfaceKind, Waypoint, Zone,
+    ArcExplanation, Breakdown, Coord, DiffRequest, ErrorCode, Leg, Part, Reason, ReuseCost, RiddenParts,
+    RouteDiff, RouteError, RouteGeometry, RouteOptions, RouteRequest, RouteResult, Segment, Sketch, Snapped,
+    Span, Stretch, Summary, SurfaceKind, Waypoint, Zone,
 };
 
 /// A generated file: its name in the output directory and its contents.
@@ -76,6 +76,7 @@ pub fn typescript() -> String {
         decl::<Catalogue>(&cfg),
         decl::<Coord>(&cfg),
         decl::<Waypoint>(&cfg),
+        decl::<ReuseCost>(&cfg),
         decl::<RouteOptions>(&cfg),
         decl::<Zone>(&cfg),
         decl::<Sketch>(&cfg),

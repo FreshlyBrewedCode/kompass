@@ -66,7 +66,7 @@ const request = (name: string): RouteRequest => ({
     { lon: 1, lat: 1 },
   ],
   profile: { weights: {}, limits: {} },
-  options: { snap_radius_m: 250, geometry: true },
+  options: { snap_radius_m: 250, geometry: true, avoid_reuse: true },
 });
 const nameOf = (r: EngineRequest | undefined) => (r?.params as RouteRequest | undefined)?.waypoints[0]?.name;
 const tick = () => new Promise((r) => setTimeout(r, 0));

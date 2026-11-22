@@ -201,6 +201,21 @@ export type Coord = { lon: number, lat: number, };
 export type Waypoint = { lon: number, lat: number, name?: string, };
 
 /**
+ * The route-shape costs of `avoid_reuse`, metres-equivalent (added to the profile's cost, which
+ * stays compiled and cached).
+ */
+export type ReuseCost = { 
+/**
+ * Extra metres per metre ridden again (0..=10, default 1: [`REUSE_PER_M`]).
+ */
+per_m: number, 
+/**
+ * Extra metres for leaving a via back along the way it was reached (0..=10 000, default
+ * 600: [`U_TURN_M`]).
+ */
+u_turn_m: number, };
+
+/**
  * Options of a route request.
  */
 export type RouteOptions = { 
@@ -211,7 +226,17 @@ snap_radius_m: number,
 /**
  * Whether to return the geometry (coordinates, elevation, distances per vertex).
  */
-geometry: boolean, };
+geometry: boolean, 
+/**
+ * Don't ride the same way twice (default on): legs are routed in order, and riding an edge an
+ * earlier leg rode (either direction) or leaving a via back the way it was reached costs
+ * extra. Finite costs: an out-and-back the waypoints ask for still routes.
+ */
+avoid_reuse: boolean, 
+/**
+ * The costs of `avoid_reuse` (for tools tuning them; absent: the defaults).
+ */
+reuse_cost?: ReuseCost, };
 
 /**
  * An area of a via or avoid zone (reserved: accepted, not used yet).
@@ -328,6 +353,15 @@ export type Leg = { distance_m: number, ascent_m: number, descent_m: number, dur
  */
 cost: number, 
 /**
+ * Metres of it on ways earlier legs rode.
+ */
+reused_m: number, 
+/**
+ * The route-shape costs the search added on top of `cost` (riding again, a U-turn at the via
+ * it starts from), metres-equivalent.
+ */
+shape_cost: number, 
+/**
  * `[first, end)` into `arcs` and `segments`.
  */
 arcs: [number, number], segments: [number, number], 
@@ -347,7 +381,20 @@ ascent_m: number, descent_m: number,
 /**
  * A rough riding time from a speed model by surface and grade.
  */
-duration_s: number, cost: number, 
+duration_s: number, 
+/**
+ * The profile's cost of the route (metres-equivalent): the compiled cost of every arc ridden.
+ */
+cost: number, 
+/**
+ * Metres ridden twice: on ways an earlier leg rode (either direction).
+ */
+reused_m: number, 
+/**
+ * The route-shape costs on top of `cost` (`avoid_reuse`): the search minimised
+ * `cost + shape_cost` per leg.
+ */
+shape_cost: number, 
 /**
  * Shares of the length, 0..1.
  */

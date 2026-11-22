@@ -108,8 +108,10 @@ pub(crate) fn run(a: &Args) -> Result<(), Failure> {
         "--out",
         "--radius",
         "--why-not",
+        "--reuse",
     ])?;
     let build = a.build()?;
+    let (avoid_reuse, reuse_cost) = crate::reuse(a.get("--reuse").unwrap_or("on"))?;
     let profile = load_profile(
         a.get("--profile")
             .ok_or_else(|| Failure::Usage("--profile <file|preset> is required".into()))?,
@@ -137,6 +139,8 @@ pub(crate) fn run(a: &Args) -> Result<(), Failure> {
         options: RouteOptions {
             snap_radius_m: a.number("--radius", RouteOptions::default().snap_radius_m)?,
             geometry: true,
+            avoid_reuse,
+            reuse_cost,
         },
         via_zones: None,
         avoid_zones: None,

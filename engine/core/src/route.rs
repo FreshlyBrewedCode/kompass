@@ -14,7 +14,7 @@ use crate::cost::{self, CostModel, WayKind};
 use crate::graph::{ArcId, EdgeId, Graph, NodeId, arc, arc_edge, arc_is_reverse};
 use crate::personal::PersonalLayer;
 use crate::profile::{PrefId, Profile};
-use crate::search::{Exempt, Plane, Query, Search};
+use crate::search::{Exempt, Overlay, Plane, Query, Search, UTurn};
 use crate::spatial::{DEFAULT_CELL_M, Grid, Snap};
 use crate::{LngLat, M_PER_E7};
 
@@ -48,12 +48,19 @@ pub struct Waypoint {
 /// Options of a route request.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema, TS))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema, TS), ts(optional_fields))]
 pub struct RouteOptions {
     /// How far from a waypoint its way may be, metres (1..=5000, default 250).
     pub snap_radius_m: f64,
     /// Whether to return the geometry (coordinates, elevation, distances per vertex).
     pub geometry: bool,
+    /// Don't ride the same way twice (default on): legs are routed in order, and riding an edge an
+    /// earlier leg rode (either direction) or leaving a via back the way it was reached costs
+    /// extra. Finite costs: an out-and-back the waypoints ask for still routes.
+    pub avoid_reuse: bool,
+    /// The costs of `avoid_reuse` (for tools tuning them; absent: the defaults).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reuse_cost: Option<ReuseCost>,
 }
 
 impl Default for RouteOptions {
@@ -61,6 +68,36 @@ impl Default for RouteOptions {
         RouteOptions {
             snap_radius_m: 250.0,
             geometry: true,
+            avoid_reuse: true,
+            reuse_cost: None,
+        }
+    }
+}
+
+/// The route-shape costs of `avoid_reuse`, metres-equivalent (added to the profile's cost, which
+/// stays compiled and cached).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema, TS))]
+pub struct ReuseCost {
+    /// Extra metres per metre ridden again (0..=10, default 1: [`REUSE_PER_M`]).
+    pub per_m: f32,
+    /// Extra metres for leaving a via back along the way it was reached (0..=10 000, default
+    /// 600: [`U_TURN_M`]).
+    pub u_turn_m: f32,
+}
+
+/// Riding a metre again costs this many metres more (the default of [`ReuseCost::per_m`]).
+pub const REUSE_PER_M: f32 = 1.0;
+
+/// A U-turn at a via costs this many metres (the default of [`ReuseCost::u_turn_m`]).
+pub const U_TURN_M: f32 = 600.0;
+
+impl Default for ReuseCost {
+    fn default() -> ReuseCost {
+        ReuseCost {
+            per_m: REUSE_PER_M,
+            u_turn_m: U_TURN_M,
         }
     }
 }
@@ -204,6 +241,11 @@ pub struct Leg {
     pub duration_s: f32,
     /// The leg's cost under its profile (metres-equivalent).
     pub cost: f32,
+    /// Metres of it on ways earlier legs rode.
+    pub reused_m: f32,
+    /// The route-shape costs the search added on top of `cost` (riding again, a U-turn at the via
+    /// it starts from), metres-equivalent.
+    pub shape_cost: f32,
     /// `[first, end)` into `arcs` and `segments`.
     pub arcs: [u32; 2],
     pub segments: [u32; 2],
@@ -221,7 +263,13 @@ pub struct Summary {
     pub descent_m: f32,
     /// A rough riding time from a speed model by surface and grade.
     pub duration_s: f32,
+    /// The profile's cost of the route (metres-equivalent): the compiled cost of every arc ridden.
     pub cost: f32,
+    /// Metres ridden twice: on ways an earlier leg rode (either direction).
+    pub reused_m: f32,
+    /// The route-shape costs on top of `cost` (`avoid_reuse`): the search minimised
+    /// `cost + shape_cost` per leg.
+    pub shape_cost: f32,
     /// Shares of the length, 0..1.
     pub unpaved_share: f32,
     pub unknown_surface_share: f32,
@@ -459,6 +507,26 @@ struct Endpoint {
     exempt: Option<cost::Exclusion>,
 }
 
+/// A leg as routed, before assembling.
+struct LegRaw {
+    /// `[first, end)` into the pieces.
+    pieces: (usize, usize),
+    /// The profile's cost.
+    cost: f32,
+    reused_m: f32,
+    shape_cost: f32,
+    settled: u32,
+}
+
+/// What a leg's search adds on top of the compiled profile.
+#[derive(Clone, Copy)]
+struct Shape<'a> {
+    /// Edges earlier legs rode, penalised (`None`: nothing, or `avoid_reuse` off).
+    overlay: Option<&'a Overlay>,
+    /// Leaving the via back along this arc (the reverse of the one it was reached by) costs this.
+    back: Option<(ArcId, f32)>,
+}
+
 impl Planner {
     /// Wraps a loaded graph (builds the snapping grid: ~0.4 s for a 100 km region).
     #[must_use]
@@ -661,6 +729,17 @@ impl Planner {
                 format!("snap_radius_m {radius} is outside 1..5000"),
             ));
         }
+        let reuse = req.options.reuse_cost.unwrap_or_default();
+        if !(0.0..=10.0).contains(&reuse.per_m) || !(0.0..=10_000.0).contains(&reuse.u_turn_m) {
+            return Err(err(
+                ErrorCode::InvalidRequest,
+                format!(
+                    "reuse_cost {} m per m, {} m per U-turn is outside 0..10, 0..10000",
+                    reuse.per_m, reuse.u_turn_m
+                ),
+            ));
+        }
+        let avoid_reuse = req.options.avoid_reuse;
         if let Some(lp) = &req.leg_profiles
             && lp.len() != n - 1
         {
@@ -698,7 +777,9 @@ impl Planner {
         // compile every profile first (the cache holds two; with more distinct leg profiles the
         // later ones recompile as needed)
         let mut pieces: Vec<Piece> = Vec::new();
-        let mut legs_raw: Vec<(usize, usize, f32, u32)> = Vec::new(); // (piece start, end, cost, settled)
+        let mut legs_raw: Vec<LegRaw> = Vec::with_capacity(n - 1);
+        // the edges ridden so far (counted always, penalised with `avoid_reuse`)
+        let mut ridden = (n > 2).then(|| Overlay::new(self.graph.edge_count(), reuse.per_m));
         let mut snapped: Vec<Snapped> = Vec::with_capacity(n);
         let mut models: Vec<usize> = Vec::with_capacity(n - 1);
         for l in 0..n - 1 {
@@ -723,11 +804,44 @@ impl Planner {
                 }
             }
             let start = pieces.len();
-            let (cost, settled) = self.leg(ci, &a, &b, &mut pieces).map_err(|mut e| {
+            let shape = Shape {
+                overlay: ridden.as_ref().filter(|o| avoid_reuse && !o.is_empty()),
+                back: (avoid_reuse && l > 0)
+                    .then(|| pieces.last().map(|p| (p.arc ^ 1, reuse.u_turn_m)))
+                    .flatten(),
+            };
+            let (found, settled, uturn) = self.leg(ci, &a, &b, shape, &mut pieces).map_err(|mut e| {
                 e.leg = Some(u32::try_from(l).unwrap_or(u32::MAX));
                 e
             })?;
-            legs_raw.push((start, pieces.len(), cost, settled));
+            let leg_pieces = &pieces[start..];
+            let reused_m = ridden.as_ref().map_or(0.0, |o| {
+                leg_pieces
+                    .iter()
+                    .map(|p| o.reused_m(&self.graph, arc_edge(p.arc), p.t0, p.t1))
+                    .sum()
+            });
+            // what the search added: the penalty on the metres ridden again, the U-turn if the leg
+            // leaves the via back along its arrival
+            let mut shape_cost = 0.0;
+            if avoid_reuse {
+                shape_cost += reused_m * reuse.per_m;
+                if uturn {
+                    shape_cost += reuse.u_turn_m;
+                }
+            }
+            if let Some(o) = ridden.as_mut() {
+                for p in leg_pieces {
+                    o.mark(arc_edge(p.arc), p.t0, p.t1);
+                }
+            }
+            legs_raw.push(LegRaw {
+                pieces: (start, pieces.len()),
+                cost: (found - shape_cost).max(0.0),
+                reused_m,
+                shape_cost,
+                settled,
+            });
             models.push(ci);
         }
         Ok(self.assemble(&pieces, &legs_raw, &models, snapped, notes, req.options.geometry))
@@ -748,7 +862,9 @@ impl Planner {
         }
     }
 
-    /// One leg: A* between two snapped points; appends its pieces.
+    /// One leg: A* between two snapped points; appends its pieces. Returns the cost the search
+    /// minimised (the shape costs included), the nodes settled, and whether it leaves the via back
+    /// along its arrival (the U-turn cost is in the cost).
     #[allow(
         clippy::cast_possible_truncation,
         clippy::too_many_lines,
@@ -760,26 +876,58 @@ impl Planner {
         ci: usize,
         a: &Endpoint,
         b: &Endpoint,
+        shape: Shape<'_>,
         pieces: &mut Vec<Piece>,
-    ) -> Result<(f32, u32), RouteError> {
+    ) -> Result<(f32, u32, bool), RouteError> {
         let g = &self.graph;
         let (ea, ta) = (a.snap.edge, a.snap.fraction as f32);
         let (eb, tb) = (b.snap.edge, b.snap.fraction as f32);
         let (xa, xb) = (a.exempt.is_some(), b.exempt.is_some());
+        // a partial arc's cost with the shape costs: riding again, the U-turn at the via
+        let shaped = |cost: f32, a: ArcId, t0: f32, t1: f32| {
+            if !cost.is_finite() {
+                return cost;
+            }
+            let mut c = cost;
+            if let Some(o) = shape.overlay {
+                c += o.extra(g, arc_edge(a), t0, t1);
+            }
+            if let Some((back, u)) = shape.back
+                && back == a
+            {
+                c += u;
+            }
+            c
+        };
         // from the point: to `to` along the edge, to `from` against it
-        let fwd_a = self.partial(ci, arc(ea, false), 1.0 - ta, xa);
-        let bwd_a = self.partial(ci, arc(ea, true), ta, xa);
+        let fwd_a = shaped(
+            self.partial(ci, arc(ea, false), 1.0 - ta, xa),
+            arc(ea, false),
+            ta,
+            1.0,
+        );
+        let bwd_a = shaped(self.partial(ci, arc(ea, true), ta, xa), arc(ea, true), 0.0, ta);
         let sources = [(g.to(ea), fwd_a), (g.from(ea), bwd_a)];
-        // into the point: from `from` along the edge, from `to` against it
-        let fwd_b = self.partial(ci, arc(eb, false), tb, xb);
-        let bwd_b = self.partial(ci, arc(eb, true), 1.0 - tb, xb);
+        // into the point: from `from` along the edge, from `to` against it (never a U-turn: the
+        // U-turn is the first move from the via)
+        let into = |cost: f32, e: EdgeId, t0: f32, t1: f32| match shape.overlay {
+            Some(o) if cost.is_finite() => cost + o.extra(g, e, t0, t1),
+            _ => cost,
+        };
+        let fwd_b = into(self.partial(ci, arc(eb, false), tb, xb), eb, 0.0, tb);
+        let bwd_b = into(self.partial(ci, arc(eb, true), 1.0 - tb, xb), eb, tb, 1.0);
         let targets = [(g.from(eb), fwd_b), (g.to(eb), bwd_b)];
         // the direct way along one edge
         let mut direct = f32::INFINITY;
         let mut direct_piece = None;
         if ea == eb {
             let rev = tb < ta;
-            let p = self.partial(ci, arc(ea, rev), (tb - ta).abs(), xa || xb);
+            let p = shaped(
+                self.partial(ci, arc(ea, rev), (tb - ta).abs(), xa || xb),
+                arc(ea, rev),
+                ta,
+                tb,
+            );
             if p.is_finite() {
                 direct = p;
                 direct_piece = Some(Piece {
@@ -827,6 +975,14 @@ impl Planner {
                 points: &exempt_points,
                 radius_m: EXEMPT_RADIUS_M,
                 max_factor: c.model.max_factor,
+            }),
+            overlay: shape.overlay,
+            uturn: shape.back.map(|(back, cost)| UTurn {
+                node: g.tail(back),
+                arc: back,
+                // the target whose tail rides `back` (from `from` along, from `to` against)
+                target: [arc(eb, false), arc(eb, true)].iter().position(|&t| t == back),
+                cost,
             }),
         };
         let mut found = self.search.run(g, &query);
@@ -880,6 +1036,13 @@ impl Planner {
                             exempt: xb,
                         }
                     };
+                // back along the arrival: the partial from the point, or the first move from the
+                // node the arrival reached (a full arc, or the target's partial arc)
+                let uturn = shape.back.is_some_and(|(back, _)| {
+                    first.arc == back
+                        || (f.start == g.tail(back)
+                            && f.arcs.first().map_or(last.arc == back, |&a| a == back))
+                });
                 // a waypoint on a node rides nothing of its snapped edge
                 if first.fraction() > 1e-6 {
                     pieces.push(first);
@@ -888,12 +1051,13 @@ impl Planner {
                 if last.fraction() > 1e-6 {
                     pieces.push(last);
                 }
-                Ok((f.cost, settled))
+                Ok((f.cost, settled, uturn))
             }
             None => {
                 if let Some(p) = direct_piece {
+                    let uturn = shape.back.is_some_and(|(back, _)| p.arc == back);
                     pieces.push(p);
-                    return Ok((direct, settled));
+                    return Ok((direct, settled, uturn));
                 }
                 let exempt = a.exempt.or(b.exempt);
                 let msg = if let Some(why) = exempt {
@@ -925,7 +1089,7 @@ impl Planner {
     fn assemble(
         &self,
         pieces: &[Piece],
-        legs_raw: &[(usize, usize, f32, u32)],
+        legs_raw: &[LegRaw],
         models: &[usize],
         waypoints: Vec<Snapped>,
         notes: Vec<String>,
@@ -944,8 +1108,10 @@ impl Planner {
         let mut excluded_m = 0.0f32;
         let mut dist = 0.0f32;
         let (mut tot_up, mut tot_down, mut tot_secs, mut tot_cost) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+        let (mut tot_reused, mut tot_shape) = (0.0f32, 0.0f32);
         let mut acc = SegAcc::default();
-        for (l, &(p0, p1, leg_cost, settled)) in legs_raw.iter().enumerate() {
+        for (l, raw) in legs_raw.iter().enumerate() {
+            let (p0, p1) = raw.pieces;
             let model = &self.compiled[models[l]].model;
             let (leg_start_arc, leg_start_seg, leg_start_m) = (arcs.len(), segments.len(), dist);
             let (mut up, mut down, mut secs) = (0.0f32, 0.0f32, 0.0f32);
@@ -991,16 +1157,20 @@ impl Planner {
             tot_up += up;
             tot_down += down;
             tot_secs += secs;
-            tot_cost += leg_cost;
+            tot_cost += raw.cost;
+            tot_reused += raw.reused_m;
+            tot_shape += raw.shape_cost;
             legs.push(Leg {
                 distance_m: dist - leg_start_m,
                 ascent_m: up,
                 descent_m: down,
                 duration_s: secs,
-                cost: leg_cost,
+                cost: raw.cost,
+                reused_m: raw.reused_m,
+                shape_cost: raw.shape_cost,
                 arcs: [leg_start_arc as u32, arcs.len() as u32],
                 segments: [leg_start_seg as u32, segments.len() as u32],
-                settled,
+                settled: raw.settled,
             });
         }
         let total = dist.max(1e-6);
@@ -1032,6 +1202,8 @@ impl Planner {
                 descent_m: tot_down,
                 duration_s: tot_secs,
                 cost: tot_cost,
+                reused_m: tot_reused,
+                shape_cost: tot_shape,
                 unpaved_share: unpaved / total,
                 unknown_surface_share: unknown / total,
                 main_road_m: main,
