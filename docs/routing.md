@@ -22,6 +22,7 @@ current one and, typically, the base preset's ghost). Queries:
 | `explain_edge(&ExplainEdgeRequest)` | → one edge, both directions, every step of its cost |
 | `compare(&CompareRequest)` | two routes' `arcs` → `RouteComparison`: the `diff` stretches, each side costed |
 | `edge_run(edge)` | → `EdgeRun`: the edge extended to the next real junctions, with its line ([below](#this-plans-exceptions)) |
+| `tradeoffs(&TradeoffRequest)` | a request (and its strict route's `arcs`) → `Tradeoffs`: where breaking a limit on a short bit saves real distance ([below](#limits-as-trade-offs)) |
 | `stretch_costs(&Profile, arcs, spans, n)` | → stretches of one route costed like `compare`'s sides |
 | `prepare(&Profile)` | compile ahead of the first route |
 | `set_personal(Option<PersonalLayer>)` | ride history per edge ([profile.md](profile.md)) |
@@ -159,6 +160,47 @@ allowing needs all of it, so the planner applies an exception to the whole run.
 
 Edge ids hold for one build of the region only: the planner saves the build id with a plan's
 exceptions and drops them on another build ([planner.md](planner.md#persistence)).
+
+## Limits as trade-offs
+
+A limit closes ways outright, so a route can ride a long detour round a tiny link ("paved only" round
+40 m of gravel). `tradeoffs({ route, strict? })` (`tradeoffs.rs`) routes the request again with every
+limit **softened**: excluded ways anywhere cost `max_factor` per metre (the exemption that lets a route
+get away from a stranded waypoint, [above](#waypoints-and-limits), here without the 1 km radius; never
+against a one-way or a bicycle ban, which are not limits). Then it `diff`s that route with the strict
+one (`strict`: the main route's `arcs`, else routed here) and keeps the stretches where the softened
+route rides closed edges:
+
+- **what**: the limits they break (`ClosedBy`, the board rows on Avoid of the structured model too:
+  they close ways like limits), the edges as runs of consecutive ones (each with its length, way type and
+  line: what an "allow" of the plan opens), their length (edges in full), the point halfway along the
+  longest run (the marker), the softened stretch's line (the preview), both spans, and the distance saved
+  (the strict stretch's length minus the softened one's).
+- **which** (`Thresholds::DEFAULT`, against marker spam): at most **300 m** breaking the limits, saving
+  at least **1 km** and at least **5 ×** that length; at most **3** per route, the most saved first.
+- **The plan's overrides hold for both**: an allowed edge is open, so it is no longer offered.
+- **No compile**: the same compiled profile, the softening is the search's exemption layer. The cost is
+  one more search (it settles about what the strict one does) and the assembly of its result; the main
+  profile judges what is closed (leg profiles are API only). A profile that closes nothing returns at
+  once (`searched: false`).
+
+At `max_factor` (20 by default) a softened route breaks a limit only where that saves about 20 times
+the metres it breaks, so the bits are short and the 5 × rule rarely bites: it is there for profiles
+with a low `max_factor`. **The thresholds, from seeded pairs on the real region** (`kompass compare
+--tradeoffs`, 100 pairs at 10–50 km straight line, routes ~52 km at the median; aggregates only):
+
+| profile | stretches breaking a limit | routes with one ≥ 0.5 km saved | **with the defaults** | saved km p50 / p90 | broken m p50 | breaks |
+|---|---:|---:|---:|---:|---:|---|
+| Paved & quiet | 99 on 71 routes | 38 | **22 routes, 25 trade-offs** | 3.1 / 8.7 | 25 | paved only 22, legal access 7 |
+| Gravel explorer | 32 on 26 routes | 13 | **4 routes, 4** | 1.7 / 2.2 | 37 | legal access 3, no stairs 2 |
+
+Saving at least 1 km halves what 0.5 km would offer and keeps the ones worth a look (a median of 3 km
+round a 25 m bit); 2 km would drop a quarter more. The 300 m cap changes nothing on these pairs (the
+bits are short at `max_factor` 20) and stays as a guard. Time (native, release, same pairs): the strict
+route 12.9 / 29.6 ms p50 / p95, the trade-offs query 18.9 / 55.2 ms (the search with geometry and
+segments, the diff, the closures explained per broken edge). The planner asks it on its own lane only
+once a route has settled ([planner.md](planner.md#limits-as-trade-offs)). `kompass route … --tradeoffs`
+prints one route's.
 
 ## Turns
 

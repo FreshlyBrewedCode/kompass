@@ -5,8 +5,9 @@
 //! - `kompass info --build <dir> [--snaps N]`: loads the graph, prints counts, load times, memory and
 //!   the time of N seeded random snaps (no coordinates).
 //! - `kompass route --build <dir> --profile <file|preset> --from lon,lat [--via lon,lat]… --to
-//!   lon,lat [--out file] [--segments] [--radius m] [--explain] [--why-not lon,lat]`: a route as
-//!   GeoJSON; `--explain` prints every segment's cost breakdown and an aggregate, `--why-not` the
+//!   lon,lat [--out file] [--segments] [--radius m] [--explain] [--tradeoffs] [--why-not lon,lat]`: a
+//!   route as GeoJSON; `--explain` prints every segment's cost breakdown and an aggregate,
+//!   `--tradeoffs` the hard limits' trade-offs (lengths and edge ids), `--why-not` the
 //!   route against one forced through a point, stretch by stretch (text; the GeoJSON then only to
 //!   `--out`).
 //! - `kompass explain --build <dir> --profile <file|preset> --edge <id> [--json] | --time`: one
@@ -58,7 +59,7 @@ const USAGE: &str = "usage: kompass [--version | --help]
                       [--leg ride<k>-leg<j>] [--out-dir <dir>]
                       <gpx files or directories>
        kompass route --build <dir> --profile <file|preset> --from <lon,lat> [--via <lon,lat>]... --to <lon,lat>
-                     [--out <file>] [--segments] [--radius <m>] [--explain] [--why-not <lon,lat>] [--reuse off|<per_m>/<u_turn_m>]
+                     [--out <file>] [--segments] [--radius <m>] [--explain] [--tradeoffs] [--why-not <lon,lat>] [--reuse off|<per_m>/<u_turn_m>]
        kompass explain --build <dir> --profile <file|preset> (--edge <id> [--json] | --time)
        kompass profile schema | catalogue [--build <dir>] | presets [--structured] | convert <file|preset>
        kompass schema --write <dir> | --check <dir> [--traffic <file>]
@@ -84,7 +85,9 @@ fn main() -> ExitCode {
         Some("info") => Args::parse(rest, &[]).and_then(|a| info(&a)),
         Some("match") => matchcmd::run(rest),
         Some("replay") => replay::run(rest),
-        Some("route") => Args::parse(rest, &["--segments", "--explain"]).and_then(|a| route::run(&a)),
+        Some("route") => {
+            Args::parse(rest, &["--segments", "--explain", "--tradeoffs"]).and_then(|a| route::run(&a))
+        }
         Some("explain") => Args::parse(rest, &["--json", "--time"]).and_then(|a| explain::run(&a)),
         Some("profile") => profile(rest),
         Some("schema") => Args::parse(rest, &[]).and_then(|a| schema(&a)),

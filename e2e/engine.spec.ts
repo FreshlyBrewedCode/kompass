@@ -97,5 +97,5 @@ test("the bench page runs on the loaded region and reports as text", async ({ pa
   const text = await page.getByTestId("bench-text").textContent();
   expect(text).toContain("profile compile");
   expect(text).toContain("| after load |");
-  expect(text).toMatch(/region: 60 edges/);
+  expect(text).toMatch(/region: 68 edges/);
 });

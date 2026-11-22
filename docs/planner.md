@@ -14,6 +14,7 @@ The screen: the region map with the planner on top, built on the consolidated de
 | `layers-panel.tsx` | "Map & rides": map (with the tracks legend and the key, `map-key.tsx`, and the map style options, `map-style.tsx`) / one information layer / explored / cost, toggles, inspect, the ride library |
 | `inspector/` | the segment inspector: the words (`model.ts`: exchange rates, the three groups, the "why not" verdict), the long press (`gesture.ts`), the panel (`panel.tsx`), this plan's actions (`actions.tsx`) |
 | `overrides.ts` | this plan's exceptions: the list (one per edge), what the engine gets, the words, the saved form per build |
+| `tradeoffs.ts`, `tradeoff-card.tsx` | the hard limits as trade-offs: the words per limit, what is still offered, the exceptions "Allow here" makes; the card |
 | `cost/` | the cost debug view: the words of one edge and of a comparison (`model.ts`), the layer's key (`panel.tsx`), the layer's wiring (`use-cost-layer.ts`) |
 | `structured/` | the structured controls, a prototype behind a switch ([below](#structured-controls-prototype-behind-a-switch)): the words, tier moves and the curve (`model.ts`), the tier board (`board.tsx`), the hills curve (`hills.tsx`), Detours as the spread, the switch and its note (`controls.tsx`), the inspector's lines (`inspect.tsx`) |
 | `palette.ts` | data colours (route, compare, ghost, surface, way type, ridden) as CSS variables |
@@ -165,12 +166,36 @@ the rider wants in general, an exception is about one stretch of this plan (the 
   the way", which also survives moving the stops; the line under the buttons says the difference.
 - **Allow here** (a way a limit closes): only that limit-closed run opens, for this plan, costed as if
   the limits were off there; "Lift …" switches the limit off for the whole plan. A bicycle ban or a
-  one-way never opens. The limit trade-offs (#65) will make the same exception from a marker.
+  one-way never opens. A limit's trade-off makes the same exception from its marker ([below](#limits-as-trade-offs)).
 - **Where they are.** "This plan · 2 exceptions" closes the profile panel (`PlanExceptions` in
   `parts.tsx`), each row with its kind, way and length, removable; on the map a quiet mark under the
   route on each (avoided: a dotted ink line; preferred and allowed: a soft halo in the planner palette's
   `OVERRIDE` colours). Every change (add, remove, "Stop …") shows "Undo" for 8 s (`UndoToast`).
 - **Not on the Cost layer**: it colours the profile, which an exception does not change.
+
+## Limits as trade-offs
+
+A limit can send the route on a long detour round a tiny link (paved only, round 40 m of gravel). The
+engine finds those ([routing.md](routing.md#limits-as-trade-offs)); the planner shows them and lets
+the rider decide per plan.
+
+- **When it asks.** After the main route settles, if the profile closes ways (a limit on, or a board
+  row on Avoid), and only once the route has stayed put for 400 ms (`TRADEOFF_DELAY_MS`): a slider drag
+  or a dragged stop asks nothing until it rests. Lane `tradeoffs`, latest wins, with the main route's
+  request and its `arcs` (one extra search in the engine, no compile). A new main route drops the
+  markers at once; the answer is used only while the route it was asked for is still the main one.
+- **The marker**: a small badge in the "allowed" colour (`OVERRIDE.allow`) on the route, halfway along
+  the bit (at most three per route, the engine's choice). Not while comparing, during "why not", after
+  an error or with the route hidden.
+- **The card**, in the segment inspector's place (opening one closes the other): "40 m unpaved here
+  would save 2.1 km." in a rider's words per limit (unpaved, on a main road, with private or farm-only
+  access, of steps, of unknown surface, steeper than your limit, by ferry, on a surface / way type you
+  avoid; `tradeoffs.ts`), the limit by its label, and the shortcut dashed on the map in the same colour
+  while the card is open.
+- **Allow here** adds one allowed exception per run of the bit's edges, through the plan's exceptions
+  (so it lists under "This plan · N exceptions", the undo toast says "Allowed: 40 m unpaved", and the
+  route reroutes; the allowed bit is no longer offered). **Keep the limit** stops offering that bit for
+  this session (by its edges; not saved with the plan).
 
 
 ## Cost (the debug view)

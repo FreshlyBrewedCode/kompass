@@ -72,6 +72,7 @@ import {
 } from "./parts";
 import { type LayerView, RouteLayer } from "./route-layer";
 import { engineAdapter, PlannerContext, PlannerStore, type PlanState, usePlan, usePlanner } from "./store";
+import { TradeoffCard } from "./tradeoff-card";
 
 const MapView = lazy(() => import("@/components/map-view"));
 
@@ -154,7 +155,7 @@ type Slots = {
   /** the active layer's legend for the pill (`null`: the plain map) */
   legend: { name: string; body: ReactNode } | null;
   /** what the inspect slot shows: a way of the region map's inspect or the segment inspector's */
-  picked: PickedEdge | InspectTarget | null;
+  picked: PickedEdge | InspectTarget | "tradeoff" | null;
   inspectCard: ReactNode;
   /** what the inspect banner asks for (the Cost layer: a way's cost) */
   inspectText: string;
@@ -191,6 +192,11 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
   const [map, setMap] = useState<MapLibreMap | null>(null);
   const mapRef = useRef<MapHandle>(null);
   const inspect = useSyncExternalStore(store.subscribe, () => store.getSnapshot().inspect);
+  // a hard limit's trade-off card (its marker on the route) takes the inspector's place
+  const tradeoff = useSyncExternalStore(store.subscribe, () => store.getSnapshot().tradeoffOpen);
+  useEffect(() => {
+    if (tradeoff) setInspected(null);
+  }, [tradeoff]);
   const ridden = useSyncExternalStore(
     (onChange) => exploredStore.subscribe(onChange),
     () => exploredStore.size,
@@ -310,6 +316,7 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
       mapRef.current?.clearSelection();
       // on the phone the inspector takes the summary card's place: no sheet over it
       if (mode !== "desk") store.open(null);
+      store.openTradeoff(null);
       setInspected(target);
     },
   };
@@ -434,7 +441,7 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
           h={h}
           layers={layersPanel}
           legend={legend}
-          picked={inspected ?? picked}
+          picked={inspected ?? picked ?? (tradeoff ? "tradeoff" : null)}
           ridesCount={rides.rides.length}
           onRetry={loadGraph}
           onStackHeight={setStackH}
@@ -449,6 +456,8 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
                 edge={picked}
                 onClose={() => mapRef.current?.clearSelection()}
               />
+            ) : tradeoff ? (
+              <TradeoffCard />
             ) : null
           }
         />

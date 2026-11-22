@@ -11,6 +11,17 @@ export const node = (i: number, j: number): [number, number] => [
   GRID_ORIGIN + j * GRID_STEP,
 ];
 
+/**
+ * The fixture's ladder, north-east of the grid and not joined to it: S — X ~ Y — T along one street,
+ * X ~ Y a 40 m gravel track, a 2 km paved loop round it (a paved-only profile's trade-off).
+ */
+export const LADDER = {
+  s: [0.001, 0.0175],
+  x: [0.005, 0.0175],
+  y: [0.00536, 0.0175],
+  t: [0.0095, 0.0175],
+} as const;
+
 /** Deterministic pseudo-random numbers (mulberry32). */
 export function prng(seed: number) {
   let a = seed >>> 0;
