@@ -12,7 +12,9 @@
 //! Prints numbers and ride/leg indices only, no coordinates or file names. `--out-dir` gets the
 //! private detail: `legs.json` (which file, the leg's end points: the input for a reference router),
 //! one GeoJSON per leg with every line, and `stretches.txt` (the divergent stretches with reasons).
-//! The rides are real: keep `--out-dir` in gitignored or temporary directories.
+//! The rides are real: keep `--out-dir` in gitignored or temporary directories. `--personal
+//! <explored.json>` routes with the rider's history (`kompass match --explored`, ideally without
+//! the replayed rides: the playtest's condition, the ride itself unknown).
 
 #![allow(
     clippy::cast_precision_loss,
@@ -70,6 +72,7 @@ struct Opts {
     out_dir: Option<PathBuf>,
     min_straight: f64,
     only: Option<String>,
+    personal: Option<String>,
     inputs: Vec<PathBuf>,
 }
 
@@ -82,6 +85,7 @@ fn parse(args: &[String]) -> Result<Opts, Failure> {
         out_dir: None,
         min_straight: MIN_STRAIGHTNESS,
         only: None,
+        personal: None,
         inputs: Vec::new(),
     };
     let mut profiles = "gravel_explorer".to_string();
@@ -109,6 +113,7 @@ fn parse(args: &[String]) -> Result<Opts, Failure> {
             }
             "--out-dir" => o.out_dir = Some(PathBuf::from(value()?)),
             "--leg" => o.only = Some(value()?),
+            "--personal" => o.personal = Some(value()?),
             "--min-straight" => {
                 o.min_straight = value()?
                     .parse()
@@ -363,6 +368,7 @@ impl Measures {
 
 fn measure(
     g: &Graph,
+    personal: Option<&kompass_core::PersonalLayer>,
     model: &CostModel,
     l: &[(ArcId, f32)],
     ridden: &HashMap<EdgeId, f32>,
@@ -386,7 +392,7 @@ fn measure(
         if way == WayKind::Track && matches!(surface, SurfaceClass::PavedSmooth | SurfaceClass::PavedRough) {
             m.paved_track_km += len / 1e3;
         }
-        let ex = model.explain(g, None, a);
+        let ex = model.explain(g, personal, a);
         if ex.excluded.is_none() {
             for &(id, f) in &ex.factors {
                 let v = len / 1e3 * f64::from(f).ln();
@@ -520,6 +526,9 @@ pub fn run(args: &[String]) -> Result<(), Failure> {
     let files = crate::matchcmd::gpx_files(&o.inputs)?;
     let (graph, _) = kompass_compile::build::load(&o.build, true)?;
     let mut planner = Planner::new(graph);
+    if let Some(file) = &o.personal {
+        crate::personal::load(&mut planner, file)?;
+    }
     let mut grids = TileGrids::new(planner.graph());
     let mut matcher = Matcher::default();
     if let Some(d) = &o.out_dir {
@@ -699,7 +708,7 @@ pub fn run(args: &[String]) -> Result<(), Failure> {
                     }
                 }
                 let g = planner.graph();
-                let m = measure(g, &judge_model, l, &ridden, &judged);
+                let m = measure(g, planner.personal(), &judge_model, l, &ridden, &judged);
                 kinds[k].legs += 1;
                 kinds[k].ratios.push(m.km / ridden_km.max(1e-3));
                 kinds[k].repro.push(m.reproduced_km / ridden_km.max(1e-3));

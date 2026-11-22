@@ -22,6 +22,7 @@
 //!   map-matches recorded tracks, prints aggregate numbers (`docs/matching.md`).
 //! - `kompass replay --build <dir> --profiles <a,b> [--ref name=dir]... <gpx files>`: route quality
 //!   against the lines the rider actually rode, leg by leg (overlap, surfaces, roads, turns).
+//! - `kompass sensitivity --build <dir> --profiles <a,b>`: how far one control moves a route.
 
 #![allow(
     clippy::doc_markdown,
@@ -35,8 +36,10 @@ mod bench;
 mod explain;
 mod gpx;
 mod matchcmd;
+mod personal;
 mod replay;
 mod route;
+mod sensitivity;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -50,7 +53,7 @@ const USAGE: &str = "usage: kompass [--version | --help]
        kompass info --build <dir> [--snaps <n>]
        kompass match --build <dir> [--geojson <dir>] [--explored <file>] [--no-geometry]
                      [--radius|--candidates|--sigma|--beta|--step|--skip|--gap|--spur <v>] <gpx files or directories>
-       kompass replay --build <dir> [--profiles <a,b,...>] [--ref <name>=<dir>]... [--leg-km <km>] [--min-straight <r>]
+       kompass replay --build <dir> [--profiles <a,b,...>] [--ref <name>=<dir>]... [--leg-km <km>] [--min-straight <r>] [--personal <explored.json>]
                       [--leg ride<k>-leg<j>] [--out-dir <dir>]
                       <gpx files or directories>
        kompass route --build <dir> --profile <file|preset> --from <lon,lat> [--via <lon,lat>]... --to <lon,lat>
@@ -59,6 +62,7 @@ const USAGE: &str = "usage: kompass [--version | --help]
        kompass profile schema | catalogue [--build <dir>] | presets [--structured] | convert <file|preset>
        kompass schema --write <dir> | --check <dir> [--traffic <file>]
        kompass bench --build <dir> [--pairs <n>] [--seed <n>] [--profiles <a,b>]
+       kompass sensitivity --build <dir> [--profiles <a,b,...>] [--pairs <n>] [--km <min-max>] [--seed <n>] [--personal <explored.json>]
        kompass compare --build <dir> --profiles <a,b,...> [--pairs <n>] [--km <min-max>] [--seed <n>] [--out-dir <dir>] [--grade <pct>]
        kompass compare --build <dir> --loop <corners> [--profiles <a,b,...>] [--reuse off,on,<per_m>/<u_turn_m>,...] [--corners through|any] [--pairs <n>] [--km <min-max>] [--seed <n>]";
 
@@ -84,6 +88,7 @@ fn main() -> ExitCode {
         Some("schema") => Args::parse(rest, &[]).and_then(|a| schema(&a)),
         Some("bench") => Args::parse(rest, &[]).and_then(|a| bench::bench(&a)),
         Some("compare") => Args::parse(rest, &[]).and_then(|a| bench::compare(&a)),
+        Some("sensitivity") => Args::parse(rest, &[]).and_then(|a| sensitivity::run(&a)),
         Some(other) => Err(Failure::Usage(format!("unknown command `{other}`"))),
     };
     match result {
