@@ -66,6 +66,9 @@ cd engine && cargo run --release -p kompass-cli -- bench --build ../data/build/<
 cd engine && cargo run --release -p kompass-cli -- compare --build ../data/build/<name> --profiles a,b [--grade 10] [--out-dir /tmp/x]
                          # route quality on seeded random 30–60 km pairs vs. the shortest way (GeoJSON
                          # only where --out-dir points: keep it out of the repo, it shows the region)
+cd engine && cargo run --release -p kompass-cli -- compare --build ../data/build/<name> --loop 3 [--reuse off,on,1/600] [--corners through|any]
+                         # seeded loops of waypoints (3+ corners): share ridden twice, U-turns at vias, the
+                         # price in km and cost per "don't ride the same way twice" setting (docs/routing.md)
 cd engine && cargo run --release -p kompass-cli -- replay --build ../data/build/<name> --profiles a,b [--ref name=<dir>]... \
     [--leg-km 14] [--min-straight 0.55] [--leg ride<k>-leg<j>] [--out-dir <dir>] <gpx files or dirs>
                          # route quality against the rider's own rides: each ride matched and cut into A→B
