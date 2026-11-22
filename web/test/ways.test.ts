@@ -10,6 +10,9 @@ import {
   LOOK,
   type LookId,
   looks,
+  RIM_DASH,
+  RIM_DASH_FINE,
+  RIM_DASH_MINZOOM,
   TIER,
   WAY_BAND,
   WAY_CASING,
@@ -185,14 +188,22 @@ describe("the layers", () => {
     expect(rim({ highway: "path", surface_class: "gravel" })).toEqual([]);
   });
 
-  test("below z15 an unpaved band's rim is plain; from z15 the casing is its fill under the dashes", () => {
+  test("below z13 an unpaved band's rim is plain; from z13 the casing is its fill under the dashes", () => {
     const casing = byId.get(WAY_CASING) as { paint: Record<string, unknown> };
     const colour = (labels: Record<string, string>, zoom: number) =>
       value(casing.paint["line-color"], edge(labels), zoom);
     const c = CARTO.light;
-    expect(colour({ highway: "track", tracktype: "grade3" }, 14)).toBe(c.trackRimUnpaved);
-    expect(colour({ highway: "track", tracktype: "grade3" }, 15)).toBe(c.gravel);
+    // a zoom step in a data expression is taken per tile, at a whole zoom
+    expect(Number.isInteger(RIM_DASH_MINZOOM)).toBe(true);
+    expect(colour({ highway: "track", tracktype: "grade3" }, RIM_DASH_MINZOOM - 1)).toBe(c.trackRimUnpaved);
+    expect(colour({ highway: "track", tracktype: "grade3" }, RIM_DASH_MINZOOM)).toBe(c.gravel);
     expect(colour({ highway: "track", tracktype: "grade1" }, 15)).toBe(c.trackCasing);
+    // the dash is finer below z15, where the band is narrow
+    const dashed = byId.get(WAY_CASING_DASHED) as { minzoom?: number; paint: Record<string, unknown> };
+    expect(dashed.minzoom).toBe(RIM_DASH_MINZOOM);
+    const dash = (zoom: number) => value(dashed.paint["line-dasharray"], {}, zoom);
+    expect(dash(14)).toEqual([...RIM_DASH_FINE]);
+    expect(dash(15)).toEqual([...RIM_DASH]);
   });
 
   test("the line weight widens every way and what lies under it alike", () => {

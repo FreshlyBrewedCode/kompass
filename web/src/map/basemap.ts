@@ -248,7 +248,46 @@ export type BaseLayers = {
 /** Ids of the Protomaps layers kept as they are (recoloured by the flavour). */
 const KEEP_GROUND = ["background", "earth", "landcover"];
 const KEEP_WATER = ["water"];
-const KEEP_FEATURES = ["water_stream", "water_river", "buildings"];
+const KEEP_FEATURES = ["buildings"];
+
+/**
+ * Rivers, canals, streams and ditches: our own lines (the package draws streams from z14 only, as a
+ * hairline, and leaves canals and ditches out). Streams are in the tiles from z13 and are drawn from
+ * there, wide enough to see at the zoom a phone is held at; ditches and drains from z15, thinner.
+ */
+export const WATERWAY_WIDTHS = {
+  river: [9, 0.6, 12, 1.6, 14, 3, 16, 6, 18, 12],
+  stream: [13, 0.7, 14, 1.1, 15, 1.5, 16, 2, 18, 3.5],
+  ditch: [15, 0.6, 16, 0.9, 18, 1.8],
+} as const;
+export const STREAM_MINZOOM = 13;
+export const DITCH_MINZOOM = 15;
+
+function waterways(source: string, c: Carto): LayerSpecification[] {
+  const line = (
+    id: string,
+    kinds: string[],
+    minzoom: number,
+    widths: readonly number[],
+  ): LayerSpecification => ({
+    id,
+    type: "line",
+    source,
+    "source-layer": "water",
+    minzoom,
+    filter: ["all", ["==", ["geometry-type"], "LineString"], ["in", KIND, ["literal", kinds]]],
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: {
+      "line-color": c.waterway,
+      "line-width": ["interpolate", ["exponential", 1.4], ["zoom"], ...widths] as Expr,
+    },
+  });
+  return [
+    line("water_ditch", ["ditch", "drain"], DITCH_MINZOOM, WATERWAY_WIDTHS.ditch),
+    line("water_stream", ["stream"], STREAM_MINZOOM, WATERWAY_WIDTHS.stream),
+    line("water_river", ["river", "canal"], 9, WATERWAY_WIDTHS.river),
+  ];
+}
 
 export function baseLayers(source: string, theme: Theme, c: Carto, lang: string): BaseLayers {
   const f = flavor(theme, c);
@@ -257,11 +296,7 @@ export function baseLayers(source: string, theme: Theme, c: Carto, lang: string)
   const byId = new Map(all.map((l) => [l.id, l]));
   const keep = (ids: string[]) => ids.flatMap((id) => byId.get(id) ?? []);
 
-  const features = keep(KEEP_FEATURES).map((layer): LayerSpecification => {
-    if (layer.type !== "line") return layer;
-    // rivers and streams: our blue (the package draws them in the water fill's colour)
-    return { ...layer, paint: { ...layer.paint, "line-color": c.waterway } };
-  });
+  const features = [...waterways(source, c), ...keep(KEEP_FEATURES)];
   const boundaries: LayerSpecification[] = [
     {
       id: "boundaries",

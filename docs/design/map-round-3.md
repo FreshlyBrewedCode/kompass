@@ -67,3 +67,12 @@ The principles, for the next round:
 - One way, one line: what changes along a track is a modifier (fill tint, rim), never the shape.
 - The ways a gravel rider wants least are never the loudest marks; paths stay thin and quiet.
 - Dashes only where they read (z15 and closer); below, a plain lighter rim.
+
+## Playtest (2026-11-22)
+
+On the phone the map is held around z14 (13.8 in practice). There the new style hid two things the
+other map keeps without looking busier: the dashed rims (they started at z15) and small streams
+(drawn from z14 only, as a 0.5 px hairline, though the tiles carry them from z13). Now the rim is
+dashed from z13, with a finer dash below z15, and our own waterway lines draw streams from z13 (about
+1 px at z14), canals with the rivers, and ditches and drains from z15. At z14 the dashes read as a
+broken edge, not as a zipper, because the dash is short and lies on the band's own fill.

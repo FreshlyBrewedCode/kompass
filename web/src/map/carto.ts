@@ -59,7 +59,7 @@ export type Carto = {
   lane: string;
   /** the solid rim of a paved track */
   trackCasing: string;
-  /** the rim of an unpaved band: dashed from z15, plain and lighter than a paved one below */
+  /** the rim of an unpaved band: dashed from z13, plain and lighter than a paved one below */
   trackRimUnpaved: string;
   /** grade 2 */
   compacted: string;

@@ -51,9 +51,16 @@ export const WAY_PICK_LAYERS = [WAY_CASING, WAY_HALO, WAY_FERRY] as const;
 
 /** The ferry's dash and gap, in line widths. */
 export const FERRY_DASH = [3, 2.5] as const;
-/** The rim of an unpaved band: dash and gap in casing widths; dashed from `RIM_DASH_MINZOOM`, plain below. */
+/**
+ * The rim of an unpaved band: dash and gap in casing widths; dashed from `RIM_DASH_MINZOOM`, plain below.
+ * Finer below `RIM_DASH_FINE_TO` (`RIM_DASH_FINE`): at the zoom a phone is held at (z14) the band is
+ * narrow, and a short tight dash reads as a broken edge where the long one became a zipper.
+ */
 export const RIM_DASH = [1.1, 0.7] as const;
-export const RIM_DASH_MINZOOM = 15;
+export const RIM_DASH_FINE = [0.75, 0.45] as const;
+/** a whole zoom: the casing's colour steps here, and a data expression's zoom step is taken per tile */
+export const RIM_DASH_MINZOOM = 13;
+export const RIM_DASH_FINE_TO = 15;
 
 const normalise = (label: string) =>
   label
@@ -561,7 +568,13 @@ export function wayLayers(
         "line-color": colour("casing"),
         "line-width": casingWidth,
         "line-opacity": opacity(1),
-        "line-dasharray": [...RIM_DASH],
+        "line-dasharray": [
+          "step",
+          ["zoom"],
+          ["literal", [...RIM_DASH_FINE]],
+          RIM_DASH_FINE_TO,
+          ["literal", [...RIM_DASH]],
+        ] as never,
       },
     },
     {
@@ -761,7 +774,7 @@ export function keyStrokes(row: KeyRow, c: Carto, weight = 1): KeyStroke[] {
     const casing = w(WIDTHS.casing);
     const rim = look.casing ?? look.fill;
     if (look.rim === "dashed") {
-      // at KEY_ZOOM (≥ RIM_DASH_MINZOOM) the rim is dashed on the band's own fill
+      // at KEY_ZOOM (≥ RIM_DASH_FINE_TO) the rim is dashed on the band's own fill
       strokes.push({ color: look.fill, width: casing, opacity, cap: "round" });
       strokes.push({
         color: rim,
