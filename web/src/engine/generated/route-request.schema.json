@@ -293,7 +293,7 @@
           "default": {}
         },
         "bounds": {
-          "description": "The factor clamp; defaults apply when absent.",
+          "description": "The factor clamp; defaults apply when absent. In the structured model only `max_factor`\ncounts (`min_factor` must stay at its default: `detours` takes its place).",
           "anyOf": [
             {
               "$ref": "#/$defs/Bounds"
@@ -305,6 +305,36 @@
         },
         "turn_m": {
           "description": "What a right-angle turn at a junction costs, metres-equivalent (0..=500; absent:\n[`TURN_M`]; 0: turns are free). Straight on costs nothing, a U-turn twice this; leaving the\nthrough road at least half of it (`docs/routing.md#turns`).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "boards": {
+          "description": "Structured model: the tier boards.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Boards"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hills": {
+          "description": "Structured model: the hills curve.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Hills"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "detours": {
+          "description": "Structured model: the spread of the relative factors, an exponent 0.5..=2 (default 1; more\nis \"Detours: more\", a loved way is worth a longer ride).",
           "type": [
             "number",
             "null"
@@ -350,6 +380,196 @@
         }
       },
       "additionalProperties": false
+    },
+    "Boards": {
+      "description": "The tier boards (structured model): each board present replaces its slider preferences.",
+      "type": "object",
+      "properties": {
+        "surface": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SurfaceBoard"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "way": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WayBoard"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "SurfaceBoard": {
+      "description": "The surface board: a tier per surface class of the way (the tag, else a safe guess; weak\nguesses and unusual surfaces are `unknown`).",
+      "type": "object",
+      "properties": {
+        "paved": {
+          "$ref": "#/$defs/Tier"
+        },
+        "rough_paved": {
+          "$ref": "#/$defs/Tier"
+        },
+        "compacted": {
+          "$ref": "#/$defs/Tier"
+        },
+        "gravel": {
+          "$ref": "#/$defs/Tier"
+        },
+        "soft": {
+          "$ref": "#/$defs/Tier"
+        },
+        "unknown": {
+          "$ref": "#/$defs/Tier"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "paved",
+        "rough_paved",
+        "compacted",
+        "gravel",
+        "soft",
+        "unknown"
+      ]
+    },
+    "Tier": {
+      "description": "A tier of a board: how much the rider likes the ways of a row, best first in [`Tier::BEST_FIRST`].",
+      "type": "string",
+      "enum": [
+        "avoid",
+        "dislike",
+        "fine",
+        "like",
+        "love"
+      ]
+    },
+    "WayBoard": {
+      "description": "The way board: a tier per kind of way (the route's way types; steps count as paths).",
+      "type": "object",
+      "properties": {
+        "main": {
+          "$ref": "#/$defs/Tier"
+        },
+        "country_road": {
+          "$ref": "#/$defs/Tier"
+        },
+        "residential": {
+          "$ref": "#/$defs/Tier"
+        },
+        "service": {
+          "$ref": "#/$defs/Tier"
+        },
+        "track": {
+          "$ref": "#/$defs/Tier"
+        },
+        "path": {
+          "$ref": "#/$defs/Tier"
+        },
+        "cycle_path": {
+          "$ref": "#/$defs/Tier"
+        },
+        "cycle_path_roadside": {
+          "$ref": "#/$defs/Tier"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "main",
+        "country_road",
+        "residential",
+        "service",
+        "track",
+        "path",
+        "cycle_path",
+        "cycle_path_roadside"
+      ]
+    },
+    "Hills": {
+      "description": "The hills curve (structured model): what a metre costs against its grade, an additive term in\nmetres (`length × (curve − 1)`). Replaces `climb`, `steep` and `ramps_over_*`.",
+      "type": "object",
+      "properties": {
+        "up": {
+          "$ref": "#/$defs/UpHandles"
+        },
+        "down": {
+          "description": "Absent: a descent counts like a climb of half its grade (at least 1).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DownHandles"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "loose_pct": {
+          "description": "On loose ground (gravel, soft, unusual surfaces) grades count this many percent steeper,\n0..=50 (default 0).",
+          "type": "number",
+          "format": "float",
+          "default": 0.0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "up"
+      ]
+    },
+    "UpHandles": {
+      "description": "The hills curve's climbing handles: the cost of a metre at that grade (percent, uphill) relative\nto a flat metre (0 % is pinned at 1). Below 1 seeks climbs (counts through the gate).",
+      "type": "object",
+      "properties": {
+        "3": {
+          "type": "number",
+          "format": "float"
+        },
+        "6": {
+          "type": "number",
+          "format": "float"
+        },
+        "10": {
+          "type": "number",
+          "format": "float"
+        },
+        "15": {
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "3",
+        "6",
+        "10",
+        "15"
+      ]
+    },
+    "DownHandles": {
+      "description": "The hills curve's descending handles (percent downhill), 1 or more.",
+      "type": "object",
+      "properties": {
+        "8": {
+          "type": "number",
+          "format": "float"
+        },
+        "15": {
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "8",
+        "15"
+      ]
     },
     "RouteOptions": {
       "description": "Options of a route request.",
