@@ -7,7 +7,7 @@ The screen: the region map with the planner on top, built on the consolidated de
 | file | what |
 |---|---|
 | `store.ts` | the one state model (`PlannerStore`), its engine wiring, persistence; `usePlan(selector)` |
-| `model.ts` | pure logic: waypoint insertion, the diff against the base and its sentence, read-outs, the trade-off, why-notes, plan and preset parsing |
+| `model.ts` | pure logic: waypoint insertion, the diff against the base and its sentence, the panel's groups and their lines, what a slider touches, read-outs, the trade-off, why-notes, plan and preset parsing |
 | `route-layer.ts` | what the planner draws on the map, and the map's taps |
 | `parts.tsx` | the components of the design's inventory (one set for every breakpoint) |
 | `shell.tsx` | the arrangement per breakpoint (phone, tablet, desk), sheets, the chip strip; wires map, engine, rides |
@@ -29,9 +29,9 @@ and the strip, not the tree.
 
 - **A profile is a base plus changes.** The base is a preset (the engine's `presets()` or one saved
   on the device); `weights` and `limits` are this plan's full values, the diff is computed. An
-  absent weight has no opinion; an explicit 0 stays on screen (`docs/profile.md`). Core preferences
-  missing from a profile count as 0. A base limit switched off is kept as `false`, so the change
-  stays listed.
+  absent weight has no opinion; an explicit 0 stays on screen (`docs/profile.md`). There is no core
+  set: a row is on screen only while the plan names it, so any row can be removed and the Blank
+  slate has none. A base limit switched off is kept as `false`, so the change stays listed.
 - **Waypoints**: the first tap is the start, the second the destination; later taps join the leg
   they detour least from, or extend the route when a tap lies beyond the destination (`insertIndex`).
   Names are the nearest place label the map has rendered around the tap (no geocoding), else
@@ -108,6 +108,29 @@ Why the router goes where it goes, for a rider. Three parts on the engine's cost
 Where: the panel and the card take the summary card's place on the phone, the bottom-left slot (above
 the agent bar) on the desk.
 
+## The preferences panel
+
+The profile editor (`ProfileList` in `parts.tsx`; the phone's sheet, the tablet's panel, the desk's
+card) shows the plan's preferences by the catalogue's groups, the same sections as "add a
+preference" (`prefGroups` in `model.ts`), in the catalogue's order and only groups with rows. Then
+"add", Detours and the limits, as before.
+
+- **Collapsed by default.** A group is a header: its icon and name, the number of rows, the accent
+  dot when one of them is changed, and one line of what is set in it in a rider's words, strongest
+  first, two named and the rest counted (`groupSummary`: "likes gravel, avoids soft ground +1";
+  "no opinion on water yet"). A tap opens it to its sliders (with the avoid / seek legend). Which
+  groups are open is the panel's own state, not saved; a row that is added or flashed (the cost
+  view's tap on the desk) opens its group, which then stays open.
+- **What a slider touches.** Each row shows how much of the plan's route the preference applies to
+  ("8.2 km", "350 m"), from the route's `breakdown.touched` (`docs/profile.md`). A row that touches
+  nothing (under 5 m) says "0 km" and is dimmed, still usable; a collapsed group whose rows all touch
+  nothing says "nothing on this route" in its head and dims too. No route (or an error): no figures, no dimming;
+  a row just added gets its figure with the next route.
+- **Empty.** Without any preference (the Blank slate, or every row removed) the panel says so and
+  invites: the route takes the shortest way, and "add a preference" sits right in the message.
+- The chip strip (phone, tablet) lists the same rows ungrouped, so it is empty on the Blank slate
+  but for the profile, the limits and "+".
+
 ## Detours
 
 The profile editor has, apart from the preference sliders and above the limits, a **Detours** control:
@@ -125,6 +148,12 @@ moved), a moved value is a change ("more detours"), has the change dot to reset,
   region's bounds are dropped on load; a missing base falls back to Gravel explorer.
 - Own presets (`kompass.presets.v1`): `{ id, blurb, profile }` like the shipped ones; saved, renamed
   and deleted from the profile's head.
+- **From the core-set days.** Plans and own presets saved while `unpaved`, `quiet`, `climb` and
+  `novel` were on screen in every profile carry explicit 0s for them. On load
+  (`dropFormerCoreZeros`) such a 0 goes when the base does not set the preference either: it only
+  existed because the row was always there, and it routes the same. A 0 against a base that sets it
+  ("less climbing") stays, as does a 0 on any other preference ("added, not set yet"). So an old plan
+  on the Blank slate opens empty, not with four rows at "no opinion".
 
 ## Performance
 

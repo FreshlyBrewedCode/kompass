@@ -3,6 +3,7 @@
 // persistence. `bun test` covers it (web/test/planner-*.test.ts).
 import type {
   Catalogue,
+  Group,
   Limit,
   LimitId,
   LimitValue,
@@ -116,10 +117,83 @@ export function normaliseLimits(limits: Limits, catalogue: Catalogue | null): Li
   return out;
 }
 
-/** The rows of the profile: the core set first (always), then what the base or this plan added. */
-export function prefRows(weights: Weights, core: readonly PrefId[]): PrefId[] {
-  const rest = (Object.keys(weights) as PrefId[]).filter((id) => !core.includes(id));
-  return [...core, ...rest];
+/** The rows of the profile: every preference the plan names (the base's and the added ones), in its order. */
+export function prefRows(weights: Weights): PrefId[] {
+  return Object.keys(weights) as PrefId[];
+}
+
+/** The ids that were once the core set, on screen in every profile and so stored as explicit 0s. */
+export const FORMER_CORE: readonly PrefId[] = ["unpaved", "quiet", "climb", "novel"];
+
+/**
+ * Without the stray zeros of the former core set: a stored 0 on `unpaved`, `quiet`, `climb` or
+ * `novel` that the base does not set either existed only because those rows were always on screen,
+ * so it goes (it routes the same). A 0 against a base that sets the preference is a real change and
+ * stays, as does a 0 on any other preference ("added, not set yet").
+ */
+export function dropFormerCoreZeros(weights: Weights, base: Weights = {}): Weights {
+  const out: Weights = {};
+  for (const [id, v] of Object.entries(weights) as [PrefId, number][]) {
+    if (v === 0 && FORMER_CORE.includes(id) && (base[id] ?? 0) === 0) continue;
+    out[id] = v;
+  }
+  return out;
+}
+
+/** One group of the profile's rows: the catalogue's groups, in its order, only those with rows. */
+export type PrefGroup = { id: Group; label: string; ids: PrefId[] };
+
+export function prefGroups(ids: readonly PrefId[], catalogue: Catalogue | null): PrefGroup[] {
+  if (!catalogue) return ids.length ? [{ id: "surface", label: "Preferences", ids: [...ids] }] : [];
+  const groupOf = (id: PrefId) => catalogue.preferences.find((p) => p.id === id)?.group;
+  return catalogue.groups
+    .map((g) => ({ id: g.id, label: g.label, ids: ids.filter((id) => groupOf(id) === g.id) }))
+    .filter((g) => g.ids.length > 0);
+}
+
+/** A weight told as a rider would: "likes gravel", "strongly avoids main roads". */
+export function opinion(id: PrefId, v: number): string {
+  const n = noun(id);
+  if (v >= 70) return `loves ${n}`;
+  if (v >= 35) return `likes ${n}`;
+  if (v > 0) return `likes ${n} a bit`;
+  if (v > -35) return `rather avoids ${n}`;
+  if (v > -70) return `avoids ${n}`;
+  return `strongly avoids ${n}`;
+}
+
+/**
+ * The one line under a collapsed group: what is set in it, strongest first, at most `max` named
+ * ("likes gravel, avoids soft ground +1"); rows still at 0 are only counted when nothing else is set.
+ */
+export function groupSummary(ids: readonly PrefId[], weights: Weights, max = 2): string {
+  const set = ids
+    .map((id) => ({ id, v: weights[id] ?? 0 }))
+    .filter((x) => x.v !== 0)
+    .sort((a, b) => Math.abs(b.v) - Math.abs(a.v));
+  if (set.length === 0)
+    return ids.length === 1
+      ? `no opinion on ${noun(ids[0] as PrefId)} yet`
+      : `${ids.length} added, none set yet`;
+  const named = set.slice(0, max).map((x) => opinion(x.id, x.v));
+  const more = set.length - named.length;
+  return `${named.join(", ")}${more > 0 ? ` +${more}` : ""}`;
+}
+
+/** Metres of the route a preference applies to (`breakdown.touched`); `null` without a route or before it knows. */
+export function touchedM(r: RouteResult | null, id: PrefId): number | null {
+  return r?.breakdown.touched?.find((t) => t.key === id)?.length_m ?? null;
+}
+
+/** Below this a preference "touches nothing" on the route (a few metres at a waypoint's snap). */
+export const TOUCH_MIN_M = 5;
+
+/** What a slider touches, in words: "8.2 km", "350 m", "not on this route"; `null` when not known. */
+export function touchText(m: number | null): string | null {
+  if (m === null) return null;
+  if (m < TOUCH_MIN_M) return "not on this route";
+  if (m < 1000) return `${Math.max(10, Math.round(m / 10) * 10)} m`;
+  return `${fmtKm(m)} km`;
 }
 
 /** The limits on screen: those of the base (also when switched off: the change stays visible) and the added ones. */
@@ -241,7 +315,7 @@ export function detourHint(minFactor: number): string {
   return `Up to ${detourTimes(minFactor)} longer for a way you like.`;
 }
 
-/** What this plan changed against its base, in words. Core preferences absent from a profile count as 0. */
+/** What this plan changed against its base, in words. */
 export function changes(
   base: { weights: Weights; limits: Limits },
   weights: Weights,
@@ -249,16 +323,14 @@ export function changes(
   catalogue: Catalogue | null,
   minFactors?: { base: number; plan: number },
 ): Change[] {
-  const core = catalogue?.core ?? [];
   const out: Change[] = [];
   const prefIds = new Set([
     ...(Object.keys(base.weights) as PrefId[]),
     ...(Object.keys(weights) as PrefId[]),
   ]);
   for (const id of prefIds) {
-    const isCore = core.includes(id);
-    const b = base.weights[id] ?? (isCore ? 0 : undefined);
-    const c = weights[id] ?? (isCore ? 0 : undefined);
+    const b = base.weights[id];
+    const c = weights[id];
     if (b === c) continue;
     if (b === undefined && c === 0) {
       out.push({ id, kind: "pref", added: true, removed: false, text: `${noun(id)} (no opinion yet)` });
@@ -685,7 +757,8 @@ export function parsePresets(text: string | null): PlanPreset[] {
       .map((p) => ({
         id: p.id,
         blurb: typeof p.blurb === "string" ? p.blurb : "",
-        profile: p.profile,
+        // saved while there was a core set: its stray zeros go
+        profile: { ...p.profile, weights: dropFormerCoreZeros(p.profile.weights) },
         own: true,
       }));
   } catch {

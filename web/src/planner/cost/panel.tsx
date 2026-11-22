@@ -248,7 +248,7 @@ function PrefLine({
   onToggle: () => void;
 }) {
   const pref = usePlan((s) => s.catalogue?.preferences.find((p) => p.id === part.id));
-  const inPlan = usePlan((s) => part.id in s.weights || (s.catalogue?.core.includes(part.id) ?? false));
+  const inPlan = usePlan((s) => part.id in s.weights);
   const role = roleText(part, gate, alongside);
   return (
     <li data-testid={`cost-pref-${part.id}`}>

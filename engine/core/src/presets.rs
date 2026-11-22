@@ -86,17 +86,19 @@ mod tests {
             ["gravel_explorer", "paved_quiet", "river_valley", "blank_slate"]
         );
         for p in &all {
-            // every preset carries the core set (the UI shows it)
-            for id in crate::catalogue::catalogue().core {
-                assert!(p.profile.weights.contains_key(&id), "{}: {id}", p.id);
-            }
+            // no explicit 0: a shipped preset names only what it has an opinion on (an explicit 0 is
+            // the UI's "added, not set yet")
+            assert!(p.profile.weights.values().all(|w| w.get() != 0), "{}", p.id);
             assert!(p.profile.base.is_none(), "{}: a shipped preset is a base", p.id);
             // the file names the id
             let file = FILES.iter().find(|f| parse(f.1).unwrap().id == p.id).unwrap().0;
             assert_eq!(file.trim_end_matches(".json").replace('-', "_"), p.id);
         }
         let blank = preset("Blank slate").unwrap();
-        assert!(blank.profile.weights.values().all(|w| w.get() == 0));
+        assert!(
+            blank.profile.weights.is_empty(),
+            "the blank slate is really empty"
+        );
         assert!(blank.profile.limits.is_empty());
         let paved = preset("paved-quiet").unwrap();
         assert_eq!(paved.profile.limit(LimitId::PavedOnly), Some(None));

@@ -84,8 +84,6 @@ pub struct Preference {
     pub high_label: Option<&'static str>,
     /// The weight it starts with when added.
     pub default: i8,
-    /// Part of the core set every profile shows.
-    pub core: bool,
     /// The factor on a fully matching way at +100 (< 1: cheaper).
     pub max_bonus: f32,
     /// The factor on a fully matching way at −100 (> 1: dearer).
@@ -148,8 +146,6 @@ pub struct Catalogue {
     pub groups: Vec<GroupInfo>,
     pub preferences: Vec<Preference>,
     pub limits: Vec<Limit>,
-    /// The core set: always on screen, whatever the base.
-    pub core: Vec<PrefId>,
     pub bounds: BoundsInfo,
 }
 
@@ -163,7 +159,6 @@ pub struct PrefMeta {
     pub low_label: Option<&'static str>,
     pub high_label: Option<&'static str>,
     pub default: i8,
-    pub core: bool,
     pub max_bonus: f32,
     pub max_penalty: f32,
     pub gated: bool,
@@ -189,7 +184,6 @@ const fn p(
         low_label: None,
         high_label: None,
         default,
-        core: false,
         max_bonus,
         max_penalty,
         gated: false,
@@ -198,10 +192,6 @@ const fn p(
 }
 
 impl PrefMeta {
-    const fn core(mut self) -> Self {
-        self.core = true;
-        self
-    }
     const fn gated(mut self) -> Self {
         self.gated = true;
         self
@@ -243,7 +233,6 @@ pub fn pref_meta(id: PrefId) -> PrefMeta {
             0.6,
             2.5,
         )
-        .core()
         .data(
             "surface_class",
             "Untagged tracks and paths count by their track grade or a guess; see unknown surface.",
@@ -411,7 +400,6 @@ pub fn pref_meta(id: PrefId) -> PrefMeta {
             0.85,
             4.0,
         )
-        .core()
         .ends("don't care", "must be calm")
         .data(
             "maxspeed_kmh",
@@ -508,7 +496,6 @@ pub fn pref_meta(id: PrefId) -> PrefMeta {
             0.7,
             25.0,
         )
-        .core()
         .gated()
         .ends("keep it flat", "bring it on")
         .data(
@@ -604,7 +591,6 @@ pub fn pref_meta(id: PrefId) -> PrefMeta {
             0.7,
             1.5,
         )
-        .core()
         .gated()
         .ends("stay familiar", "explore")
         .data("personal", "Needs your imported rides."),
@@ -750,7 +736,6 @@ pub fn catalogue() -> Catalogue {
                     low_label: m.low_label,
                     high_label: m.high_label,
                     default: m.default,
-                    core: m.core,
                     max_bonus: m.max_bonus,
                     max_penalty: m.max_penalty,
                     gated: m.gated,
@@ -780,11 +765,6 @@ pub fn catalogue() -> Catalogue {
                     number: m.number,
                 }
             })
-            .collect(),
-        core: PrefId::ALL
-            .iter()
-            .copied()
-            .filter(|&id| pref_meta(id).core)
             .collect(),
         bounds: BoundsInfo {
             min_factor: BoundRange {
@@ -839,10 +819,6 @@ mod tests {
                 assert!(n.min <= n.default && n.default <= n.max, "{}", l.id);
             }
         }
-        assert_eq!(
-            c.core,
-            vec![PrefId::Unpaved, PrefId::Quiet, PrefId::Climb, PrefId::Novel]
-        );
         let json = serde_json::to_value(&c).unwrap();
         assert_eq!(json["preferences"][0]["id"], "unpaved");
         assert_eq!(json["preferences"][0]["kind"], "soft");

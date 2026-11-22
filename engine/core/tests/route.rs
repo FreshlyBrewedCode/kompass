@@ -1156,6 +1156,73 @@ fn the_personal_layer_marks_ridden_and_new() {
 }
 
 #[test]
+fn the_route_says_what_each_preference_touches() {
+    let (built, pts) = line();
+    let mut planner = Planner::new(built.graph.clone());
+    // an explicit 0 is reported too: a row on screen at "no opinion" still learns what it would touch
+    let p = weights(&[(PrefId::Unpaved, 100), (PrefId::Track, 0), (PrefId::Forest, 50)]);
+    let r = planner
+        .route(&request(vec![wp(pts[0].0, pts[0].1), wp(pts[6].0, pts[6].1)], &p))
+        .unwrap();
+    let keys: Vec<PrefId> = r.breakdown.touched.iter().map(|t| t.key).collect();
+    assert_eq!(
+        keys,
+        [PrefId::Unpaved, PrefId::Track, PrefId::Forest],
+        "catalogue order"
+    );
+    let gravel: f32 = r
+        .segments
+        .iter()
+        .filter(|s| s.surface == kompass_core::route::SurfaceKind::Gravel)
+        .map(|s| s.length_m)
+        .sum();
+    assert!(gravel > 200.0, "the route takes the gravel detour");
+    let at = |id| r.breakdown.touched.iter().find(|t| t.key == id).unwrap();
+    assert!((at(PrefId::Unpaved).length_m - gravel).abs() < 1.0);
+    assert!((at(PrefId::Track).length_m - gravel).abs() < 1.0);
+    assert!((at(PrefId::Unpaved).share - gravel / r.summary.distance_m).abs() < 1e-3);
+    assert_eq!(at(PrefId::Forest).length_m, 0.0, "no forest on this route");
+    // a profile without weights touches nothing, and says so with an empty list
+    let blank = planner
+        .route(&request(
+            vec![wp(pts[0].0, pts[0].1), wp(pts[6].0, pts[6].1)],
+            &Profile::default(),
+        ))
+        .unwrap();
+    assert_eq!(blank.breakdown.touched.len(), 0);
+}
+
+#[test]
+fn touches_is_the_costs_membership() {
+    // on every arc, `touches` names exactly the active preferences whose membership in the cost's
+    // breakdown is not 0
+    let mut rng = Rng(0x7041_c4e5_0000_0061);
+    for round in 0..6 {
+        let built = random_grid(&mut rng, 8);
+        let g = &built.graph;
+        let personal = (round % 2 == 0).then(|| random_personal(&mut rng, g.edge_count()));
+        let mut p = Profile::default();
+        for &id in PrefId::ALL {
+            p.set_weight(id, Some(if rng.below(2) == 0 { 60 } else { -60 }));
+        }
+        let m = CostModel::new(&p).unwrap();
+        for a in 0..g.arc_count() {
+            let a = a as ArcId;
+            let mut hit = Vec::new();
+            kompass_core::cost::touches(g, personal.as_ref(), a, PrefId::ALL, |id| hit.push(id));
+            let want: Vec<PrefId> = m
+                .breakdown(g, personal.as_ref(), a)
+                .terms
+                .iter()
+                .filter(|t| t.membership != 0.0)
+                .map(|t| t.id)
+                .collect();
+            assert_eq!(hit, want, "arc {a}");
+        }
+    }
+}
+
+#[test]
 fn segments_say_why() {
     let (built, pts) = line();
     let mut planner = Planner::new(built.graph.clone());

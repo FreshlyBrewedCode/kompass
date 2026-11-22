@@ -80,6 +80,12 @@ async function openProfile(page: Page) {
   if (phone(page)) await page.getByTestId("profile-chip").click();
   await expect(page.getByTestId("profile")).toBeVisible();
 }
+/** Opens a group of the profile's preferences (they start collapsed). */
+async function openGroup(page: Page, group: string) {
+  const head = page.getByTestId(`group-head-${group}`);
+  if ((await head.getAttribute("aria-expanded")) !== "true") await head.click();
+  await expect(head).toHaveAttribute("aria-expanded", "true");
+}
 async function closeSheet(page: Page) {
   if (await page.getByTestId("sheet").isVisible()) await page.getByTestId("sheet-close").first().click();
   await expect(page.getByTestId("sheet")).toHaveCount(0);
@@ -196,8 +202,9 @@ test("a slider reroutes live with the base as a ghost; a preference from the pic
   await tapAt(page, node(3, 0));
   await expect(page.getByTestId("stat-km").first()).toHaveText(/\d/);
   const before = JSON.stringify((await plan(page)).main);
-  // one preference's slider: the chip on the phone, the profile card on desktop
+  // one preference's slider: the chip on the phone, the profile card on desktop (its group opened)
   if (phone(page)) await page.getByTestId("chip-unpaved").click();
+  else await openGroup(page, "surface");
   const dial = page.getByRole("slider", { name: "Gravel & unpaved" });
   await dial.focus();
   await dial.press("Home"); // all the way to "avoid"
@@ -224,6 +231,100 @@ test("a slider reroutes live with the base as a ghost; a preference from the pic
   await page.getByTestId("reset-profile").click();
   await expect(page.getByTestId("change-count")).toHaveText("· as it comes");
   await expect(page.getByTestId("pref-water")).toHaveCount(0);
+});
+
+test("the profile by groups: collapsed with a summary, what each slider touches, dimmed at nothing", async ({
+  page,
+}, testInfo) => {
+  await fresh(page);
+  await openProfile(page);
+  // collapsed by default, each group with a line of what is set in it; no figures before a route
+  const surface = page.getByTestId("group-head-surface");
+  await expect(surface).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByTestId("group-surface").getByTestId("group-summary")).toHaveText(
+    /likes gravel|loves gravel/,
+  );
+  await expect(page.getByTestId("pref-unpaved")).toHaveCount(0);
+  await openGroup(page, "surface");
+  await expect(page.getByTestId("pref-unpaved")).toBeVisible();
+  await expect(page.getByTestId("pref-touches")).toHaveCount(0);
+  await closeSheet(page);
+
+  await tapAt(page, node(1, 1));
+  await tapAt(page, node(4, 3));
+  await expect(page.getByTestId("stat-km").first()).toHaveText(/\d/);
+  await openProfile(page);
+  // the engine says per preference how much of the route it applies to
+  const touched = await page.evaluate(() => {
+    const s = (
+      window as unknown as { __kompass: { planner: { getSnapshot(): Record<string, unknown> } } }
+    ).__kompass.planner.getSnapshot();
+    const main = s.main as { result: { breakdown: { touched: { key: string; length_m: number }[] } } };
+    const groups = (s.catalogue as { preferences: { id: string; group: string }[] }).preferences.reduce<
+      Record<string, string>
+    >((o, p) => Object.assign(o, { [p.id]: p.group }), {});
+    return main.result.breakdown.touched.map((t) => ({ ...t, group: groups[t.key] as string }));
+  });
+  expect(touched.length).toBe(11); // every weight of Gravel explorer
+  const some = touched.find((t) => t.length_m >= 5);
+  expect(some).toBeDefined();
+  for (const g of new Set(touched.map((t) => t.group))) await openGroup(page, g);
+  for (const t of touched) {
+    const row = page.getByTestId(`pref-${t.key}`);
+    if (t.length_m >= 5) {
+      await expect(row.getByTestId("pref-touches")).toHaveText(/^\d+(\.\d)? (km|m)$/);
+      await expect(row).not.toHaveAttribute("data-dim");
+    } else {
+      await expect(row.getByTestId("pref-touches")).toHaveText("0 km");
+      await expect(row).toHaveAttribute("data-dim", "true");
+    }
+  }
+  await screenshot(page, testInfo, "planner-groups-open");
+  // a group whose preferences all touch nothing says so when collapsed
+  const byGroup = new Map<string, number>();
+  for (const t of touched) byGroup.set(t.group, Math.max(byGroup.get(t.group) ?? 0, t.length_m));
+  for (const [g, m] of byGroup) {
+    await page.getByTestId(`group-head-${g}`).click();
+    await expect(page.getByTestId(`group-head-${g}`)).toHaveAttribute("aria-expanded", "false");
+    const none = page.getByTestId(`group-${g}`).getByTestId("group-none");
+    if (m < 5) await expect(none).toHaveText("nothing on this route");
+    else await expect(none).toHaveCount(0);
+  }
+  await page.getByTestId(`group-head-${some?.group}`).scrollIntoViewIfNeeded();
+  await screenshot(page, testInfo, "planner-groups");
+});
+
+test("the blank slate is really empty: an invitation, then a preference added from it", async ({
+  page,
+}, testInfo) => {
+  await fresh(page);
+  await tapAt(page, node(1, 1));
+  await tapAt(page, node(4, 3));
+  await expect(page.getByTestId("stat-km").first()).toHaveText(/\d/);
+  await openProfile(page);
+  await page.getByTestId("base-name").click();
+  await page.getByTestId("base-blank_slate").click();
+  await expect(page.getByTestId("base-name")).toContainText("Blank slate");
+  await expect(page.getByTestId("profile-empty")).toBeVisible();
+  await expect(page.getByTestId("pref-groups")).toHaveCount(0);
+  await expect(page.locator('[data-testid^="pref-"][data-row]')).toHaveCount(0);
+  await expect(page.getByTestId("change-count")).toHaveText("· as it comes");
+  await screenshot(page, testInfo, "planner-blank");
+  if (phone(page)) {
+    // the strip has no preference chips either
+    await closeSheet(page);
+    await expect(page.getByTestId("strip").locator('[data-testid^="chip-"]')).toHaveCount(0);
+    await openProfile(page);
+  }
+  await page.getByTestId("profile-empty").getByTestId("add-preference").click();
+  await page.getByTestId("picker-search").fill("gravel");
+  await page.getByTestId("pick-unpaved").click();
+  await expect(page.getByTestId("picker")).toHaveCount(0);
+  // the new row's group opens, and the route says what the new slider touches
+  await expect(page.getByTestId("profile-empty")).toHaveCount(0);
+  await expect(page.getByTestId("group-head-surface")).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByTestId("pref-unpaved").getByTestId("pref-touches")).toHaveText(/^\d/);
+  await expect(page.getByTestId("change-sentence")).toHaveText("Blank slate, but more gravel.");
 });
 
 test("the route toggle hides the route lines (button and H), the stops stay", async ({ page }, testInfo) => {
@@ -277,6 +378,7 @@ test("a slider moves only from its knob: a tap on the track changes nothing", as
       return s.weights.quiet ?? 0;
     });
   if (phone(page)) await page.getByTestId("chip-quiet").click();
+  else await openGroup(page, "traffic");
   const dial = page.getByRole("slider", { name: "Low traffic" });
   await dial.scrollIntoViewIfNeeded();
   const before = await weight();
@@ -352,6 +454,7 @@ test("save a preset; it and the plan are there after a reload", async ({ page })
   await tapAt(page, node(3, 0));
   await expect(page.getByTestId("stat-km").first()).toHaveText(/\d/);
   await openProfile(page);
+  await openGroup(page, "traffic");
   const dial = page.getByRole("slider", { name: "Low traffic" });
   await dial.focus();
   await dial.press("End");
@@ -369,6 +472,7 @@ test("save a preset; it and the plan are there after a reload", async ({ page })
   await expect(page.getByTestId("stat-km").first()).toHaveText(/\d/);
   await openProfile(page);
   await expect(page.getByTestId("base-name")).toContainText("Very quiet");
+  await openGroup(page, "traffic");
   await expect(page.getByTestId("pref-quiet").getByTestId("pref-value")).toHaveText("+100");
   // the preset is in the chooser, and can go again
   await page.getByTestId("base-name").click();
