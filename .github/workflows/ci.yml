@@ -59,13 +59,14 @@ jobs:
 
   # The built app served under a sub-path by a throwaway server (port 7959), phone and desktop viewports.
   # The map renders on the CPU, so the suite is split by test across runners rather than run with more
-  # workers on one.
+  # workers on one. Shards are equal-count slices of the list (phone, then desktop), and the planner and
+  # rides specs late in each half are the heavy ones: six slices keep the longest near the average.
   e2e:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@v4
 
