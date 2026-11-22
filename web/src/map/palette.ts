@@ -53,6 +53,17 @@ export const RIDES: Record<Theme, string> = { light: "#c2185b", dark: "#ff6fa5" 
 /** The selected edge (the inspect panel). */
 export const SELECTED: Record<Theme, string> = { light: "#111111", dark: "#ffffff" };
 
+/** `a` moved towards `b` by `f` (0: a, 1: b); both `#rrggbb`. */
+export function mixHex(a: string, b: string, f: number): string {
+  const ch = (hex: string, o: number) => Number.parseInt(hex.slice(o, o + 2), 16);
+  const out = [1, 3, 5].map((o) =>
+    Math.round(ch(a, o) + (ch(b, o) - ch(a, o)) * f)
+      .toString(16)
+      .padStart(2, "0"),
+  );
+  return `#${out.join("")}`;
+}
+
 function mix(hex: string, towards: number, amount: number): string {
   const channel = (offset: number) => {
     const value = Number.parseInt(hex.slice(offset, offset + 2), 16);

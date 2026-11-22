@@ -123,7 +123,9 @@ each, `ways.ts`):
 | path, not mapped | `#6e645a` | solid line | |
 | ferry | `#4b84b3` | dashes `3 / 2.5`, never a band | `highway` = ferry |
 
-The **dashed rim** lies on a casing of the band's own fill, so the gaps keep the band's width. It
+The **dashed rim** is soft: the dashes at 60 % (`RIM_DASH_OPACITY`) on a casing of the band's fill
+with 30 % of the rim in it (`RIM_UNDER_TINT`), so the edge stays continuous and the gaps keep the
+band's width; full-strength dashes on the bare fill flickered and made a field of tracks busy. It
 starts at `RIM_DASH_MINZOOM` = 13 (around z14 is how a phone is held: paved or not must read there),
 with a finer dash below z15 (`RIM_DASH_FINE`, 0.75 / 0.45 casing widths; from z15 `RIM_DASH`, 1.1 /
 0.7), where the long dash on a narrow band turned into a zipper. Below z13 the rim is plain in the
@@ -210,10 +212,10 @@ the widths take the weight.
   chrome. The strong hues stay free for the route and the layers; the ochre gravel band is the route's
   nearest neighbour, which the route's white rim keeps apart. Every band fill but the ochre stays
   lighter than the open land of the straw and meadow grounds (a unit test checks it).
-- Widths: `BAND_WIDTHS`, `CASING_WIDTHS`, `LINE_WIDTHS`, `HALO_WIDTHS` (px at `ZOOMS`), `RIM_DASH`,
-  `RIM_DASH_FINE` and `FERRY_DASH` in `ways.ts`; the waterways: `WATERWAY_WIDTHS` in `basemap.ts`; the
-  fade of tracks and paths: `TRACK_FADE`; the options' factors: `WEIGHT_SCALE`, `RELIEF_SCALE` in
-  `look.ts`.
+- Widths: `BAND_WIDTHS`, `CASING_WIDTHS`, `LINE_WIDTHS`, `HALO_WIDTHS` (px at `ZOOMS`); the dashes:
+  `RIM_DASH`, `RIM_DASH_FINE`, `RIM_DASH_OPACITY`, `RIM_UNDER_TINT`, `FERRY_DASH` in `ways.ts`; the
+  waterways: `WATERWAY_WIDTHS` in `basemap.ts`; the fade of tracks and paths: `TRACK_FADE`; the
+  options' factors: `WEIGHT_SCALE`, `RELIEF_SCALE` in `look.ts`.
 - Which land use kind gets which fill: `landFills` in `basemap.ts`.
 - Relief strength: `hillshadeStrength`, `shade`, `highlight` in `carto.ts`; contour opacity and
   labels in `terrainLayers`.
