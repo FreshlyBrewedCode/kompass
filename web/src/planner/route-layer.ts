@@ -5,15 +5,28 @@
 //   error the route without the blocking limit; a compared preset's route in blue;
 // - the waypoints as draggable markers (dragging reroutes live), the timeline's cursor, a few
 //   "why this way" notes;
-// - "why not through here?" (the cost debug view): the route through the tapped point in the compared
-//   route's blue, with a ring at the point; the ghost and a compared preset step aside meanwhile.
+// - the segment inspector's way: an ink ring around it (around the route's line where the route rides
+//   it); "why not this" draws the route through it in the compared route's blue, with a ring at the
+//   point; the ghost and a compared preset step aside meanwhile;
+// - the gestures: a tap adds a waypoint; a right-click or a long press (touch) inspects the nearest way
+//   (so does a tap while the Cost layer inspects), and never adds a waypoint or opens the browser's menu.
 // It subscribes to the planner store itself and only touches the source whose data changed: a
 // slider step costs one `setData` of the main line.
-import { type GeoJSONSource, type LngLatLike, type Map as MapLibreMap, Marker } from "maplibre-gl";
+import {
+  type GeoJSONSource,
+  type LngLatLike,
+  type Map as MapLibreMap,
+  type MapMouseEvent,
+  Marker,
+} from "maplibre-gl";
 import type { RouteResult } from "@/engine/generated/types";
-import type { Theme } from "@/map/palette";
-import { RIDES_LINE } from "@/map/style";
+import { pickEdge } from "@/map/inspect";
+import { SELECTED, type Theme } from "@/map/palette";
+import { INFO_LINE, OVERLAY_SOURCE, RIDES_LINE } from "@/map/style";
+import { WAY_PICK_LAYERS } from "@/map/ways";
 import { partedBounds } from "./cost/model";
+import { LongPress, type Point } from "./inspector/gesture";
+import { type InspectTarget, midpoint, nearestPiece, onRoute } from "./inspector/model";
 import { markerText, routeNotes, SURFACE_GROUP, vertexAt, waypointLabel } from "./model";
 import { GHOST, ROUTE, ROUTE_ALT, ROUTE_CASING, surfaceColor } from "./palette";
 import type { PlannerStore, PlanState } from "./store";
@@ -21,6 +34,9 @@ import type { PlannerStore, PlanState } from "./store";
 const MAIN = "planner-main";
 const ALT = "planner-alt";
 const CURSOR = "planner-cursor";
+const INSPECT = "planner-inspect";
+/** the ring around the inspected way */
+export const INSPECT_RING = "planner-inspect-ring";
 export const MAIN_LINE = "planner-main-line";
 export const ALT_LINE = "planner-alt-line";
 export const GHOST_LINE = "planner-ghost-line";
@@ -50,6 +66,12 @@ export type LayerView = {
   padding: () => Padding;
   /** a tap on the map while something covers it (a sheet): close it instead of adding a waypoint */
   onCoveredTap: () => boolean;
+  /** the overlay's source layer (the ways, by edge id) */
+  overlay: string;
+  /** a tap inspects a way while `inspect` is on (the Cost layer), instead of the region map's panel */
+  tapInspects: boolean;
+  /** a way was asked about: right-click, long press, or a tap while the Cost layer inspects */
+  onInspect: (target: InspectTarget) => void;
 };
 
 /** Distance and duration of the route, rounded, for a marker's label. */
@@ -107,7 +129,10 @@ export class RouteLayer {
   readonly map: MapLibreMap;
   readonly #store: PlannerStore;
   #view: LayerView;
-  #applied: Partial<Record<"main" | "alt" | "cursor" | "notes", unknown>> = {};
+  #applied: Partial<Record<"main" | "alt" | "cursor" | "notes" | "inspect", unknown>> = {};
+  /** the inspected way and its pieces as the tiles have them (for the ring off the route) */
+  #inspected: { target: InspectTarget; pieces: [number, number][][] } | null = null;
+  readonly #press: LongPress;
   #markers = new Map<string, { marker: Marker; el: HTMLButtonElement }>();
   #notes: Marker[] = [];
   #via: Marker | null = null;
@@ -118,11 +143,34 @@ export class RouteLayer {
   readonly #unsubscribe: () => void;
   readonly #onStyle = () => this.#ensure();
   readonly #onClick = (event: { point: { x: number; y: number }; lngLat: { lng: number; lat: number } }) => {
+    if (this.#press.swallows()) return; // the echo of a long press
     const s = this.#store.getSnapshot();
-    if (s.inspect) return; // the region map's inspect has the tap
+    if (s.inspect) {
+      // the Cost layer inspects with a tap; an attribute layer's inspect is the region map's
+      if (this.#view.tapInspects) this.#inspectAt(event.point);
+      return;
+    }
     if (this.#view.onCoveredTap()) return;
     this.#store.addWaypointAt(event.lngLat.lng, event.lngLat.lat, placeNear(this.map, event.point));
   };
+  /** right-click (and a touch browser's long-press menu): inspect, never the browser's menu */
+  readonly #onContextMenu = (event: MapMouseEvent) => {
+    event.originalEvent.preventDefault();
+    if (this.#press.swallows()) return;
+    this.#inspectAt(event.point);
+  };
+  readonly #touchPoints = (event: TouchEvent): Point[] => {
+    const box = this.map.getCanvasContainer().getBoundingClientRect();
+    return [...event.touches].map((t) => ({ x: t.clientX - box.left, y: t.clientY - box.top }));
+  };
+  readonly #onTouchStart = (event: TouchEvent) => {
+    // a press on a marker or a note is theirs (a waypoint drags)
+    if (event.target !== this.map.getCanvas()) return this.#press.cancel();
+    this.#press.down(this.#touchPoints(event));
+  };
+  readonly #onTouchMove = (event: TouchEvent) => this.#press.move(this.#touchPoints(event));
+  readonly #onTouchEnd = () => this.#press.up();
+  readonly #onMoveStart = () => this.#press.cancel();
 
   constructor(map: MapLibreMap, store: PlannerStore, view: LayerView) {
     this.map = map;
@@ -130,11 +178,67 @@ export class RouteLayer {
     this.#view = view;
     // a restored plan fits once its route is there
     this.#fitSeq = 0;
+    this.#press = new LongPress((p) => {
+      if (this.#inspectAt(p)) navigator.vibrate?.(12);
+    });
     map.on("styledata", this.#onStyle);
     map.on("idle", this.#onStyle);
     map.on("click", this.#onClick);
+    map.on("contextmenu", this.#onContextMenu);
+    map.on("movestart", this.#onMoveStart);
+    const surface = map.getCanvasContainer();
+    surface.addEventListener("touchstart", this.#onTouchStart, { passive: true });
+    surface.addEventListener("touchmove", this.#onTouchMove, { passive: true });
+    surface.addEventListener("touchend", this.#onTouchEnd, { passive: true });
+    surface.addEventListener("touchcancel", this.#onTouchEnd, { passive: true });
     this.#ensure();
     this.#unsubscribe = store.subscribe(() => this.#sync());
+    this.#sync();
+  }
+
+  /**
+   * Inspects the way nearest to a screen point: the region map's edge picking, then the way's pieces
+   * from the tiles (the ring, and the point halfway along it that "why not this" routes through).
+   * `false`: no way there.
+   */
+  #inspectAt(point: Point): boolean {
+    const picked = pickEdge(this.map, point, [...WAY_PICK_LAYERS, INFO_LINE]);
+    if (!picked) return false;
+    const at = picked.at ?? (this.map.unproject([point.x, point.y]).toArray() as [number, number]);
+    const pieces = this.#piecesOf(picked.id);
+    const target: InspectTarget = {
+      id: picked.id,
+      at,
+      point: midpoint(nearestPiece(pieces, at) ?? []) ?? at,
+    };
+    this.#inspected = { target, pieces };
+    this.#view.onInspect(target);
+    this.#sync();
+    return true;
+  }
+
+  #piecesOf(id: number): [number, number][][] {
+    let features: ReturnType<MapLibreMap["querySourceFeatures"]> = [];
+    try {
+      features = this.map.querySourceFeatures(OVERLAY_SOURCE, {
+        sourceLayer: this.#view.overlay,
+        filter: ["==", ["id"], id],
+      });
+    } catch {
+      return [];
+    }
+    return features.flatMap((f) => {
+      const g = f.geometry;
+      if (g.type === "LineString") return [g.coordinates as [number, number][]];
+      if (g.type === "MultiLineString") return g.coordinates as [number, number][][];
+      return [];
+    });
+  }
+
+  /** The way the inspector shows (`null`: none); a target not picked here gets its pieces from the tiles. */
+  setInspected(target: InspectTarget | null) {
+    if (target?.id === this.#inspected?.target.id && target?.point === this.#inspected?.target.point) return;
+    this.#inspected = target ? { target, pieces: this.#piecesOf(target.id) } : null;
     this.#sync();
   }
 
@@ -156,6 +260,7 @@ export class RouteLayer {
       map.addSource(ALT, { type: "geojson", data: collection([]) });
       map.addSource(MAIN, { type: "geojson", data: collection([]) });
       map.addSource(CURSOR, { type: "geojson", data: collection([]) });
+      map.addSource(INSPECT, { type: "geojson", data: collection([]) });
     } catch {
       return; // the style is still loading: the next styledata / idle event tries again
     }
@@ -186,6 +291,7 @@ export class RouteLayer {
     );
     map.addLayer({ id: MAIN_CASING, type: "line", source: MAIN, layout: round, paint: {} }, before);
     map.addLayer({ id: MAIN_LINE, type: "line", source: MAIN, layout: round, paint: {} }, before);
+    map.addLayer({ id: INSPECT_RING, type: "line", source: INSPECT, layout: round, paint: {} }, before);
     map.addLayer({ id: CURSOR_DOT, type: "circle", source: CURSOR, paint: {} }, before);
     this.#applied = {};
     this.#paint();
@@ -222,6 +328,20 @@ export class RouteLayer {
     set(GHOST_LINE, "line-width", w(2.5, 3.5));
     set(GHOST_LINE, "line-opacity", 0.75);
     set(GHOST_LINE, "line-dasharray", [2, 1.6]);
+    // a ring with a gap: the way (or the route's line) stays readable inside it
+    set(INSPECT_RING, "line-color", SELECTED[t]);
+    set(INSPECT_RING, "line-width", w(2.5, 3.5));
+    set(INSPECT_RING, "line-gap-width", [
+      "interpolate",
+      ["linear"],
+      ["zoom"],
+      10,
+      ["match", ["get", "kind"], "route", 9 * 0.7, 5],
+      13,
+      ["match", ["get", "kind"], "route", 9, 7],
+      17,
+      ["match", ["get", "kind"], "route", 13, 14],
+    ]);
     set(CURSOR_DOT, "circle-radius", 7);
     set(CURSOR_DOT, "circle-color", ROUTE[t]);
     set(CURSOR_DOT, "circle-stroke-color", ROUTE_CASING[t]);
@@ -296,6 +416,15 @@ export class RouteLayer {
         ),
       );
     }
+    // the inspected way: around the route's line where the route rides it, else around the way
+    const inspected = this.#inspected;
+    const inspectKey = [inspected, s.main.result];
+    if (ready && changed(this.#applied.inspect, inspectKey)) {
+      this.#applied.inspect = inspectKey;
+      (map.getSource(INSPECT) as GeoJSONSource).setData(
+        collection(inspected ? inspectFeatures(inspected.target.id, inspected.pieces, s.main.result) : []),
+      );
+    }
     this.#syncMarkers(s);
     this.#syncNotes(s);
     this.#syncVia(s);
@@ -306,8 +435,11 @@ export class RouteLayer {
     if (w?.comparison && s.main.result && w.line.result && this.#fittedAt !== w.at) {
       this.#fittedAt = w.at;
       const box = partedBounds(w.comparison, s.main.result, w.line.result);
-      // after the card has laid out (the padding follows its height)
-      if (box) setTimeout(() => this.#fitBox(box, this.map.getZoom()), 120);
+      // after the card has laid out (the padding follows its height); only when part of it is out of view
+      if (box)
+        setTimeout(() => {
+          if (!this.#inView(box)) this.#fitBox(box, this.map.getZoom());
+        }, 120);
     }
     if (s.fitSeq !== this.#fitSeq && lines) {
       this.#fitSeq = s.fitSeq;
@@ -331,6 +463,19 @@ export class RouteLayer {
       n = Math.max(n, y);
     }
     this.#fitBox([w, so, e, n], 16);
+  }
+
+  /** Whether a box lies in the part of the map the chrome leaves free. */
+  #inView([w, s, e, n]: [number, number, number, number]): boolean {
+    const pad = this.#view.padding();
+    const { clientWidth: width, clientHeight: height } = this.map.getContainer();
+    return [
+      [w, s],
+      [e, n],
+    ].every((c) => {
+      const p = this.map.project(c as [number, number]);
+      return p.x >= pad.left && p.x <= width - pad.right && p.y >= pad.top && p.y <= height - pad.bottom;
+    });
   }
 
   #fitBox([w, s, e, n]: [number, number, number, number], maxZoom: number) {
@@ -451,15 +596,54 @@ export class RouteLayer {
     this.map.off("styledata", this.#onStyle);
     this.map.off("idle", this.#onStyle);
     this.map.off("click", this.#onClick);
+    this.map.off("contextmenu", this.#onContextMenu);
+    this.map.off("movestart", this.#onMoveStart);
+    this.#press.cancel();
+    const surface = this.map.getCanvasContainer();
+    surface.removeEventListener("touchstart", this.#onTouchStart);
+    surface.removeEventListener("touchmove", this.#onTouchMove);
+    surface.removeEventListener("touchend", this.#onTouchEnd);
+    surface.removeEventListener("touchcancel", this.#onTouchEnd);
     for (const { marker } of this.#markers.values()) marker.remove();
     for (const m of this.#notes) m.remove();
     this.#markers.clear();
     if (this.map.getStyle()) {
-      for (const id of [CURSOR_DOT, GHOST_LINE, MAIN_LINE, MAIN_CASING, ALT_LINE, ALT_CASING])
+      for (const id of [CURSOR_DOT, INSPECT_RING, GHOST_LINE, MAIN_LINE, MAIN_CASING, ALT_LINE, ALT_CASING])
         if (this.map.getLayer(id)) this.map.removeLayer(id);
-      for (const id of [MAIN, ALT, CURSOR]) if (this.map.getSource(id)) this.map.removeSource(id);
+      for (const id of [MAIN, ALT, CURSOR, INSPECT]) if (this.map.getSource(id)) this.map.removeSource(id);
     }
   }
+}
+
+/**
+ * The ring's features: where the route rides the edge, the route's own vertices of it (the ring then
+ * hugs the route's line); else the way's pieces from the tiles.
+ */
+function inspectFeatures(edge: number, pieces: [number, number][][], r: RouteResult | null): Feature[] {
+  const coords = r?.geometry?.coordinates;
+  if (r && coords && onRoute(edge, r.arcs)) {
+    const out: Feature[] = [];
+    r.arcs.forEach((a, i) => {
+      if (a >> 1 !== edge) return;
+      const from = r.arc_vertex[i] ?? 0;
+      const to = r.arc_vertex[i + 1] ?? coords.length - 1;
+      const line = coords.slice(from, to + 1);
+      if (line.length >= 2)
+        out.push({
+          type: "Feature",
+          properties: { kind: "route" },
+          geometry: { type: "LineString", coordinates: line },
+        });
+    });
+    if (out.length > 0) return out;
+  }
+  return pieces
+    .filter((p) => p.length >= 2)
+    .map((coordinates) => ({
+      type: "Feature" as const,
+      properties: { kind: "way" },
+      geometry: { type: "LineString" as const, coordinates },
+    }));
 }
 
 /** Whether a key (a short array of values compared by identity) differs from the last one. */

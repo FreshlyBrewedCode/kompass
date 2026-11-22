@@ -37,8 +37,10 @@ import type { PickedEdge } from "@/map/inspect";
 import type { Manifest } from "@/map/manifest";
 import { ridesState } from "@/rides/session";
 import type { RideSummary } from "@/rides/types";
-import { CostLegend, CostPanel, WhyNotCard } from "./cost/panel";
+import { CostLegend } from "./cost/panel";
 import { useCostLayer, useCostStatus } from "./cost/use-cost-layer";
+import type { InspectTarget } from "./inspector/model";
+import { Inspector } from "./inspector/panel";
 import { ExploredLegend, LayersPanel, Legend } from "./layers-panel";
 import { presetName, waypointLabel } from "./model";
 import { dataVars } from "./palette";
@@ -143,11 +145,12 @@ type Slots = {
   layers: ReactNode;
   /** the active layer's legend for the pill (`null`: the plain map) */
   legend: { name: string; body: ReactNode } | null;
-  picked: PickedEdge | null;
+  /** what the inspect slot shows: a way of the region map's inspect or the segment inspector's */
+  picked: PickedEdge | InspectTarget | null;
   inspectCard: ReactNode;
   /** what the inspect banner asks for (the Cost layer: a way's cost) */
   inspectText: string;
-  /** the cost panel is open: it says what a tap does (the phone has no room for the banner too) */
+  /** the segment inspector is open: it says what a tap does (the phone has no room for the banner too) */
   costPicked: boolean;
   ridesCount: number;
   onRetry: () => void;
@@ -169,6 +172,8 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
   const [terrain, setTerrain] = useState(() => flag("terrain"));
   const [routes, setRoutes] = useState(() => flag("routes"));
   const [picked, setPicked] = useState<PickedEdge | null>(null);
+  // the segment inspector's way (right-click, long press, a tap on the Cost layer)
+  const [inspected, setInspected] = useState<InspectTarget | null>(null);
   const [mapError, setMapError] = useState<string | null>(null);
   const [map, setMap] = useState<MapLibreMap | null>(null);
   const mapRef = useRef<MapHandle>(null);
@@ -267,7 +272,8 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
     const left = mode === "desk" ? 372 : 340;
     return {
       top: 96,
-      bottom: mode === "desk" ? 90 : stackH + 50,
+      // the segment inspector stands at the bottom beside the route card: the map above it stays free
+      bottom: inspected ? Math.round(h * 0.5) + 76 : mode === "desk" ? 90 : stackH + 50,
       left: left + 56,
       right: mode === "desk" ? 404 + 56 : 56,
     };
@@ -285,6 +291,14 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
       }
       return false;
     },
+    overlay: manifest.overlay.layer,
+    tapInspects: info.kind === "cost",
+    onInspect: (target) => {
+      mapRef.current?.clearSelection();
+      // on the phone the inspector takes the summary card's place: no sheet over it
+      if (mode !== "desk") store.open(null);
+      setInspected(target);
+    },
   };
   useEffect(() => {
     if (!map || !view.current) return;
@@ -293,6 +307,7 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
       ...current,
       padding: () => view.current?.padding() ?? current.padding(),
       onCoveredTap: () => view.current?.onCoveredTap() ?? false,
+      onInspect: (t) => view.current?.onInspect(t),
     });
     layerRef.current = layer;
     return () => {
@@ -308,8 +323,11 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
       ...current,
       padding: () => view.current?.padding() ?? current.padding(),
       onCoveredTap: () => view.current?.onCoveredTap() ?? false,
+      onInspect: (t) => view.current?.onInspect(t),
     });
   }, [theme, info.kind, mode]);
+  useEffect(() => layerRef.current?.setInspected(inspected), [inspected]);
+  const closeInspector = useCallback(() => setInspected(null), []);
 
   const layers = useMemo<MapLayers>(() => ({ info, terrain, routes }), [info, terrain, routes]);
   const focusRide = (ride: RideSummary | null) => {
@@ -388,8 +406,11 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
             store={exploredStore}
             rides={rides.layer}
             ridesVisible={ridesVisible}
-            picking={inspect}
-            onPick={setPicked}
+            picking={inspect && info.kind !== "cost"}
+            onPick={(edge) => {
+              setPicked(edge);
+              if (edge) setInspected(null);
+            }}
             onError={setMapError}
             onMap={setMap}
           />
@@ -400,24 +421,15 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
           h={h}
           layers={layersPanel}
           legend={legend}
-          picked={picked}
+          picked={inspected ?? picked}
           ridesCount={rides.rides.length}
           onRetry={loadGraph}
           onStackHeight={setStackH}
           inspectText={info.kind === "cost" ? "Tap a way for its cost" : "Tap a way to inspect it"}
-          costPicked={info.kind === "cost" && picked !== null}
+          costPicked={inspected !== null}
           inspectCard={
-            picked && info.kind === "cost" ? (
-              <CostPanel
-                edge={picked}
-                theme={theme}
-                desk={mode === "desk"}
-                onClose={() => mapRef.current?.clearSelection()}
-                onWhyNot={([lon, lat]) => {
-                  mapRef.current?.clearSelection();
-                  store.startWhyNot(lon, lat);
-                }}
-              />
+            inspected ? (
+              <Inspector target={inspected} theme={theme} desk={mode === "desk"} onClose={closeInspector} />
             ) : picked ? (
               <InspectPanel
                 manifest={manifest}
@@ -859,7 +871,6 @@ function SummaryCard({
   const store = usePlanner();
   const status = useStatus();
   const comparing = usePlan((s) => !!s.compareId);
-  const whyNot = usePlan((s) => !!s.whyNot);
   const chip = usePlan((s) => s.chip);
   const r = usePlan((s) => s.main.result);
   if (status) {
@@ -877,12 +888,6 @@ function SummaryCard({
       </section>
     );
   }
-  if (whyNot)
-    return (
-      <section className={cn(card, "max-h-[40dvh] overflow-y-auto p-3.5")} data-testid="summary">
-        <WhyNotCard />
-      </section>
-    );
   if (comparing)
     return (
       <section className={cn(card, "p-3.5")} data-testid="summary">
@@ -1359,7 +1364,6 @@ function Desk({
   useEffect(() => onStackHeight(stackH), [stackH, onStackHeight]);
   const picker = usePlan((s) => s.picker);
   const sheet = usePlan((s) => s.sheet);
-  const whyNot = usePlan((s) => !!s.whyNot);
   const left = desk ? 372 : 340;
   const right = 404;
   const top = "top-[calc(max(var(--gutter),env(safe-area-inset-top))+52px)]";
@@ -1372,27 +1376,13 @@ function Desk({
         className="top-[max(var(--gutter),env(safe-area-inset-top))] left-1/2 -translate-x-1/2"
       />
       <RouteCard left={left} mode={mode} onRetry={onRetry} />
-      {picked ? (
+      {picked && (
         <div
-          className={cn("absolute z-10 w-80", desk ? ABOVE_AGENT : BOTTOM)}
+          className={cn("absolute z-10 w-[22rem]", desk ? ABOVE_AGENT : BOTTOM)}
           style={{ left: `calc(${left}px + 2*var(--gutter))` }}
         >
           {inspectCard}
         </div>
-      ) : (
-        desk &&
-        whyNot && (
-          <section
-            className={cn(
-              card,
-              "thin-scroll absolute z-10 max-h-[64dvh] w-96 overflow-y-auto p-3.5",
-              ABOVE_AGENT,
-            )}
-            style={{ left: `calc(${left}px + 2*var(--gutter))` }}
-          >
-            <WhyNotCard />
-          </section>
-        )
       )}
       {desk ? (
         <>

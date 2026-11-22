@@ -128,9 +128,16 @@ const ADDITIVE: Record<AdditiveKind, string> = {
 export const metresText = (m: number) =>
   m >= 995 ? `${(m / 1000).toFixed(1)} km` : `${Math.max(0, Math.round(m))} m`;
 
-/** The verdict of one edge, in plain words: why the router likes it, avoids it or never takes it. */
-export function edgeVerdict(x: EdgeExplanation, catalogue: Catalogue | null): Verdict {
-  const best = betterArc(x);
+/**
+ * The verdict of one edge, in plain words: why the router likes it, avoids it or never takes it.
+ * `focus`: the direction to judge (the one the route rides); the cheaper open one by default.
+ */
+export function edgeVerdict(
+  x: EdgeExplanation,
+  catalogue: Catalogue | null,
+  focus?: ArcCostExplanation,
+): Verdict {
+  const best = focus && isOpen(focus) ? focus : betterArc(x);
   if (!best) {
     // closed both ways: the first closure in check order names it, the rest follow
     const all = dedupe([...x.along.closed_by, ...x.against.closed_by]);
