@@ -72,6 +72,7 @@ fn the_main_presets_route_differently_on_the_fixture() {
     let route = |planner: &mut Planner, id: &str, waypoints: Vec<Waypoint>| {
         planner
             .route(&RouteRequest {
+                overrides: None,
                 waypoints,
                 profile: preset(id).unwrap().profile,
                 leg_profiles: None,

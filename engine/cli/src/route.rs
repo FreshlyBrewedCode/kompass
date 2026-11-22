@@ -133,6 +133,7 @@ pub(crate) fn run(a: &Args) -> Result<(), Failure> {
     let mut planner = Planner::new(graph);
     let why_not = a.get("--why-not").map(|v| coord("--why-not", v)).transpose()?;
     let req = RouteRequest {
+        overrides: None,
         waypoints: waypoints.clone(),
         profile: profile.clone(),
         leg_profiles: None,
@@ -183,6 +184,7 @@ pub(crate) fn run(a: &Args) -> Result<(), Failure> {
     }
     if let Some(p) = why_not {
         let forced = RouteRequest {
+            overrides: None,
             waypoints: with_via(&waypoints, p),
             ..req.clone()
         };

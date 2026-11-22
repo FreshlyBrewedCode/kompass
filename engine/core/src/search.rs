@@ -12,12 +12,14 @@
 //! Per-request costs ride on top of the compiled ones without touching them (the compiled profile
 //! stays cached): an [`Overlay`] adds metres to edges (today the reuse penalty on the edges earlier
 //! legs rode, in either direction), a [`UTurn`] to leaving a via back the way it was reached. Both
-//! only add, so the bound stays valid.
+//! only add, so the bound stays valid. The plan's edge overrides ([`crate::overrides`]) replace the
+//! cost of their arcs; the caller lowers the bound to the cheapest of them.
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 
 use crate::graph::{ArcId, EdgeId, Graph, NodeId, arc_edge};
+use crate::overrides::{Overrides, arc_cost};
 
 const NONE: u32 = u32::MAX;
 
@@ -57,9 +59,8 @@ impl Plane {
 /// before counts: a leg that starts or ends mid-edge marks only that part).
 ///
 /// A bit per edge says whether it has an entry, so an edge without one costs one bit test (the
-/// map is looked at only for the few marked edges). Per-plan edge overrides (avoid, prefer, allow
-/// an edge) fit the same shape: more entries, each with its own term; the bound then has to take
-/// the smallest factor an override allows.
+/// map is looked at only for the few marked edges). The plan's edge overrides have the same shape
+/// ([`crate::overrides::Overrides`]).
 #[derive(Debug, Clone)]
 pub struct Overlay {
     mask: Vec<u64>,
@@ -173,6 +174,8 @@ pub struct Query<'a> {
     pub overlay: Option<&'a Overlay>,
     /// The U-turn at the via this leg starts from.
     pub uturn: Option<UTurn>,
+    /// The plan's edge overrides (their arcs cost what they say instead of `costs`).
+    pub overrides: Option<&'a Overrides>,
 }
 
 /// Near a waypoint whose way a limit excludes, excluded arcs may be ridden at `max_factor` per
@@ -244,10 +247,12 @@ impl Search {
     /// Whether `starts` sit in a small pocket the profile cuts off: fewer than `limit` nodes can
     /// be reached from them over allowed arcs (`forward`; backward: reach them), none of them in
     /// `others`.
+    #[allow(clippy::too_many_arguments, reason = "the walk's inputs")]
     pub fn cut_off(
         &mut self,
         g: &Graph,
         costs: &[f32],
+        overrides: Option<&Overrides>,
         starts: &[NodeId],
         others: &[NodeId],
         limit: usize,
@@ -278,7 +283,7 @@ impl Search {
                 } else {
                     (f & crate::graph::flags::IN != 0, a ^ 1)
                 };
-                if !ok || !costs[arc as usize].is_finite() {
+                if !ok || !arc_cost(overrides, costs, arc).is_finite() {
                     continue;
                 }
                 let w = if forward { g.head(arc) } else { g.tail(arc) };
@@ -373,7 +378,7 @@ impl Search {
                 }
             }
             for a in g.out_arcs(v) {
-                let mut c = q.costs[a as usize];
+                let mut c = arc_cost(q.overrides, q.costs, a);
                 let w = g.head(a);
                 if !c.is_finite() {
                     match &q.exempt {

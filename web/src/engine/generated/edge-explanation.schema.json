@@ -46,6 +46,17 @@
     "bounds": {
       "$ref": "#/$defs/Bounds"
     },
+    "plan_override": {
+      "description": "This plan's override on the edge, if any (\"avoided in this plan\").",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/OverrideKind"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "along": {
       "description": "Along the geometry (`from → to`) and against it.",
       "$ref": "#/$defs/ArcCostExplanation"
@@ -210,6 +221,26 @@
       },
       "additionalProperties": false
     },
+    "OverrideKind": {
+      "description": "What an override does to its edge.",
+      "oneOf": [
+        {
+          "description": "Not ridden unless there is no other way ([`AVOID_M`] per full arc on top).",
+          "type": "string",
+          "const": "avoid"
+        },
+        {
+          "description": "Counts at the profile's `min_factor` (plus its additive terms); the limits do not close it.",
+          "type": "string",
+          "const": "prefer"
+        },
+        {
+          "description": "The limits do not close it (a bicycle ban and one-way still do); costed as if they were off.",
+          "type": "string",
+          "const": "allow"
+        }
+      ]
+    },
     "ArcCostExplanation": {
       "description": "One direction of an edge, explained.",
       "type": "object",
@@ -289,7 +320,7 @@
           "format": "float"
         },
         "cost": {
-          "description": "The arc's cost the router uses (metres-equivalent): `length × factor + extra_m`. Absent\nwhen closed.",
+          "description": "The arc's cost the router uses (metres-equivalent): `length × factor + extra_m`, or what this\nplan's override makes of it. Absent when closed.",
           "type": [
             "number",
             "null"
@@ -303,8 +334,23 @@
           ],
           "format": "float"
         },
+        "base_cost": {
+          "description": "With an override that changes the cost (avoid, prefer): the profile's cost without it (absent\nwhere the profile closes the arc).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
         "closed_by": {
           "description": "Everything that closes this direction (empty: open), in the order the engine checks.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Closure"
+          }
+        },
+        "lifted": {
+          "description": "The limits this plan's override (allow, prefer) lifts here: they would close it.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/Closure"

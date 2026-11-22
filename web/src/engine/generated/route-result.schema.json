@@ -62,6 +62,14 @@
       "items": {
         "type": "string"
       }
+    },
+    "overrides": {
+      "description": "The request's overrides the route rides, by edge (route order of first use): the preferred and\nallowed ways it uses, the avoided ones it could not get around.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/OverrideUse"
+      },
+      "default": []
     }
   },
   "required": [
@@ -108,7 +116,12 @@
           "format": "float"
         },
         "shape_cost": {
-          "description": "The route-shape costs on top of `cost` (`avoid_reuse`): the search minimised\n`cost + shape_cost` per leg.",
+          "description": "The route-shape costs on top of `cost` (`avoid_reuse`): the search minimised\n`cost + shape_cost` per leg (plus `override_cost`).",
+          "type": "number",
+          "format": "float"
+        },
+        "override_cost": {
+          "description": "What this plan's edge overrides added on top of `cost` (< 0 where a preferred way counts less).",
           "type": "number",
           "format": "float"
         },
@@ -142,6 +155,7 @@
         "cost",
         "reused_m",
         "shape_cost",
+        "override_cost",
         "unpaved_share",
         "unknown_surface_share",
         "main_road_m"
@@ -470,6 +484,11 @@
           "type": "number",
           "format": "float"
         },
+        "override_cost": {
+          "description": "What this plan's edge overrides added on top of `cost` (< 0 where a preferred way counts\nless), metres-equivalent.",
+          "type": "number",
+          "format": "float"
+        },
         "arcs": {
           "description": "`[first, end)` into `arcs` and `segments`.",
           "type": "array",
@@ -506,6 +525,7 @@
         "cost",
         "reused_m",
         "shape_cost",
+        "override_cost",
         "arcs",
         "segments",
         "settled"
@@ -646,6 +666,50 @@
       "required": [
         "coordinates",
         "distance_m"
+      ]
+    },
+    "OverrideUse": {
+      "description": "The overrides a route rode, by edge: what the route used (prefer, allow) or could not get around\n(avoid).",
+      "type": "object",
+      "properties": {
+        "edge": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "kind": {
+          "$ref": "#/$defs/OverrideKind"
+        },
+        "length_m": {
+          "description": "Metres of the route on it.",
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "required": [
+        "edge",
+        "kind",
+        "length_m"
+      ]
+    },
+    "OverrideKind": {
+      "description": "What an override does to its edge.",
+      "oneOf": [
+        {
+          "description": "Not ridden unless there is no other way ([`AVOID_M`] per full arc on top).",
+          "type": "string",
+          "const": "avoid"
+        },
+        {
+          "description": "Counts at the profile's `min_factor` (plus its additive terms); the limits do not close it.",
+          "type": "string",
+          "const": "prefer"
+        },
+        {
+          "description": "The limits do not close it (a bicycle ban and one-way still do); costed as if they were off.",
+          "type": "string",
+          "const": "allow"
+        }
       ]
     }
   }

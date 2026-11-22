@@ -550,6 +550,7 @@ pub fn run(args: &[String]) -> Result<(), Failure> {
             let mut lines: Vec<Option<Line>> = vec![Some(leg.clone())];
             for (_, p) in &o.profiles {
                 let req = RouteRequest {
+                    overrides: None,
                     waypoints: vec![fw.clone(), tw.clone()],
                     profile: p.clone(),
                     leg_profiles: None,
@@ -656,6 +657,7 @@ pub fn run(args: &[String]) -> Result<(), Failure> {
             if let Some(Some(route)) = lines.get(1) {
                 let cmp = planner
                     .compare(&CompareRequest {
+                        overrides: None,
                         profile: judge.clone(),
                         a: arcs(route),
                         b: arcs(&leg),

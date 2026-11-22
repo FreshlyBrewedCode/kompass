@@ -11,6 +11,16 @@
       "type": "integer",
       "format": "uint32",
       "minimum": 0
+    },
+    "overrides": {
+      "description": "The plan's edge overrides (only the one on `edge` matters): the explanation says what the\nrouter counts with it.",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "$ref": "#/$defs/EdgeOverride"
+      }
     }
   },
   "required": [
@@ -249,6 +259,45 @@
         }
       },
       "additionalProperties": false
+    },
+    "EdgeOverride": {
+      "description": "One edge's exception in a plan.",
+      "type": "object",
+      "properties": {
+        "edge": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "kind": {
+          "$ref": "#/$defs/OverrideKind"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "edge",
+        "kind"
+      ]
+    },
+    "OverrideKind": {
+      "description": "What an override does to its edge.",
+      "oneOf": [
+        {
+          "description": "Not ridden unless there is no other way ([`AVOID_M`] per full arc on top).",
+          "type": "string",
+          "const": "avoid"
+        },
+        {
+          "description": "Counts at the profile's `min_factor` (plus its additive terms); the limits do not close it.",
+          "type": "string",
+          "const": "prefer"
+        },
+        {
+          "description": "The limits do not close it (a bicycle ban and one-way still do); costed as if they were off.",
+          "type": "string",
+          "const": "allow"
+        }
+      ]
     }
   }
 }

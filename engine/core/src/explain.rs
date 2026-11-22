@@ -17,6 +17,7 @@ use ts_rs::TS;
 
 use crate::cost::{self, ArcBreakdown, Clamp, Confidence, CostModel, Exclusion, Role, WayKind};
 use crate::graph::{ArcId, EdgeId, Graph, arc, arc_edge};
+use crate::overrides::{self, EdgeOverride, OverrideKind, Overrides};
 use crate::personal::PersonalLayer;
 use crate::profile::{Bounds, LimitId, PrefId, Profile};
 use crate::route::{Part, Planner, Reason, RouteError, Span, SurfaceKind, diff, invalid_request};
@@ -142,9 +143,14 @@ pub struct EdgeCosts {
 /// `explainEdge`: one edge under a profile.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema, TS))]
+#[cfg_attr(feature = "schema", ts(optional_fields))]
 pub struct ExplainEdgeRequest {
     pub profile: Profile,
     pub edge: EdgeId,
+    /// The plan's edge overrides (only the one on `edge` matters): the explanation says what the
+    /// router counts with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overrides: Option<Vec<EdgeOverride>>,
 }
 
 /// An attribute's value: an enum's label, a number, a flag; `null` unknown.
@@ -272,14 +278,21 @@ pub struct ArcCostExplanation {
     pub additive: Vec<Additive>,
     /// Their sum, metres.
     pub extra_m: f32,
-    /// The arc's cost the router uses (metres-equivalent): `length × factor + extra_m`. Absent
-    /// when closed.
+    /// The arc's cost the router uses (metres-equivalent): `length × factor + extra_m`, or what this
+    /// plan's override makes of it. Absent when closed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost_per_m: Option<f32>,
+    /// With an override that changes the cost (avoid, prefer): the profile's cost without it (absent
+    /// where the profile closes the arc).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_cost: Option<f32>,
     /// Everything that closes this direction (empty: open), in the order the engine checks.
     pub closed_by: Vec<Closure>,
+    /// The limits this plan's override (allow, prefer) lifts here: they would close it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lifted: Vec<Closure>,
 }
 
 /// `explainEdge`'s answer.
@@ -302,6 +315,9 @@ pub struct EdgeExplanation {
     /// Every attribute the graph keeps for the edge.
     pub attributes: Vec<Attribute>,
     pub bounds: Bounds,
+    /// This plan's override on the edge, if any ("avoided in this plan").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_override: Option<OverrideKind>,
     /// Along the geometry (`from → to`) and against it.
     pub along: ArcCostExplanation,
     pub against: ArcCostExplanation,
@@ -309,11 +325,22 @@ pub struct EdgeExplanation {
 
 /// `compare`: two routes' arcs (`RouteResult::arcs`) under one profile.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema, TS))]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema, TS), ts(optional_fields))]
 pub struct CompareRequest {
     pub profile: Profile,
     pub a: Vec<ArcId>,
     pub b: Vec<ArcId>,
+    /// The plan's edge overrides: the sides are costed as the router counts them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overrides: Option<Vec<EdgeOverride>>,
+}
+
+/// Length on overridden edges (avoided, preferred, allowed in this plan).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema, TS))]
+pub struct OverridePart {
+    pub kind: OverrideKind,
+    pub length_m: f32,
 }
 
 /// Length on arcs the profile closes (a route through a waypoint on an excluded way, or one made
@@ -331,7 +358,8 @@ pub struct ClosedPart {
 pub struct StretchCost {
     /// `[first, end)` into that route's arcs, start and length (edges counted in full).
     pub span: Span,
-    /// Under the request's profile (closed arcs at `max_factor` per metre, as near a waypoint).
+    /// Under the request's profile and overrides (closed arcs at `max_factor` per metre, as near a
+    /// waypoint).
     pub cost: f32,
     /// The mean factor per metre (`Σ length × factor / Σ length`), additive terms not included.
     pub factor: f32,
@@ -347,6 +375,9 @@ pub struct StretchCost {
     pub ways: Vec<Part<WayKind>>,
     /// Length on closed arcs, by what closes them.
     pub closed: Vec<ClosedPart>,
+    /// Length on edges with an override of the plan, by kind.
+    #[serde(default)]
+    pub overrides: Vec<OverridePart>,
 }
 
 /// One stretch where the routes part, both sides costed.
@@ -447,12 +478,35 @@ impl Planner {
         if e as usize >= g.edge_count() {
             return Err(invalid_request(format!("edge {e} is not in the graph")));
         }
+        let list = req.overrides.as_deref().unwrap_or(&[]);
+        overrides::check(list, g.edge_count())?;
+        let mine: Vec<EdgeOverride> = list.iter().filter(|o| o.edge == e).copied().collect();
+        let ov = (!mine.is_empty()).then(|| Overrides::build(g, v.model, v.personal, v.costs, &mine));
         let (class, conf) = cost::cost_surface(g, e);
         let (traffic, alongside) = cost::traffic_level(g, e);
         let side = |reverse: bool| {
             let a = arc(e, reverse);
             let b = v.model.breakdown(g, v.personal, a);
-            arc_explanation(g, &req.profile, a, &b, v.costs[a as usize])
+            let compiled = v.costs[a as usize];
+            let mut x = arc_explanation(
+                g,
+                &req.profile,
+                a,
+                &b,
+                overrides::arc_cost(ov.as_ref(), v.costs, a),
+            );
+            if let Some(o) = &ov {
+                if o.lifted(a) {
+                    // the limits no longer close it; what still would is said as lifted
+                    let (lifted, kept) = x.closed_by.drain(..).partition(|c| c.by.limit().is_some());
+                    x.lifted = lifted;
+                    x.closed_by = kept;
+                }
+                if compiled.is_finite() && x.cost.is_some_and(|c| (c - compiled).abs() > 1e-3) {
+                    x.base_cost = Some(compiled);
+                }
+            }
+            x
         };
         Ok(EdgeExplanation {
             edge: e,
@@ -473,6 +527,7 @@ impl Planner {
             },
             attributes: attributes(g, v.personal, e),
             bounds: req.profile.bounds(),
+            plan_override: mine.first().map(|o| o.kind),
             along: side(false),
             against: side(true),
         })
@@ -491,13 +546,17 @@ impl Planner {
         {
             return Err(invalid_request(format!("arc {a} is not in the graph")));
         }
+        let list = req.overrides.as_deref().unwrap_or(&[]);
+        overrides::check(list, g.edge_count())?;
+        let ov = (!list.is_empty()).then(|| Overrides::build(g, v.model, v.personal, v.costs, list));
         let d = diff(g, &req.a, &req.b);
         let whole = |r: &[ArcId]| Span {
             arcs: [0, u32::try_from(r.len()).unwrap_or(u32::MAX)],
             start_m: 0.0,
             length_m: r.iter().map(|&a| g.length_m(arc_edge(a))).sum(),
         };
-        let cost_of = |r: &[ArcId], s: Span| stretch_cost(g, v.model, v.personal, v.costs, r, s, WHY_MAX);
+        let cost_of =
+            |r: &[ArcId], s: Span| stretch_cost(g, v.model, v.personal, v.costs, ov.as_ref(), r, s, WHY_MAX);
         Ok(RouteComparison {
             a: cost_of(&req.a, whole(&req.a)),
             b: cost_of(&req.b, whole(&req.b)),
@@ -550,18 +609,21 @@ impl Planner {
                     start_m: start[s as usize],
                     length_m: start[e as usize] - start[s as usize],
                 };
-                stretch_cost(g, v.model, v.personal, v.costs, route, span, why_max)
+                stretch_cost(g, v.model, v.personal, v.costs, None, route, span, why_max)
             })
             .collect())
     }
 }
 
-/// A stretch of a route costed under a compiled profile, its `why` cut to `why_max`.
+/// A stretch of a route costed under a compiled profile (and the plan's overrides), its `why` cut to
+/// `why_max`.
+#[allow(clippy::too_many_arguments, reason = "the stretch and what costs it")]
 fn stretch_cost(
     g: &Graph,
     model: &CostModel,
     personal: Option<&PersonalLayer>,
     costs: &[f32],
+    ov: Option<&Overrides>,
     route: &[ArcId],
     span: Span,
     why_max: usize,
@@ -572,11 +634,15 @@ fn stretch_cost(
     let mut logs: Vec<(PrefId, f32)> = Vec::new();
     let mut ways: Vec<(WayKind, f32)> = Vec::new();
     let mut closed: Vec<(ClosedBy, f32)> = Vec::new();
+    let mut overridden: Vec<(OverrideKind, f32)> = Vec::new();
     for &a in &route[first as usize..end as usize] {
         let e = arc_edge(a);
         let len = g.length_m(e);
         let b = model.breakdown(g, personal, a);
-        let c = costs[a as usize];
+        let c = overrides::arc_cost(ov, costs, a);
+        if let Some(k) = ov.and_then(|o| o.kind(e)) {
+            add_len(&mut overridden, k, len);
+        }
         let x = b.extra_m();
         let factor = if c.is_finite() {
             cost += c;
@@ -639,6 +705,10 @@ fn stretch_cost(
             .into_iter()
             .map(|(by, length_m)| ClosedPart { by, length_m })
             .collect(),
+        overrides: overridden
+            .into_iter()
+            .map(|(kind, length_m)| OverridePart { kind, length_m })
+            .collect(),
     }
 }
 
@@ -693,11 +763,13 @@ fn arc_explanation(g: &Graph, p: &Profile, a: ArcId, b: &ArcBreakdown, compiled:
         extra_m: b.extra_m(),
         cost: open.then_some(compiled),
         cost_per_m: open.then(|| compiled / len.max(0.1)),
+        base_cost: None,
         closed_by: b
             .exclusions
             .iter()
             .map(|&x| closure(g, a, b, ClosedBy::from(x)))
             .collect(),
+        lifted: Vec::new(),
     }
 }
 

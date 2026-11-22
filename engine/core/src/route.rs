@@ -12,6 +12,7 @@ use ts_rs::TS;
 use crate::attrs::SurfaceClass;
 use crate::cost::{self, CostModel, WayKind};
 use crate::graph::{ArcId, EdgeId, Graph, NodeId, arc, arc_edge, arc_is_reverse};
+use crate::overrides::{self, EdgeOverride, OverrideKind, OverrideUse, Overrides};
 use crate::personal::PersonalLayer;
 use crate::profile::{PrefId, Profile};
 use crate::search::{Exempt, Overlay, Plane, Query, Search, UTurn};
@@ -131,6 +132,10 @@ pub struct RouteRequest {
     pub leg_profiles: Option<Vec<Option<Profile>>>,
     #[serde(default)]
     pub options: RouteOptions,
+    /// This plan's exceptions to the profile, by edge, for every leg (`docs/routing.md`, "This plan's
+    /// exceptions"): avoid, prefer or allow an edge. Each edge at most once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overrides: Option<Vec<EdgeOverride>>,
     /// Reserved: "somewhere through here" zones.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub via_zones: Option<Vec<Zone>>,
@@ -246,6 +251,9 @@ pub struct Leg {
     /// The route-shape costs the search added on top of `cost` (riding again, a U-turn at the via
     /// it starts from), metres-equivalent.
     pub shape_cost: f32,
+    /// What this plan's edge overrides added on top of `cost` (< 0 where a preferred way counts
+    /// less), metres-equivalent.
+    pub override_cost: f32,
     /// `[first, end)` into `arcs` and `segments`.
     pub arcs: [u32; 2],
     pub segments: [u32; 2],
@@ -268,8 +276,10 @@ pub struct Summary {
     /// Metres ridden twice: on ways an earlier leg rode (either direction).
     pub reused_m: f32,
     /// The route-shape costs on top of `cost` (`avoid_reuse`): the search minimised
-    /// `cost + shape_cost` per leg.
+    /// `cost + shape_cost` per leg (plus `override_cost`).
     pub shape_cost: f32,
+    /// What this plan's edge overrides added on top of `cost` (< 0 where a preferred way counts less).
+    pub override_cost: f32,
     /// Shares of the length, 0..1.
     pub unpaved_share: f32,
     pub unknown_surface_share: f32,
@@ -343,6 +353,10 @@ pub struct RouteResult {
     pub geometry: Option<RouteGeometry>,
     /// What to know (ignored reserved fields, waypoints on excluded ways).
     pub notes: Vec<String>,
+    /// The request's overrides the route rides, by edge (route order of first use): the preferred and
+    /// allowed ways it uses, the avoided ones it could not get around.
+    #[serde(default)]
+    pub overrides: Vec<OverrideUse>,
 }
 
 /// What went wrong.
@@ -520,6 +534,7 @@ struct LegRaw {
     cost: f32,
     reused_m: f32,
     shape_cost: f32,
+    override_cost: f32,
     settled: u32,
 }
 
@@ -664,7 +679,14 @@ impl Planner {
 
     /// Snaps a waypoint: the nearest allowed way within the radius, else the nearest way at all
     /// (exempt, its exclusion reported), else an error.
-    fn snap(&self, ci: usize, wp: &Waypoint, radius: f64, i: usize) -> Result<Endpoint, RouteError> {
+    fn snap(
+        &self,
+        ci: usize,
+        wp: &Waypoint,
+        radius: f64,
+        i: usize,
+        ov: Option<&Overrides>,
+    ) -> Result<Endpoint, RouteError> {
         let c = &self.compiled[ci];
         let at = LngLat {
             lng: wp.lon,
@@ -672,8 +694,9 @@ impl Planner {
         };
         let cands = self.grid.snap(&self.graph, at, radius, SNAP_CANDIDATES);
         let allowed = |s: &Snap| {
-            let e = s.edge as usize;
-            c.costs[e * 2].is_finite() || c.costs[e * 2 + 1].is_finite()
+            let (along, against) = (arc(s.edge, false), arc(s.edge, true));
+            overrides::arc_cost(ov, &c.costs, along).is_finite()
+                || overrides::arc_cost(ov, &c.costs, against).is_finite()
         };
         if let Some(s) = cands.iter().find(|s| allowed(s)) {
             return Ok(Endpoint {
@@ -702,12 +725,12 @@ impl Planner {
 
     /// The cost of riding a fraction of an arc from a snapped point (an exempt edge costs
     /// `max_factor` per metre; one-way still holds).
-    fn partial(&self, ci: usize, a: ArcId, fraction: f32, exempt: bool) -> f32 {
+    fn partial(&self, ci: usize, a: ArcId, fraction: f32, exempt: bool, ov: Option<&Overrides>) -> f32 {
         if fraction <= 1e-6 {
             return 0.0; // already at the node
         }
         let c = &self.compiled[ci];
-        let full = c.costs[a as usize];
+        let full = overrides::arc_cost(ov, &c.costs, a);
         if full.is_finite() {
             return full * fraction;
         }
@@ -763,6 +786,13 @@ impl Planner {
                 format!("waypoint {} is not a coordinate", w + 1),
             ));
         }
+        let list = req.overrides.as_deref().unwrap_or(&[]);
+        overrides::check(list, self.graph.edge_count())?;
+        // the overrides under each leg's profile (by its cost key), built once
+        let mut built: Vec<(String, Overrides)> = Vec::new();
+        let mut uses: Vec<OverrideUse> = Vec::new();
+        // per piece: an arc a limit closes that an override opens
+        let mut lifted: Vec<bool> = Vec::new();
         let mut notes = Vec::new();
         for (field, set) in [
             ("via_zones", req.via_zones.is_some()),
@@ -789,9 +819,19 @@ impl Planner {
         let mut models: Vec<usize> = Vec::with_capacity(n - 1);
         for l in 0..n - 1 {
             let ci = self.compile(leg_profile(l))?;
+            let oi = (!list.is_empty()).then(|| {
+                let key = leg_profile(l).cost_key();
+                built.iter().position(|(k, _)| *k == key).unwrap_or_else(|| {
+                    let c = &self.compiled[ci];
+                    let o = Overrides::build(&self.graph, &c.model, self.personal.as_ref(), &c.costs, list);
+                    built.push((key, o));
+                    built.len() - 1
+                })
+            });
+            let ov = oi.map(|i| &built[i].1);
             let (wa, wb) = (&req.waypoints[l], &req.waypoints[l + 1]);
-            let a = self.snap(ci, wa, radius, l)?;
-            let b = self.snap(ci, wb, radius, l + 1)?;
+            let a = self.snap(ci, wa, radius, l, ov)?;
+            let b = self.snap(ci, wb, radius, l + 1, ov)?;
             if l == 0 {
                 snapped.push(Self::snapped(wa, &a));
             }
@@ -815,7 +855,7 @@ impl Planner {
                     .then(|| pieces.last().map(|p| (p.arc ^ 1, reuse.u_turn_m)))
                     .flatten(),
             };
-            let (found, settled, uturn) = self.leg(ci, &a, &b, shape, &mut pieces).map_err(|mut e| {
+            let (found, settled, uturn) = self.leg(ci, &a, &b, shape, ov, &mut pieces).map_err(|mut e| {
                 e.leg = Some(u32::try_from(l).unwrap_or(u32::MAX));
                 e
             })?;
@@ -835,6 +875,29 @@ impl Planner {
                     shape_cost += reuse.u_turn_m;
                 }
             }
+            // what the overrides added (the profile's cost is without them), and which they rode
+            let mut override_cost = 0.0;
+            if let Some(o) = ov {
+                let costs = &self.compiled[ci].costs;
+                for p in leg_pieces {
+                    let e = arc_edge(p.arc);
+                    let Some(kind) = o.kind(e) else { continue };
+                    let d = o.cost(costs, p.arc) - o.base(costs, p.arc);
+                    if d.is_finite() {
+                        override_cost += d * p.fraction();
+                    }
+                    let len = self.graph.length_m(e) * p.fraction();
+                    match uses.iter_mut().find(|u| u.edge == e) {
+                        Some(u) => u.length_m += len,
+                        None => uses.push(OverrideUse {
+                            edge: e,
+                            kind,
+                            length_m: len,
+                        }),
+                    }
+                }
+            }
+            lifted.extend(leg_pieces.iter().map(|p| ov.is_some_and(|o| o.lifted(p.arc))));
             if let Some(o) = ridden.as_mut() {
                 for p in leg_pieces {
                     o.mark(arc_edge(p.arc), p.t0, p.t1);
@@ -842,15 +905,35 @@ impl Planner {
             }
             legs_raw.push(LegRaw {
                 pieces: (start, pieces.len()),
-                cost: (found - shape_cost).max(0.0),
+                cost: (found - shape_cost - override_cost).max(0.0),
                 reused_m,
                 shape_cost,
+                override_cost,
                 settled,
             });
             models.push(ci);
         }
-        let mut result = self.assemble(&pieces, &legs_raw, &models, snapped, notes, req.options.geometry);
+        let avoided: f32 = uses
+            .iter()
+            .filter(|u| u.kind == OverrideKind::Avoid)
+            .map(|u| u.length_m)
+            .sum();
+        if avoided > 0.0 {
+            notes.push(format!(
+                "{avoided:.0} m of the route are on ways this plan avoids: there is no other way, or a stop is on one"
+            ));
+        }
+        let mut result = self.assemble(
+            &pieces,
+            &lifted,
+            &legs_raw,
+            &models,
+            snapped,
+            notes,
+            req.options.geometry,
+        );
         result.breakdown.touched = self.touched(&pieces, &req.profile);
+        result.overrides = uses;
         Ok(result)
     }
 
@@ -912,6 +995,7 @@ impl Planner {
         a: &Endpoint,
         b: &Endpoint,
         shape: Shape<'_>,
+        ov: Option<&Overrides>,
         pieces: &mut Vec<Piece>,
     ) -> Result<(f32, u32, bool), RouteError> {
         let g = &self.graph;
@@ -936,12 +1020,17 @@ impl Planner {
         };
         // from the point: to `to` along the edge, to `from` against it
         let fwd_a = shaped(
-            self.partial(ci, arc(ea, false), 1.0 - ta, xa),
+            self.partial(ci, arc(ea, false), 1.0 - ta, xa, ov),
             arc(ea, false),
             ta,
             1.0,
         );
-        let bwd_a = shaped(self.partial(ci, arc(ea, true), ta, xa), arc(ea, true), 0.0, ta);
+        let bwd_a = shaped(
+            self.partial(ci, arc(ea, true), ta, xa, ov),
+            arc(ea, true),
+            0.0,
+            ta,
+        );
         let sources = [(g.to(ea), fwd_a), (g.from(ea), bwd_a)];
         // into the point: from `from` along the edge, from `to` against it (never a U-turn: the
         // U-turn is the first move from the via)
@@ -949,8 +1038,8 @@ impl Planner {
             Some(o) if cost.is_finite() => cost + o.extra(g, e, t0, t1),
             _ => cost,
         };
-        let fwd_b = into(self.partial(ci, arc(eb, false), tb, xb), eb, 0.0, tb);
-        let bwd_b = into(self.partial(ci, arc(eb, true), 1.0 - tb, xb), eb, tb, 1.0);
+        let fwd_b = into(self.partial(ci, arc(eb, false), tb, xb, ov), eb, 0.0, tb);
+        let bwd_b = into(self.partial(ci, arc(eb, true), 1.0 - tb, xb, ov), eb, tb, 1.0);
         let targets = [(g.from(eb), fwd_b), (g.to(eb), bwd_b)];
         // the direct way along one edge
         let mut direct = f32::INFINITY;
@@ -958,7 +1047,7 @@ impl Planner {
         if ea == eb {
             let rev = tb < ta;
             let p = shaped(
-                self.partial(ci, arc(ea, rev), (tb - ta).abs(), xa || xb),
+                self.partial(ci, arc(ea, rev), (tb - ta).abs(), xa || xb, ov),
                 arc(ea, rev),
                 ta,
                 tb,
@@ -986,11 +1075,11 @@ impl Planner {
         let pocket_a = !xa
             && self
                 .search
-                .cut_off(g, &c.costs, &starts, &ends, POCKET_NODES, true);
+                .cut_off(g, &c.costs, ov, &starts, &ends, POCKET_NODES, true);
         let pocket_b = !xb
             && self
                 .search
-                .cut_off(g, &c.costs, &ends, &starts, POCKET_NODES, false);
+                .cut_off(g, &c.costs, ov, &ends, &starts, POCKET_NODES, false);
         let exempt_points: Vec<(i32, i32)> = [(a, pocket_a), (b, pocket_b)]
             .iter()
             .filter(|(ep, pocket)| ep.exempt.is_some() || *pocket)
@@ -1000,7 +1089,8 @@ impl Planner {
         let mut query = Query {
             costs: &c.costs,
             plane: self.plane,
-            bound: c.bound,
+            // an override may count less than anything the compile produced
+            bound: ov.map_or(c.bound, |o| o.bound(c.bound)),
             sources: &sources,
             targets: &targets,
             target,
@@ -1019,6 +1109,7 @@ impl Planner {
                 target: [arc(eb, false), arc(eb, true)].iter().position(|&t| t == back),
                 cost,
             }),
+            overrides: ov,
         };
         let mut found = self.search.run(g, &query);
         let mut settled_all = self.search.settled;
@@ -1121,9 +1212,14 @@ impl Planner {
         clippy::too_many_lines,
         reason = "indices fit u32; one pass over the route"
     )]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the legs' pieces and what goes with them"
+    )]
     fn assemble(
         &self,
         pieces: &[Piece],
+        lifted: &[bool],
         legs_raw: &[LegRaw],
         models: &[usize],
         waypoints: Vec<Snapped>,
@@ -1143,14 +1239,14 @@ impl Planner {
         let mut excluded_m = 0.0f32;
         let mut dist = 0.0f32;
         let (mut tot_up, mut tot_down, mut tot_secs, mut tot_cost) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
-        let (mut tot_reused, mut tot_shape) = (0.0f32, 0.0f32);
+        let (mut tot_reused, mut tot_shape, mut tot_override) = (0.0f32, 0.0f32, 0.0f32);
         let mut acc = SegAcc::default();
         for (l, raw) in legs_raw.iter().enumerate() {
             let (p0, p1) = raw.pieces;
             let model = &self.compiled[models[l]].model;
             let (leg_start_arc, leg_start_seg, leg_start_m) = (arcs.len(), segments.len(), dist);
             let (mut up, mut down, mut secs) = (0.0f32, 0.0f32, 0.0f32);
-            for piece in &pieces[p0..p1] {
+            for (piece, &lifted) in pieces[p0..p1].iter().zip(&lifted[p0..p1]) {
                 let e = arc_edge(piece.arc);
                 let frac = piece.fraction();
                 let len = g.length_m(e) * frac;
@@ -1173,7 +1269,8 @@ impl Planner {
                     None => {}
                 }
                 let ex = model.explain(g, personal, piece.arc);
-                let (factor, extra) = if ex.excluded.is_some() {
+                // (an arc an override of the plan opens counts as the profile without its limits)
+                let (factor, extra) = if ex.excluded.is_some() && !lifted {
                     // ridden near a waypoint on an excluded way, to get away from it
                     excluded_m += len;
                     (model.max_factor, 0.0)
@@ -1195,6 +1292,7 @@ impl Planner {
             tot_cost += raw.cost;
             tot_reused += raw.reused_m;
             tot_shape += raw.shape_cost;
+            tot_override += raw.override_cost;
             legs.push(Leg {
                 distance_m: dist - leg_start_m,
                 ascent_m: up,
@@ -1203,6 +1301,7 @@ impl Planner {
                 cost: raw.cost,
                 reused_m: raw.reused_m,
                 shape_cost: raw.shape_cost,
+                override_cost: raw.override_cost,
                 arcs: [leg_start_arc as u32, arcs.len() as u32],
                 segments: [leg_start_seg as u32, segments.len() as u32],
                 settled: raw.settled,
@@ -1239,6 +1338,7 @@ impl Planner {
                 cost: tot_cost,
                 reused_m: tot_reused,
                 shape_cost: tot_shape,
+                override_cost: tot_override,
                 unpaved_share: unpaved / total,
                 unknown_surface_share: unknown / total,
                 main_road_m: main,
@@ -1257,6 +1357,7 @@ impl Planner {
             arc_vertex,
             geometry: with_geometry.then(|| geo.finish()),
             notes,
+            overrides: Vec::new(),
         }
     }
 

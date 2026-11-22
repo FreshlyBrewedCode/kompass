@@ -39,7 +39,7 @@
           "$ref": "#/$defs/Span"
         },
         "cost": {
-          "description": "Under the request's profile (closed arcs at `max_factor` per metre, as near a waypoint).",
+          "description": "Under the request's profile and overrides (closed arcs at `max_factor` per metre, as near a\nwaypoint).",
           "type": "number",
           "format": "float"
         },
@@ -81,6 +81,14 @@
           "items": {
             "$ref": "#/$defs/ClosedPart"
           }
+        },
+        "overrides": {
+          "description": "Length on edges with an override of the plan, by kind.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OverridePart"
+          },
+          "default": []
         }
       },
       "required": [
@@ -291,6 +299,43 @@
           "description": "Against a one-way: never.",
           "type": "string",
           "const": "oneway"
+        }
+      ]
+    },
+    "OverridePart": {
+      "description": "Length on overridden edges (avoided, preferred, allowed in this plan).",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/OverrideKind"
+        },
+        "length_m": {
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "required": [
+        "kind",
+        "length_m"
+      ]
+    },
+    "OverrideKind": {
+      "description": "What an override does to its edge.",
+      "oneOf": [
+        {
+          "description": "Not ridden unless there is no other way ([`AVOID_M`] per full arc on top).",
+          "type": "string",
+          "const": "avoid"
+        },
+        {
+          "description": "Counts at the profile's `min_factor` (plus its additive terms); the limits do not close it.",
+          "type": "string",
+          "const": "prefer"
+        },
+        {
+          "description": "The limits do not close it (a bicycle ban and one-way still do); costed as if they were off.",
+          "type": "string",
+          "const": "allow"
         }
       ]
     },

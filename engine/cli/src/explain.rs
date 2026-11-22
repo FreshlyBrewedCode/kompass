@@ -174,6 +174,7 @@ pub(crate) fn why_not(
 ) -> Result<String, Failure> {
     let c = planner
         .compare(&kompass_core::explain::CompareRequest {
+            overrides: None,
             profile: profile.clone(),
             a: a.arcs.clone(),
             b: b.arcs.clone(),
@@ -353,6 +354,7 @@ pub(crate) fn run(a: &Args) -> Result<(), Failure> {
         .map_err(|_| Failure::Usage("--edge must be an edge id".into()))?;
     let x = planner
         .explain_edge(&ExplainEdgeRequest {
+            overrides: None,
             profile: profile.clone(),
             edge,
         })
