@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Steering widgets, round 1</title>
+    <link rel="stylesheet" href="mock.css" />
+  </head>
+  <body>
+    <!-- One frame per URL: index.html?f=A-1 … D-3, fav-desktop. Without ?f: the list. -->
+    <div id="root"></div>
+    <script src="icons.js"></script>
+    <script src="shell.js"></script>
+    <script src="a.js"></script>
+    <script src="b.js"></script>
+    <script src="c.js"></script>
+    <script src="d.js"></script>
+    <script src="desktop.js"></script>
+    <script>
+      const f = new URLSearchParams(location.search).get("f");
+      document.getElementById("root").innerHTML = window.FRAMES[f]
+        ? window.FRAMES[f]()
+        : `<ul style="padding:24px 40px;line-height:28px">${Object.keys(window.FRAMES)
+            .map((k) => `<li><a href="?f=${k}">${k}</a></li>`)
+            .join("")}</ul>`;
+    </script>
+  </body>
+</html>

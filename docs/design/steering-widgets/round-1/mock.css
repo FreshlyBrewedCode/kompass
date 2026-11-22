@@ -1,0 +1,928 @@
+/* Steering widgets, round 1: static mock-ups. The chrome tokens are copied from web/src/index.css
+   (light theme), the data colours from web/src/planner/palette.ts. */
+@font-face {
+  font-family: "Manrope Variable";
+  font-style: normal;
+  font-display: block;
+  font-weight: 200 800;
+  src: url(../../../../web/node_modules/@fontsource-variable/manrope/files/manrope-latin-wght-normal.woff2)
+    format("woff2-variations");
+}
+:root {
+  --background: #f4f4f1;
+  --foreground: #161816;
+  --card: #ffffff;
+  --primary: #161816;
+  --primary-foreground: #ffffff;
+  --muted: #ecece8;
+  --muted-foreground: #5f635f;
+  --border: rgb(22 24 22 / 0.1);
+  --input: rgb(22 24 22 / 0.18);
+  --signal: #d23f18;
+  --glass: rgb(255 255 255 / 0.9);
+  --track: rgb(22 24 22 / 0.12);
+  --elev-float: 0 8px 28px rgb(0 0 0 / 0.14), 0 1px 2px rgb(0 0 0 / 0.06);
+  --elev-sheet: 0 -10px 36px rgb(0 0 0 / 0.16);
+  /* data */
+  --route: #d23f18;
+  --route-tint: rgb(210 63 24 / 0.2);
+  /* the tiers, as ink: love is full ink, dislike the lightest */
+  --t-love: #161816;
+  --t-like: rgb(22 24 22 / 0.62);
+  --t-fine: rgb(22 24 22 / 0.38);
+  --t-dislike: rgb(22 24 22 / 0.2);
+  --hatch: repeating-linear-gradient(135deg, rgb(22 24 22 / 0.09) 0 2px, transparent 2px 7px);
+}
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+html,
+body {
+  background: var(--background);
+}
+body {
+  font: 500 14px/20px "Manrope Variable", ui-sans-serif, system-ui, sans-serif;
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+b {
+  font-weight: 700;
+}
+.ic {
+  flex: none;
+  display: block;
+}
+.mut {
+  color: var(--muted-foreground);
+}
+.x2s {
+  font-size: 11px;
+  line-height: 14px;
+}
+.xs {
+  font-size: 12px;
+  line-height: 16px;
+}
+.caps {
+  font: 700 11px/14px "Manrope Variable", sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.sw {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+.dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 99px;
+  background: var(--signal);
+}
+
+/* ---------------------------------------------------------------- the phone and its sheet */
+.phone {
+  position: relative;
+  width: 390px;
+  height: 844px;
+  overflow: hidden;
+  background: #efe9d6;
+}
+.map {
+  position: absolute;
+  inset: 0;
+}
+.topbar {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.pill {
+  height: 40px;
+  min-width: 40px;
+  padding: 0 12px;
+  border-radius: 99px;
+  background: var(--glass);
+  box-shadow: var(--elev-float);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-weight: 600;
+  font-size: 13px;
+}
+.pill.round {
+  padding: 0;
+  justify-content: center;
+}
+.pill.later {
+  border: 1px dashed var(--input);
+  color: var(--muted-foreground);
+  box-shadow: none;
+}
+.sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 0 16px 10px;
+  background: #fff;
+  border-radius: 26px 26px 0 0;
+  box-shadow: var(--elev-sheet);
+  display: flex;
+  flex-direction: column;
+}
+.sheet.full {
+  top: 58px;
+}
+.sheet.full .sheet-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.sheet.full::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 28px;
+  background: linear-gradient(transparent, #fff);
+  pointer-events: none;
+}
+.sheet.docked::after {
+  display: none;
+}
+.grab {
+  width: 36px;
+  height: 4px;
+  border-radius: 9px;
+  background: var(--input);
+  margin: 8px auto 4px;
+  flex: none;
+}
+.stats {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 48px;
+}
+.stats b {
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.stats small {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  font-weight: 500;
+  margin-left: 2px;
+}
+.close {
+  margin-left: auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 99px;
+  background: var(--muted);
+  display: grid;
+  place-items: center;
+}
+.base {
+  background: var(--muted);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin: 4px 0 8px;
+}
+.base .l1 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+}
+.base .l1 span {
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+
+/* ---------------------------------------------------------------- groups (as built in #61) */
+.grp-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 50px;
+  padding: 6px 6px;
+}
+.grp-head > .ic {
+  color: var(--muted-foreground);
+}
+.grp-text {
+  flex: 1;
+  min-width: 0;
+}
+.grp-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  height: 20px;
+}
+.grp-title .cnt {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+.grp-right {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  display: flex;
+  align-items: center;
+}
+.grp-sum {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.grp.dim .grp-head {
+  opacity: 0.55;
+}
+.grp-body {
+  padding: 2px 0 14px;
+}
+
+/* ---------------------------------------------------------------- shared small parts */
+.note {
+  background: var(--muted);
+  border-radius: 12px;
+  padding: 9px 12px;
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--muted-foreground);
+}
+.note b {
+  color: var(--foreground);
+  font-weight: 700;
+}
+.seg {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 4px;
+  background: var(--muted);
+  border-radius: 14px;
+  padding: 3px;
+}
+.seg > div {
+  height: 38px;
+  border-radius: 11px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.seg > .on {
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.14);
+}
+.seg-tap {
+  /* the visible control is 44 px high with its padding */
+  min-height: 44px;
+}
+.step {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.step .btn {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+}
+.step .btn i {
+  width: 32px;
+  height: 32px;
+  border-radius: 99px;
+  background: var(--muted);
+  display: grid;
+  place-items: center;
+}
+.step .val {
+  min-width: 46px;
+  text-align: center;
+  font-weight: 700;
+  font-size: 14px;
+}
+.line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+}
+.line .grow {
+  flex: 1;
+  min-width: 0;
+}
+.line .t {
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 17px;
+}
+.line .s {
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--muted-foreground);
+}
+.hr {
+  height: 1px;
+  background: var(--border);
+  margin: 6px 0;
+}
+.total {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted-foreground);
+  padding: 2px 2px 0;
+}
+.total b {
+  color: var(--foreground);
+  font-size: 13px;
+  white-space: nowrap;
+}
+svg text {
+  font-family: "Manrope Variable", sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+/* the five tier buttons (A's picker, D's dock) */
+.tierbar {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 5px;
+}
+.tierbar > div {
+  height: 50px;
+  border-radius: 12px;
+  background: var(--muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 12.5px;
+  line-height: 15px;
+}
+.tierbar > div small {
+  font-weight: 500;
+  font-size: 10.5px;
+  line-height: 13px;
+  color: var(--muted-foreground);
+}
+.tierbar > .on {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+.tierbar > .on small {
+  color: rgb(255 255 255 / 0.7);
+}
+.tierbar > .never {
+  background: var(--hatch), var(--card);
+  box-shadow: inset 0 0 0 1px var(--input);
+}
+
+/* ---------------------------------------------------------------- A · lanes */
+.a-lane {
+  display: flex;
+  gap: 8px;
+  padding: 6px 6px 6px 10px;
+  border-radius: 12px;
+  background: var(--muted);
+  margin-bottom: 4px;
+}
+.a-lab {
+  flex: none;
+  width: 76px;
+  padding-top: 5px;
+}
+.a-lab b {
+  display: block;
+  font-size: 13px;
+  line-height: 17px;
+}
+.a-lab span {
+  display: block;
+  font-size: 10.5px;
+  line-height: 14px;
+  color: var(--muted-foreground);
+}
+.a-chips {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-content: flex-start;
+}
+.chip {
+  /* 40 px high, 4 px apart: a 44 px pitch */
+  height: 40px;
+  padding: 0 12px 0 10px;
+  border-radius: 99px;
+  background: var(--card);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.1);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.chip small {
+  font-weight: 500;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.chip.sel {
+  box-shadow: 0 0 0 2px var(--foreground), var(--elev-float);
+}
+.a-lane.never {
+  background: var(--hatch), var(--card);
+  box-shadow: inset 0 0 0 1px var(--input);
+}
+.a-lane.never .chip {
+  box-shadow: inset 0 0 0 1px var(--input);
+}
+.a-pick {
+  margin: 8px 0;
+  padding: 10px;
+  border-radius: 16px;
+  background: var(--card);
+  box-shadow: var(--elev-float);
+}
+.a-pick .h {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  margin: 0 2px 8px;
+}
+
+/* ---------------------------------------------------------------- B · matrix, equalizer */
+.b-grid {
+  display: grid;
+  grid-template-columns: 1fr 44px 4px repeat(4, 44px);
+  align-items: center;
+  position: relative;
+}
+.b-colh {
+  text-align: center;
+  font-size: 11px;
+  line-height: 14px;
+  font-weight: 700;
+  padding-bottom: 6px;
+}
+.b-colh small {
+  display: block;
+  font-size: 10px;
+  line-height: 13px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+.b-never {
+  /* the avoid column: a band of its own behind the cells */
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 180px;
+  width: 44px;
+  border-radius: 12px;
+  background: var(--hatch);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.b-rail {
+  position: absolute;
+  right: 22px;
+  width: 132px;
+  height: 2px;
+  background: var(--track);
+  margin-top: -1px;
+}
+.b-lab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  min-width: 0;
+  padding-right: 4px;
+}
+.b-lab .n {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  letter-spacing: -0.01em;
+  font-weight: 600;
+  font-size: 12.5px;
+  line-height: 15px;
+}
+.b-lab .n small {
+  display: block;
+  font-weight: 500;
+  font-size: 10.5px;
+  line-height: 12px;
+  color: var(--muted-foreground);
+}
+.b-lab .km {
+  font-size: 11px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.b-cell {
+  height: 44px;
+  display: grid;
+  place-items: center;
+  position: relative;
+}
+.b-cell i {
+  width: 8px;
+  height: 8px;
+  border-radius: 99px;
+  background: #fff;
+  box-shadow: inset 0 0 0 1.5px rgb(22 24 22 / 0.28);
+}
+.b-cell.on i {
+  width: 24px;
+  height: 24px;
+  background: var(--primary);
+  box-shadow: none;
+  display: grid;
+  place-items: center;
+  color: #fff;
+}
+.b-rowline {
+  grid-column: 1 / -1;
+  height: 1px;
+  background: var(--border);
+}
+.eq {
+  position: relative;
+  height: 286px;
+  margin-top: 10px;
+}
+.eq svg {
+  position: absolute;
+  inset: 0;
+}
+
+/* ---------------------------------------------------------------- C · ladder, dials */
+.c-div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  height: 26px;
+  padding: 8px 6px 0;
+  border-top: 1px solid var(--border);
+}
+.c-div:first-child {
+  border-top: 0;
+}
+.c-div span {
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.c-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 46px;
+  padding-left: 2px;
+}
+.c-row .grip {
+  width: 28px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  color: rgb(22 24 22 / 0.35);
+}
+.c-row .n {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 15px;
+}
+.c-row .n small {
+  display: block;
+  font-weight: 500;
+  font-size: 11px;
+  line-height: 13px;
+  color: var(--muted-foreground);
+}
+.c-row .km {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.c-row .mv {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+}
+.c-row .mv i {
+  width: 32px;
+  height: 32px;
+  border-radius: 99px;
+  background: var(--muted);
+  display: grid;
+  place-items: center;
+}
+.c-row .mv.off i {
+  background: transparent;
+  color: rgb(22 24 22 / 0.2);
+}
+.c-never {
+  margin-top: 6px;
+  border-radius: 12px;
+  background: var(--hatch), var(--card);
+  box-shadow: inset 0 0 0 1px var(--input);
+}
+.c-never .c-div {
+  border-top: 0;
+}
+.c-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.c-card {
+  height: 62px;
+  border-radius: 12px;
+  background: var(--muted);
+  padding: 8px 10px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.c-card .n {
+  font-weight: 700;
+  font-size: 13px;
+  line-height: 16px;
+}
+.c-card .s {
+  font-size: 10.5px;
+  line-height: 13px;
+  color: var(--muted-foreground);
+}
+.c-card.on {
+  background: var(--card);
+  box-shadow: inset 0 0 0 2px var(--foreground);
+}
+.dial {
+  padding: 6px 2px 0;
+}
+.dial .top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.dial .top b {
+  font-size: 13px;
+  font-weight: 600;
+}
+.dial .top .w {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.dial .bar {
+  position: relative;
+  height: 44px;
+}
+.dial .bar::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 20px;
+  height: 4px;
+  border-radius: 9px;
+  background: var(--track);
+}
+.dial .fill {
+  position: absolute;
+  left: 0;
+  top: 20px;
+  height: 4px;
+  border-radius: 9px;
+  background: var(--foreground);
+}
+.dial .knob {
+  position: absolute;
+  top: 11px;
+  width: 22px;
+  height: 22px;
+  margin-left: -11px;
+  border-radius: 99px;
+  background: #fff;
+  box-shadow: 0 0 0 2.5px var(--foreground), 0 2px 5px rgb(0 0 0 / 0.2);
+}
+.dial .ends {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10.5px;
+  line-height: 12px;
+  color: var(--muted-foreground);
+  margin-top: -6px;
+}
+
+/* ---------------------------------------------------------------- D · route first */
+.d-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 48px;
+  padding: 0 8px;
+  border-radius: 12px;
+}
+.d-row.sel {
+  box-shadow: inset 0 0 0 2px var(--foreground);
+}
+.d-row .n {
+  flex: 1;
+  min-width: 0;
+}
+.d-row .n b {
+  display: block;
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.d-row .n b small {
+  font-weight: 500;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  margin-left: 4px;
+}
+.d-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 13px;
+  color: var(--muted-foreground);
+  margin-top: 2px;
+}
+.d-bar i {
+  height: 5px;
+  border-radius: 9px;
+  min-width: 2px;
+}
+.d-tier {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  width: 62px;
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 14px;
+}
+.pips {
+  display: flex;
+  gap: 2px;
+}
+.pips i {
+  width: 12px;
+  height: 5px;
+  border-radius: 2px;
+  background: var(--track);
+}
+.pips i.on {
+  background: var(--foreground);
+}
+.d-dock {
+  flex: none;
+  margin: 0 -16px -10px;
+  padding: 10px 14px 14px;
+  background: #fff;
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -8px 20px rgb(0 0 0 / 0.07);
+}
+.d-dock .h {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--muted-foreground);
+  margin: 0 2px 8px;
+}
+.d-dock .h b {
+  color: var(--foreground);
+}
+.d-hill .val {
+  min-width: 50px;
+}
+.d-hill .g {
+  width: 92px;
+  flex: none;
+}
+.d-hill .g b {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 16px;
+}
+.d-hill .g span {
+  font-size: 11px;
+  line-height: 13px;
+  color: var(--muted-foreground);
+}
+.d-hill .on-route {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  line-height: 13px;
+  color: var(--muted-foreground);
+}
+.d-hill .on-route i {
+  display: block;
+  height: 5px;
+  border-radius: 9px;
+  background: var(--route);
+  opacity: 0.45;
+  min-width: 2px;
+  margin-bottom: 3px;
+}
+
+/* ---------------------------------------------------------------- desktop */
+.desk {
+  position: relative;
+  width: 1440px;
+  height: 900px;
+  overflow: hidden;
+  background: #efe9d6;
+}
+.desk .topbar {
+  top: 16px;
+  left: 16px;
+  right: 16px;
+}
+.card {
+  position: absolute;
+  top: 68px;
+  bottom: 16px;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: var(--elev-float);
+  padding: 16px;
+  overflow: hidden;
+}
+.card.left {
+  left: 16px;
+  width: 372px;
+  bottom: auto;
+}
+.card.right {
+  right: 16px;
+  width: 404px;
+  top: 16px;
+}
+.desk .b-lab,
+.desk .b-cell {
+  height: 31px;
+}
+.desk .b-cell.on i {
+  width: 20px;
+  height: 20px;
+}
+.desk .grp-body {
+  padding-bottom: 6px;
+}
+.desk .map {
+  width: 100%;
+  height: 100%;
+}
+.lane {
+  height: 8px;
+  border-radius: 9px;
+  overflow: hidden;
+  display: flex;
+  margin: 6px 0 12px;
+}
