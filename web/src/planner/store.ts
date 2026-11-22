@@ -32,6 +32,7 @@ import {
   type Change,
   changeSentence,
   changes,
+  dropFormerCoreZeros,
   insertIndex,
   type Limits,
   type LineBy,
@@ -317,6 +318,10 @@ export class PlannerStore {
       const base = presets.find((p) => p.id === this.#state.baseId);
       patch.weights = { ...(base?.profile.weights ?? {}) };
       patch.limits = normaliseLimits(base?.profile.limits ?? {}, catalogue);
+    } else {
+      // a plan saved while there was a core set: its stray zeros go (docs/planner.md, Persistence)
+      const base = presets.find((p) => p.id === this.#state.baseId);
+      patch.weights = dropFormerCoreZeros(this.#state.weights, base?.profile.weights);
     }
     if (this.#state.compareId && !presets.some((p) => p.id === this.#state.compareId)) patch.compareId = null;
     if (restored && restored.waypoints.length >= 2) patch.fitSeq = this.#state.fitSeq + 1;
@@ -420,7 +425,6 @@ export class PlannerStore {
   }
 
   removePref(id: PrefId) {
-    if (this.#state.catalogue?.core.includes(id)) return;
     const { [id]: _, ...rest } = this.#state.weights;
     this.#set(
       { weights: rest, chip: this.#state.chip === id ? null : this.#state.chip },
@@ -431,10 +435,8 @@ export class PlannerStore {
   /** The change dot: back to the base's value (a row the base lacks goes away). */
   resetPref(id: PrefId) {
     const b = this.#state.baseWeights[id];
-    if (b === undefined && !this.#state.catalogue?.core.includes(id)) return this.removePref(id);
-    const weights = { ...this.#state.weights };
-    if (b === undefined) delete weights[id];
-    else weights[id] = b;
+    if (b === undefined) return this.removePref(id);
+    const weights = { ...this.#state.weights, [id]: b };
     this.#set({ weights }, { route: true, save: true });
   }
 
@@ -870,7 +872,7 @@ function derive(s: PlanState): PlanState {
     baseMinFactor: baseMin,
     changes: list,
     sentence: changeSentence(presetName(base), list),
-    prefIds: prefRows(s.weights, s.catalogue?.core ?? []),
+    prefIds: prefRows(s.weights),
     limitIds: limitRows(baseLimits, s.limits),
     changed: !sameCost(
       { weights: baseWeights, limits: baseLimits, minFactor: baseMin },

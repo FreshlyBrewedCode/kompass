@@ -46,12 +46,18 @@ import {
   elevationProfile,
   fmtKm,
   fmtTime,
+  groupSummary,
   limitNumber,
   limitState,
   MIN_FACTOR_RANGE,
+  type PrefGroup,
+  prefGroups,
   presetName,
   SURFACE_GROUP,
   surfaceShares,
+  TOUCH_MIN_M,
+  touchedM,
+  touchText,
   tradeoff,
   WAY_GROUP,
   waypointLabel,
@@ -355,8 +361,10 @@ const Tag = ({ children }: { children: ReactNode }) => (
 );
 
 const isChanged = (s: PlanState, id: string) => s.changes.some((c) => c.id === id);
+/** The plan's route, when there is one (what the "touches" figures read). */
+const mainResult = (s: PlanState) => (s.main.error ? null : s.main.result);
 
-/** One soft preference: avoid ↔ seek. */
+/** One soft preference: avoid ↔ seek, and how much of the route it applies to (dimmed at nothing). */
 export function PrefRow({
   id,
   held,
@@ -372,44 +380,59 @@ export function PrefRow({
   const v = usePlan((s) => s.weights[id] ?? 0);
   const b = usePlan((s) => s.baseWeights[id]);
   const pref = usePlan((s) => s.catalogue?.preferences.find((p) => p.id === id));
-  const core = usePlan((s) => s.catalogue?.core.includes(id) ?? false);
   const changed = usePlan((s) => isChanged(s, id));
   const fresh = usePlan((s) => s.fresh === id);
+  const touched = usePlan((s) => touchedM(mainResult(s), id));
   const name = pref?.label ?? id;
   const word = weightWord(pref, v);
+  const none = touched !== null && touched < TOUCH_MIN_M;
   return (
     <div
       data-row
       data-held={held || undefined}
+      data-dim={none || undefined}
       data-testid={`pref-${id}`}
-      className={cn("rounded-control px-1 pt-1", fresh && "kp-flash")}
+      className={cn(
+        "rounded-control px-1 pt-1 transition-opacity motion-reduce:transition-none",
+        fresh && "kp-flash",
+        none && !held && "opacity-55",
+      )}
     >
       <div className="flex h-5 items-center gap-1.5">
         <ChangeDot on={changed} onClick={() => store.resetPref(id)} />
         <span className="min-w-0 truncate font-semibold text-sm">{name}</span>
-        {b === undefined && !core && <Tag>added</Tag>}
+        {b === undefined && <Tag>added</Tag>}
+        {touched !== null && (
+          <span
+            data-testid="pref-touches"
+            title={
+              none ? "Applies to nothing on this route" : `Applies to ${touchText(touched)} of this route`
+            }
+            className="shrink-0 whitespace-nowrap font-medium text-2xs text-muted-foreground tabular-nums"
+          >
+            {none ? "0 km" : touchText(touched)}
+          </span>
+        )}
         <span className="ml-auto shrink-0 whitespace-nowrap font-medium text-muted-foreground text-xs">
           {word}
         </span>
         <span className="w-8 shrink-0 text-right font-bold text-xs tabular-nums" data-testid="pref-value">
           {signed(v)}
         </span>
-        {!core && (
-          <button
-            type="button"
-            aria-label={`Remove ${name}`}
-            onClick={() => store.removePref(id)}
-            className="-mr-1.5 grid size-7 shrink-0 place-items-center text-muted-foreground hover:text-foreground"
-          >
-            <X className="size-3.5" />
-          </button>
-        )}
+        <button
+          type="button"
+          aria-label={`Remove ${name}`}
+          onClick={() => store.removePref(id)}
+          className="-mr-1.5 grid size-7 shrink-0 place-items-center text-muted-foreground hover:text-foreground"
+        >
+          <X className="size-3.5" />
+        </button>
       </div>
       <Dial
         name={name}
         word={word}
         value={v}
-        base={b ?? (core ? 0 : undefined)}
+        base={b}
         onChange={(x) => store.setWeight(id, x)}
         onGrab={() => onGrab?.(id)}
         {...(onRelease ? { onRelease } : {})}
@@ -593,7 +616,132 @@ export function DetoursRow() {
   );
 }
 
-/** The whole profile as a list: sliders, add, limits. */
+/** The slider's ends, above an opened group. */
+const DialLegend = () => (
+  <div
+    data-fade
+    className="flex justify-between px-1 pt-1 font-semibold text-2xs text-muted-foreground uppercase tracking-wider"
+  >
+    <span>← avoid</span>
+    <span>no opinion</span>
+    <span>seek →</span>
+  </div>
+);
+
+/**
+ * One group of the profile (the catalogue's, as in the picker): collapsed to a line of what is set
+ * in it, opened to its sliders. Says so when nothing in it applies to the route.
+ */
+function PrefGroupBlock({
+  group,
+  open,
+  legend,
+  onToggle,
+  held,
+  onGrab,
+  onRelease,
+}: {
+  group: PrefGroup;
+  open: boolean;
+  /** the avoid / seek legend above its sliders (the first open group only) */
+  legend: boolean;
+  onToggle: () => void;
+  held?: string | null;
+  onGrab?: (id: string) => void;
+  onRelease?: () => void;
+}) {
+  const weights = usePlan((s) => s.weights);
+  const changed = usePlan((s) => group.ids.some((id) => isChanged(s, id)));
+  // nothing in the group applies to the route (known only once the route has its figures)
+  const none = usePlan((s) => {
+    const r = mainResult(s);
+    return group.ids.every((id) => {
+      const m = touchedM(r, id);
+      return m !== null && m < TOUCH_MIN_M;
+    });
+  });
+  const Icon = GROUP_ICON[group.id];
+  const summary = groupSummary(group.ids, weights);
+  return (
+    <section data-testid={`group-${group.id}`} data-open={open || undefined} className="rounded-control">
+      <button
+        type="button"
+        data-fade
+        aria-expanded={open}
+        aria-controls={`kp-group-${group.id}`}
+        data-testid={`group-head-${group.id}`}
+        onClick={onToggle}
+        className={cn(
+          "flex min-h-12 w-full items-center gap-2.5 rounded-control px-1.5 py-1.5 text-left hover:bg-foreground/6",
+          none && !open && "opacity-55",
+        )}
+      >
+        <Icon className="size-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-1.5">
+            <span className="font-semibold text-sm">{group.label}</span>
+            {changed && (
+              <i className="size-1.5 shrink-0 rounded-full bg-signal" title="Changed against the base" />
+            )}
+            <span className="font-medium text-2xs text-muted-foreground tabular-nums">
+              {group.ids.length}
+            </span>
+            {none && (
+              <span className="ml-auto truncate text-2xs text-muted-foreground" data-testid="group-none">
+                nothing on this route
+              </span>
+            )}
+          </span>
+          <span className="block truncate text-muted-foreground text-xs" data-testid="group-summary">
+            {summary}
+          </span>
+        </span>
+        <ChevronDown
+          className={cn(
+            "size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none",
+            open && "rotate-180",
+          )}
+        />
+      </button>
+      {open && (
+        <div id={`kp-group-${group.id}`} className="space-y-0.5 pb-2 pl-1">
+          {legend && <DialLegend />}
+          {group.ids.map((id) => (
+            <PrefRow
+              key={id}
+              id={id}
+              held={held === id}
+              {...(onGrab ? { onGrab } : {})}
+              {...(onRelease ? { onRelease } : {})}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** No preference at all (the blank slate): the shortest way, and an invitation. */
+function EmptyProfile() {
+  return (
+    <div
+      data-fade
+      data-testid="profile-empty"
+      className="rounded-control border border-border border-dashed px-4 pt-4 pb-3 text-center"
+    >
+      <Sparkles className="mx-auto size-5 text-muted-foreground" />
+      <p className="mt-1.5 font-semibold text-sm">No preferences yet</p>
+      <p className="mx-auto mt-0.5 max-w-72 text-muted-foreground text-xs leading-snug">
+        The route takes the shortest way. Add what matters to you: gravel, quiet roads, forest, fewer climbs.
+      </p>
+      <div className="mt-3">
+        <AddButton />
+      </div>
+    </div>
+  );
+}
+
+/** The whole profile as a list: the preferences by group (collapsed), add, detours, limits. */
 export function ProfileList({
   held,
   onGrab,
@@ -605,30 +753,49 @@ export function ProfileList({
 }) {
   const prefIds = usePlan((s) => s.prefIds);
   const limitIds = usePlan((s) => s.limitIds);
+  const catalogue = usePlan((s) => s.catalogue);
+  const fresh = usePlan((s) => s.fresh);
+  const groups = prefGroups(prefIds, catalogue);
+  const [opened, setOpened] = useState<ReadonlySet<Group>>(() => new Set());
+  // a row just added (or flashed from the cost view) opens its group, and it stays open
+  const freshGroup = groups.find((g) => g.ids.includes(fresh as PrefId))?.id;
+  useEffect(() => {
+    if (freshGroup) setOpened((o) => (o.has(freshGroup) ? o : new Set([...o, freshGroup])));
+  }, [freshGroup]);
+  const isOpen = (id: Group) => opened.has(id) || freshGroup === id;
+  const firstOpen = groups.find((g) => isOpen(g.id))?.id;
+  const toggle = (id: Group) =>
+    setOpened((o) => {
+      const next = new Set(o);
+      if (next.has(id) || freshGroup === id) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   return (
     <div>
-      <div
-        data-fade
-        className="flex justify-between px-3 font-semibold text-2xs text-muted-foreground uppercase tracking-wider"
-      >
-        <span>← avoid</span>
-        <span>no opinion</span>
-        <span>seek →</span>
-      </div>
-      <div className="space-y-0.5">
-        {prefIds.map((id) => (
-          <PrefRow
-            key={id}
-            id={id}
-            held={held === id}
-            {...(onGrab ? { onGrab } : {})}
-            {...(onRelease ? { onRelease } : {})}
-          />
-        ))}
-      </div>
-      <div data-fade className="mt-2">
-        <AddButton />
-      </div>
+      {groups.length === 0 ? (
+        <EmptyProfile />
+      ) : (
+        <>
+          <div className="space-y-0.5" data-testid="pref-groups">
+            {groups.map((g) => (
+              <PrefGroupBlock
+                key={g.id}
+                group={g}
+                open={isOpen(g.id)}
+                legend={g.id === firstOpen}
+                onToggle={() => toggle(g.id)}
+                held={held ?? null}
+                {...(onGrab ? { onGrab } : {})}
+                {...(onRelease ? { onRelease } : {})}
+              />
+            ))}
+          </div>
+          <div data-fade className="mt-2">
+            <AddButton />
+          </div>
+        </>
+      )}
       <DetoursRow />
       <div data-fade id="kp-limits" className="mt-4">
         <div className={cn(label, "flex items-center gap-1.5")}>
@@ -857,7 +1024,7 @@ export function Picker({ className }: { className?: string }) {
         label: p.label,
         hint: p.hint,
         ...(note ? { note } : {}),
-        has: p.id in weights || catalogue.core.includes(p.id),
+        has: p.id in weights,
       };
     }),
     ...catalogue.limits.map((l) => ({

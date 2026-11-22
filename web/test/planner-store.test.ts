@@ -215,3 +215,31 @@ describe("why not through here", () => {
     ]);
   });
 });
+
+describe("no core set", () => {
+  test("every preference can go; a plan saved with the core set's zeros loads without them", async () => {
+    const storage = memoryStorage();
+    storage.setItem(
+      "kompass.plan.v1",
+      JSON.stringify({
+        v: 1,
+        waypoints: [],
+        baseId: "paved_quiet",
+        weights: { unpaved: -70, quiet: 60, climb: 0, novel: 0, water: 0 },
+        limits: { paved_only: true, no_stairs: true },
+        compareId: null,
+        lineBy: "plain",
+      }),
+    );
+    const { store } = await started(storage);
+    expect(store.getSnapshot().weights).toEqual({ unpaved: -70, quiet: 60, water: 0 });
+    expect(store.getSnapshot().changes.map((c) => c.id)).toEqual(["water"]);
+    store.removePref("unpaved");
+    expect(store.getSnapshot().prefIds).toEqual(["quiet", "water"]);
+    // the change dot on a removed base row brings it back; on an added row it removes it
+    store.resetPref("unpaved");
+    store.resetPref("water");
+    expect(store.getSnapshot().weights).toEqual({ quiet: 60, unpaved: -70 });
+    expect(store.getSnapshot().changes).toEqual([]);
+  });
+});
