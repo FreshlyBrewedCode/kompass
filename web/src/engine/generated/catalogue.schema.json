@@ -29,6 +29,10 @@
     },
     "bounds": {
       "$ref": "#/$defs/BoundsInfo"
+    },
+    "turn_m": {
+      "description": "The range of `turn_m`, what a right-angle turn at a junction costs (metres-equivalent).",
+      "$ref": "#/$defs/BoundRange"
     }
   },
   "required": [
@@ -36,7 +40,8 @@
     "groups",
     "preferences",
     "limits",
-    "bounds"
+    "bounds",
+    "turn_m"
   ],
   "$defs": {
     "GroupInfo": {

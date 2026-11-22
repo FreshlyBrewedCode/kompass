@@ -2,26 +2,35 @@
 //! contraction). One [`Search`] is allocated per graph and reused: a generation counter resets it
 //! in O(1), so a query allocates nothing but its heap's growth.
 //!
+//! A label is an arc, having arrived at its head by it, because the turn cost ([`crate::turns`])
+//! depends on the way a node was reached. Beside the labels each node keeps its cheapest one so
+//! far; a label dearer than that by more than any turn can cost (a U-turn) is dominated and
+//! dropped. So with turns free the search is the plain node search (every node settles once), and
+//! with a turn cost a node settles once per way in that is worth keeping.
+//!
 //! Sources and targets are points on edges, not nodes: a search starts with labels on the source
 //! edge's end nodes (the partial arcs from the point) and ends on the target edge's end nodes plus
-//! the partial arc to the point. The bound is `factor × straight-line distance` to the target point
-//! on a plane that never overestimates (longitudes scaled by the cosine of the region's highest
-//! latitude, minus 1 % for the lengths' projection), so it is consistent and every node settles
-//! once.
+//! the partial arc to the point (and the turn onto it). The bound is `factor × straight-line
+//! distance` to the target point on a plane that never overestimates (longitudes scaled by the
+//! cosine of the region's highest latitude, minus 1 % for the lengths' projection), so it is
+//! consistent.
 //!
 //! Per-request costs ride on top of the compiled ones without touching them (the compiled profile
 //! stays cached): an [`Overlay`] adds metres to edges (today the reuse penalty on the edges earlier
-//! legs rode, in either direction), a [`UTurn`] to leaving a via back the way it was reached. Both
-//! only add, so the bound stays valid. The plan's edge overrides ([`crate::overrides`]) replace the
-//! cost of their arcs; the caller lowers the bound to the cheapest of them.
+//! legs rode, in either direction), a [`UTurn`] to leaving a via back the way it was reached, the
+//! turns to every move at a junction. All only add, so the bound stays valid. The plan's edge
+//! overrides ([`crate::overrides`]) replace the cost of their arcs; the caller lowers the bound to
+//! the cheapest of them.
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 
 use crate::graph::{ArcId, EdgeId, Graph, NodeId, arc_edge};
 use crate::overrides::{Overrides, arc_cost};
+use crate::turns::Headings;
 
-const NONE: u32 = u32::MAX;
+/// No parent: a source label (the low 31 bits of a parent).
+const NONE: u32 = u32::MAX >> 1;
 
 /// Planar metres per 1e-7 degree that never overestimate distances inside a graph.
 #[derive(Debug, Clone, Copy)]
@@ -140,15 +149,42 @@ pub struct UTurn {
     pub cost: f32,
 }
 
+/// Where a search may start: at `node`, having arrived by `arc` (the partial arc from the point,
+/// the search's state for it) at `cost`; the first turn there counts from `turn_from`'s arrival
+/// heading (`None`: no turn is charged, the route starts at the node).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Source {
+    pub node: NodeId,
+    pub arc: ArcId,
+    pub cost: f32,
+    pub turn_from: Option<ArcId>,
+}
+
+/// Where a search may end: at `node`, then `cost` to the point along `arc` (the partial arc from
+/// the node, the turn onto it charged; `None`: the point is at the node, no turn).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Target {
+    pub node: NodeId,
+    pub arc: Option<ArcId>,
+    pub cost: f32,
+}
+
+/// The turn cost of one search (`turns::shares_at`): `turn_m` per right-angle turn.
+#[derive(Debug, Clone, Copy)]
+pub struct Turns<'a> {
+    pub headings: &'a Headings,
+    pub turn_m: f32,
+}
+
 /// What one search found.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Found {
     pub cost: f32,
-    /// The source node the path starts from (an end of the source edge).
-    pub start: NodeId,
-    /// The target node it ends at (an end of the target edge).
-    pub end: NodeId,
-    /// Full arcs from `start` to `end` (empty when they are the same node).
+    /// The source the path starts from (index into [`Query::sources`]).
+    pub source: usize,
+    /// The target it ends at (index into [`Query::targets`]).
+    pub target: usize,
+    /// Full arcs from the source's node to the target's (empty when they are the same node).
     pub arcs: Vec<ArcId>,
 }
 
@@ -160,10 +196,8 @@ pub struct Query<'a> {
     pub plane: Plane,
     /// The factor of the straight-line bound (the smallest factor the profile produced).
     pub bound: f32,
-    /// `(node, cost from the source point)`.
-    pub sources: &'a [(NodeId, f32)],
-    /// `(node, cost to the target point)`.
-    pub targets: &'a [(NodeId, f32)],
+    pub sources: &'a [Source],
+    pub targets: &'a [Target],
     /// The target point, 1e-7 degrees.
     pub target: (i32, i32),
     /// A cost already known (the direct way along one edge): only something cheaper is returned.
@@ -176,6 +210,8 @@ pub struct Query<'a> {
     pub uturn: Option<UTurn>,
     /// The plan's edge overrides (their arcs cost what they say instead of `costs`).
     pub overrides: Option<&'a Overrides>,
+    /// The turn cost (`None`: turns are free).
+    pub turns: Option<Turns<'a>>,
 }
 
 /// Near a waypoint whose way a limit excludes, excluded arcs may be ridden at `max_factor` per
@@ -204,19 +240,45 @@ impl Exempt<'_> {
     }
 }
 
-/// The reusable state.
+/// The parent's top bit: the label is settled.
+const CLOSED: u32 = 1 << 31;
+
+/// The reusable state. A label is an arc, having arrived at its head by it, because the turn cost
+/// depends on it. Per node the cheapest label so far is kept beside, and a label dearer than it by more than any turn can cost is dominated and dropped:
+/// whatever it could do next, the cheaper label does for less (it may not turn back where it came
+/// from, but then the path that does is beaten where it parts from the cheaper label's own path).
+/// With free turns that is the plain node search: every node settles once.
 #[derive(Debug, Clone)]
 pub struct Search {
-    dist: Vec<f32>,
-    parent: Vec<u32>,
-    /// `generation << 1 | closed`.
-    stamp: Vec<u32>,
+    /// Per node: the stamp (`generation << 8`, its labels valid when the generation is this
+    /// search's) with the most a turn there costs in the low byte (hundredths of a turn,
+    /// [`Headings::max_share`]; kept across searches), and the cheapest label at it so far.
+    nodes: Vec<NodeLabel>,
+    /// Per arc: the cost of arriving by it, and the label it was reached from ([`NONE`]: a
+    /// source; [`CLOSED`] when settled).
+    arcs: Vec<ArcLabel>,
     generation: u32,
     heap: BinaryHeap<Reverse<u64>>,
     queue: Vec<NodeId>,
-    /// Nodes settled by the last search.
+    shares: Vec<f32>,
+    /// Labels settled by the last search.
     pub settled: usize,
 }
+
+#[derive(Debug, Clone, Copy)]
+struct NodeLabel {
+    stamp: u32,
+    min: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ArcLabel {
+    dist: f32,
+    parent: u32,
+}
+
+/// The generation lives above the stamp's low byte.
+const GEN_SHIFT: u32 = 8;
 
 #[inline]
 fn key(k: f32, v: u32) -> Reverse<u64> {
@@ -231,15 +293,29 @@ fn unkey(k: u64) -> (f32, u32) {
 }
 
 impl Search {
+    /// The state for a graph, with the most a turn costs per node (`None`: assumed the most there
+    /// is, which keeps the search exact but prunes less).
     #[must_use]
-    pub fn new(nodes: usize) -> Search {
+    pub fn new(nodes: usize, arcs: usize, headings: Option<&Headings>) -> Search {
         Search {
-            dist: vec![f32::INFINITY; nodes],
-            parent: vec![NONE; nodes],
-            stamp: vec![0; nodes],
+            nodes: (0..nodes)
+                .map(|v| NodeLabel {
+                    #[allow(clippy::cast_possible_truncation, reason = "node ids fit u32")]
+                    stamp: u32::from(headings.map_or(u8::MAX, |h| h.max_share_byte(v as NodeId))),
+                    min: f32::INFINITY,
+                })
+                .collect(),
+            arcs: vec![
+                ArcLabel {
+                    dist: f32::INFINITY,
+                    parent: NONE,
+                };
+                arcs
+            ],
             generation: 0,
             heap: BinaryHeap::new(),
             queue: Vec::new(),
+            shares: Vec::new(),
             settled: 0,
         }
     }
@@ -258,12 +334,12 @@ impl Search {
         limit: usize,
         forward: bool,
     ) -> bool {
-        self.reset(g.node_count());
+        self.reset(g);
         self.queue.clear();
         let mut seen = 0usize;
         for &s in starts {
-            if self.stamp[s as usize] >> 1 != self.generation {
-                self.label(s, 0.0, NONE);
+            if !self.seen(s) {
+                self.mark(s);
                 self.queue.push(s);
                 seen += 1;
             }
@@ -287,32 +363,31 @@ impl Search {
                     continue;
                 }
                 let w = if forward { g.head(arc) } else { g.tail(arc) };
-                if self.stamp[w as usize] >> 1 != self.generation {
-                    self.label(w, 0.0, NONE);
+                if !self.seen(w) {
+                    self.mark(w);
                     self.queue.push(w);
                     seen += 1;
                 }
             }
         }
-        seen < limit
-            && others
-                .iter()
-                .all(|&o| self.stamp[o as usize] >> 1 != self.generation)
+        seen < limit && others.iter().all(|&o| !self.seen(o))
     }
 
     /// Heap bytes held.
     #[must_use]
     pub fn heap_bytes(&self) -> usize {
-        self.dist.capacity() * 12 + self.heap.capacity() * 8
+        self.nodes.capacity() * 8 + self.arcs.capacity() * 8 + self.heap.capacity() * 8
     }
 
-    fn reset(&mut self, nodes: usize) {
-        if self.dist.len() != nodes {
-            *self = Search::new(nodes);
+    fn reset(&mut self, g: &Graph) {
+        if self.nodes.len() != g.node_count() || self.arcs.len() != g.arc_count() {
+            *self = Search::new(g.node_count(), g.arc_count(), None);
         }
         self.generation += 1;
-        if self.generation >= u32::MAX >> 1 {
-            self.stamp.fill(0);
+        if self.generation >= u32::MAX >> GEN_SHIFT {
+            for n in &mut self.nodes {
+                n.stamp &= 0xff;
+            }
             self.generation = 1;
         }
         self.heap.clear();
@@ -320,69 +395,153 @@ impl Search {
     }
 
     #[inline]
-    fn dist(&self, v: u32) -> f32 {
-        if self.stamp[v as usize] >> 1 == self.generation {
-            self.dist[v as usize]
-        } else {
-            f32::INFINITY
+    fn seen(&self, v: NodeId) -> bool {
+        self.nodes[v as usize].stamp >> GEN_SHIFT == self.generation
+    }
+
+    #[inline]
+    fn mark(&mut self, v: NodeId) {
+        let n = &mut self.nodes[v as usize];
+        n.stamp = (self.generation << GEN_SHIFT) | (n.stamp & 0xff);
+    }
+
+    /// The most a turn at `v` costs, in turns.
+    #[inline]
+    fn max_share(&self, v: NodeId) -> f32 {
+        f32::from((self.nodes[v as usize].stamp & 0xff) as u8) * 0.01
+    }
+
+    /// Makes `v`'s labels valid for this search (every arc into it unreached).
+    #[inline]
+    fn touch(&mut self, g: &Graph, v: NodeId) {
+        if self.seen(v) {
+            return;
+        }
+        self.mark(v);
+        self.nodes[v as usize].min = f32::INFINITY;
+        for &a in g.arcs_at(v).0 {
+            self.arcs[(a ^ 1) as usize] = ArcLabel {
+                dist: f32::INFINITY,
+                parent: NONE,
+            };
         }
     }
 
+    /// Labels arc `a` (into `v`) with `d` from `parent` unless it is dominated; true if labelled.
     #[inline]
-    fn closed(&self, v: u32) -> bool {
-        self.stamp[v as usize] == (self.generation << 1) | 1
+    fn label(&mut self, v: NodeId, a: ArcId, d: f32, parent: u32, slack: f32) -> bool {
+        let l = self.arcs[a as usize];
+        let n = &mut self.nodes[v as usize];
+        if d >= l.dist || l.parent & CLOSED != 0 || d > n.min + slack {
+            return false;
+        }
+        if d < n.min {
+            n.min = d;
+        }
+        self.arcs[a as usize] = ArcLabel { dist: d, parent };
+        true
     }
 
-    #[inline]
-    fn label(&mut self, v: u32, d: f32, parent: u32) {
-        self.dist[v as usize] = d;
-        self.parent[v as usize] = parent;
-        self.stamp[v as usize] = self.generation << 1;
-    }
-
-    /// A* from labelled source nodes to labelled target nodes. `None` if nothing cheaper than
-    /// `q.best` is reachable.
+    /// A* from the sources' labels to the targets. `None` if nothing cheaper than `q.best` is
+    /// reachable.
+    #[allow(clippy::too_many_lines, reason = "one search loop")]
     pub fn run(&mut self, g: &Graph, q: &Query<'_>) -> Option<Found> {
-        self.reset(g.node_count());
+        self.reset(g);
         let (plane, bound, target) = (q.plane, q.bound, q.target);
         let h = |v: NodeId| plane.dist(g.node_e7(v), target) * bound;
-        for &(s, d) in q.sources {
-            if d.is_finite() && d < self.dist(s) {
-                self.label(s, d, NONE);
-                self.heap.push(key(d + h(s), s));
+        let turn_m = q.turns.map_or(0.0, |t| t.turn_m);
+        // the most a turn at a node can cost: a label dearer than the cheapest there by more is
+        // dominated (U-turns aside: only a source may take one, at a turn's most and, at the via,
+        // the U-turn's cost on top)
+        let uturn_m = turn_m * crate::turns::MAX_SHARE;
+        let source_nodes = [0, 1].map(|i| q.sources.get(i).map_or(NONE, |s| s.node));
+        let slack_at = |me: &Search, v: NodeId| {
+            let mut x = turn_m * me.max_share(v);
+            if source_nodes.contains(&v) {
+                x += uturn_m + q.uturn.filter(|u| u.node == v).map_or(0.0, |u| u.cost);
+            }
+            x
+        };
+        for s in q.sources {
+            if s.cost.is_finite() {
+                self.touch(g, s.node);
+                let slack = slack_at(self, s.node);
+                if self.label(s.node, s.arc, s.cost, NONE, slack) {
+                    self.heap.push(key(s.cost + h(s.node), s.arc));
+                }
             }
         }
         let mut best = q.best;
-        let mut best_end = None;
+        let mut best_end: Option<(u32, usize)> = None;
+        let mut shares = std::mem::take(&mut self.shares);
+        let mut scratch = Vec::new();
         while let Some(Reverse(k)) = self.heap.pop() {
-            let (f, v) = unkey(k);
+            let (f, a) = unkey(k);
             if f >= best {
                 break;
             }
-            if self.closed(v) {
+            let li = a as usize;
+            let l = self.arcs[li];
+            if l.parent & CLOSED != 0 {
                 continue;
             }
-            self.stamp[v as usize] |= 1;
+            let v = g.head(a);
+            let dv = l.dist;
+            if dv > self.nodes[v as usize].min + slack_at(self, v) {
+                continue;
+            }
+            let is_source = l.parent == NONE;
+            self.arcs[li].parent |= CLOSED;
             self.settled += 1;
-            let dv = self.dist[v as usize];
+            // the arrival the turns count from
+            let from = if is_source {
+                q.sources.iter().find(|s| s.arc == a).and_then(|s| s.turn_from)
+            } else {
+                Some(a)
+            }
+            .filter(|&x| g.head(x) == v);
+            let turns = q.turns.filter(|_| turn_m > 0.0).zip(from);
+            match turns {
+                // (no junction: free, and only a source may turn back)
+                Some((t, x)) if is_source || g.arcs_at(v).0.len() >= 3 => {
+                    crate::turns::shares_at(g, t.headings, x, &mut shares);
+                }
+                _ => shares.clear(),
+            }
             // the via's node, still as the source labelled it
-            let uturn = q.uturn.filter(|u| u.node == v && self.parent[v as usize] == NONE);
-            for (i, &(t, tail)) in q.targets.iter().enumerate() {
-                let d = match uturn {
-                    Some(u) if u.target == Some(i) => dv + tail + u.cost,
-                    _ => dv + tail,
-                };
-                if t == v && d < best {
+            let uturn = q.uturn.filter(|u| u.node == v && is_source);
+            for (i, t) in q.targets.iter().enumerate() {
+                // (on along the target edge past the point and back: the other target is cheaper)
+                if t.node != v || (!is_source && t.arc == Some(a ^ 1)) {
+                    continue;
+                }
+                let mut d = dv + t.cost;
+                if let (Some(b), Some((tt, x))) = (t.arc, turns) {
+                    d += tt.turn_m * crate::turns::share_between(g, tt.headings, x, b, &mut scratch);
+                }
+                if let Some(u) = uturn
+                    && u.target == Some(i)
+                {
+                    d += u.cost;
+                }
+                if d < best {
                     best = d;
-                    best_end = Some(v);
+                    best_end = Some((a, i));
                 }
             }
-            for a in g.out_arcs(v) {
-                let mut c = arc_cost(q.overrides, q.costs, a);
-                let w = g.head(a);
+            let (arcs, flags) = g.arcs_at(v);
+            for (k, (&b, &fl)) in arcs.iter().zip(flags).enumerate() {
+                // no U-turns on the way (as the node search): only from the via, where the U-turn
+                // cost applies; so a dominated label is never needed to turn back where the
+                // cheaper one came from
+                if fl & crate::graph::flags::OUT == 0 || (b == a ^ 1 && !is_source) {
+                    continue;
+                }
+                let mut c = arc_cost(q.overrides, q.costs, b);
+                let w = g.head(b);
                 if !c.is_finite() {
                     match &q.exempt {
-                        Some(x) => match x.cost(g, a, w) {
+                        Some(x) => match x.cost(g, b, w) {
                             Some(cx) => c = cx,
                             None => continue,
                         },
@@ -390,36 +549,45 @@ impl Search {
                     }
                 }
                 if let Some(o) = q.overlay {
-                    let e = arc_edge(a);
+                    let e = arc_edge(b);
                     if o.marked(e) {
                         c += o.extra(g, e, 0.0, 1.0);
                     }
                 }
                 if let Some(u) = uturn
-                    && u.arc == a
+                    && u.arc == b
                 {
                     c += u.cost;
                 }
+                if let Some(&s) = shares.get(k) {
+                    c += s * turn_m;
+                }
                 let d = dv + c;
-                if d < self.dist(w) && !self.closed(w) {
-                    self.label(w, d, a);
-                    self.heap.push(key(d + h(w), w));
+                self.touch(g, w);
+                let slack = slack_at(self, w);
+                if self.label(w, b, d, a, slack) {
+                    self.heap.push(key(d + h(w), b));
                 }
             }
         }
-        let end = best_end?;
+        self.shares = shares;
+        let (end, target) = best_end?;
         let mut arcs = Vec::new();
-        let mut v = end;
-        while self.parent[v as usize] != NONE {
-            let a = self.parent[v as usize];
-            arcs.push(a);
-            v = g.tail(a);
+        let mut l = end;
+        loop {
+            let p = self.arcs[l as usize].parent & !CLOSED;
+            if p == NONE {
+                break;
+            }
+            arcs.push(l);
+            l = p;
         }
         arcs.reverse();
+        let source = q.sources.iter().position(|s| s.arc == l)?;
         Some(Found {
             cost: best,
-            start: v,
-            end,
+            source,
+            target,
             arcs,
         })
     }

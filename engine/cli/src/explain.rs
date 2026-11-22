@@ -143,11 +143,12 @@ pub(crate) fn route_explanation(
     if let Some(w) = whole.first() {
         let _ = writeln!(
             out,
-            "\nwhole route: {}, cost {}, mean factor {:.2}, extra {:.0} m{}",
+            "\nwhole route: {}, cost {}, mean factor {:.2}, extra {:.0} m{}{}",
             km(w.span.length_m),
             km(w.cost),
             w.factor,
             w.extra_m,
+            turns(w),
             closed(w)
         );
         let _ = writeln!(out, "| preference | weight | mean factor |");
@@ -203,11 +204,12 @@ pub(crate) fn why_not(
         for (name, side) in [("route", &s.a), ("point", &s.b)] {
             let _ = writeln!(
                 out,
-                "  {name}: {}, cost {}, factor {:.2}, extra {:.0} m [{}] why: {}{}",
+                "  {name}: {}, cost {}, factor {:.2}, extra {:.0} m{} [{}] why: {}{}",
                 km(side.span.length_m),
                 km(side.cost),
                 side.factor,
                 side.extra_m,
+                turns(side),
                 ways(side),
                 reasons(&side.why),
                 closed(side)
@@ -215,6 +217,20 @@ pub(crate) fn why_not(
         }
     }
     Ok(out)
+}
+
+/// ", 2 turns +40 m" (nothing without turns that cost).
+fn turns(c: &StretchCost) -> String {
+    if c.turns == 0 {
+        String::new()
+    } else {
+        format!(
+            ", {} turn{} +{:.0} m",
+            c.turns,
+            if c.turns == 1 { "" } else { "s" },
+            c.turn_cost
+        )
+    }
 }
 
 fn value(v: Option<&AttrValue>) -> String {

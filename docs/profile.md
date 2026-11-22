@@ -13,7 +13,8 @@ graph whenever it changes, and the search ([routing.md](routing.md)) runs on tha
 { "name": "Gravel explorer", "base": "gravel_explorer",
   "weights": { "unpaved": 50, "quiet": 70, "climb": 20, "forest_edge": 0 },
   "limits": { "legal_only": true, "max_grade": 14, "paved_only": false },
-  "bounds": { "min_factor": 0.5, "max_factor": 20 } }
+  "bounds": { "min_factor": 0.5, "max_factor": 20 },
+  "turn_m": 20 }
 ```
 
 - **weights**: preference id → −100 … +100: −100 avoid, +100 seek. An absent id has no opinion; an
@@ -30,6 +31,12 @@ graph whenever it changes, and the search ([routing.md](routing.md)) runs on tha
   for a way you like. The range 0.3 is validation only (the A* bound is the smallest factor a compile
   actually produced, valid for any positive value); on the demo region the Gravel explorer's smallest
   factor at 0.3 is 0.40, so a lower floor would change nothing there.
+- **turn_m**: what a right-angle turn at a junction costs, metres-equivalent, 0 … 500 (absent: the
+  default **20**; 0: turns are free). Straight on is free, a sharp turn up to twice it, a U-turn twice
+  it, leaving the through road at least half of it; a node with two edges is no junction. A fixed
+  cost like barriers, added by the search per move, not compiled (two profiles that differ only in
+  `turn_m` share one compiled cost); the catalogue gives its range and default (`turn_m`). How it is
+  counted and how 20 was chosen: [routing.md](routing.md#turns).
 - **name**, **base**: for the UI (presets have a name; a plan names the preset it came from, and the
   diff against it is computed, not stored). Routing ignores both: two profiles that differ only there
   share one compiled cost.
@@ -98,7 +105,8 @@ a paved farm track: gravel is worth a detour of about 1.35×, and the sliders ha
 
 **Additive terms** (all ≥ 0): avoiding climbs costs `−w × 25` m per metre of ascent beyond the
 deadband (25 m at −100, 10 m at −40); 15 m per barrier (gate, bollard); steps 5 m per metre plus 20 m
-(carrying); `bicycle=dismount` 2 m per metre (walking); a ferry 1000 m (waiting).
+(carrying); `bicycle=dismount` 2 m per metre (walking); a ferry 1000 m (waiting). Turns at junctions
+come on top per move (`turn_m`, above), in the route's cost but not in the per-arc cost.
 
 **Never** (whatever the profile, except near a waypoint, [routing.md](routing.md)): `bicycle=no`
 (the pipeline maps motor roads, `motorroad=yes`, to it; motorways are not in the graph at all) and
@@ -261,10 +269,11 @@ traded for any gravel detour, and `quiet` is stronger (50 → 70) against paths 
 | Paved & quiet | unpaved −70, quiet 60, cycle paths away from roads 60, main −60, cobbles −50, climb −30 | paved only, no stairs, legal only |
 | River valley | water 90, climb −60, ramps −70, quiet 40, novel −10 | no stairs |
 
-A shipped preset names only what it has an opinion on (no explicit 0, checked by a test): the zeros
+Every preset rides with the default turn cost (none sets `turn_m`; neither do saved plans, which so
+pick up the default too). A shipped preset names only what it has an opinion on (no explicit 0, checked by a test): the zeros
 the presets used to carry (`novel` 0, `unpaved` 0) were there for the former core set and routed the
 same.
-| Blank slate | none | none: the shortest way |
+| Blank slate | none | none: the shortest way (with the default turn cost) |
 
 `quiet` and "cycle paths away from roads" (`cycleway_sep`) do not count the same thing twice: the
 first is how loud it is (a path beside a quiet street is quiet), the second the kind of way (a path

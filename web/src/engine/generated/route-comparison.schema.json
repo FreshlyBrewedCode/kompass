@@ -39,7 +39,7 @@
           "$ref": "#/$defs/Span"
         },
         "cost": {
-          "description": "Under the request's profile and overrides (closed arcs at `max_factor` per metre, as near a\nwaypoint).",
+          "description": "Under the request's profile and overrides (closed arcs at `max_factor` per metre, as near a\nwaypoint), its turns included (`turn_cost`).",
           "type": "number",
           "format": "float"
         },
@@ -89,6 +89,16 @@
             "$ref": "#/$defs/OverridePart"
           },
           "default": []
+        },
+        "turns": {
+          "description": "Turns that cost something, the moves onto the stretch and off it included (where a detour\nleaves the other route and rejoins it), and what they cost (metres-equivalent, in `cost`).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "turn_cost": {
+          "type": "number",
+          "format": "float"
         }
       },
       "required": [
@@ -100,7 +110,9 @@
         "clamped_max_m",
         "why",
         "ways",
-        "closed"
+        "closed",
+        "turns",
+        "turn_cost"
       ]
     },
     "Span": {

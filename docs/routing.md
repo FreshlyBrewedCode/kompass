@@ -2,14 +2,15 @@
 
 The `route` query: waypoints in, a route with everything the planner draws out. Plain serde data on
 both sides (JSON in the browser worker; schemas and TypeScript types in `web/src/engine/generated/`).
-Code: `engine/core/src/{route,search,explain,overrides}.rs`; the cost it searches is [profile.md](profile.md).
+Code: `engine/core/src/{route,search,turns,explain,overrides}.rs`; the cost it searches is [profile.md](profile.md).
 
 ## The engine object
 
 `Planner::new(graph)` owns the loaded graph, builds the snapping grid (0.4 s for a 100 km region)
 and the edge classes (60 ms, 4.8 MB: edges grouped by their tags, so a profile is evaluated once
-per group instead of once per edge), and keeps one reusable search state (22 MB) and the last two
-compiled profiles (19 MB each: the current one and, typically, the base preset's ghost). Queries:
+per group instead of once per edge), the turn headings (0.2 s, 6.5 MB: [below](#turns)), and keeps one
+reusable search state (52 MB: a label per arc) and the last two compiled profiles (19 MB each: the
+current one and, typically, the base preset's ghost). Queries:
 
 | call | in → out |
 |---|---|
@@ -79,9 +80,9 @@ profile (which stays compiled and cached: the costs are a per-request layer, `se
   longer than turning.
 
 Both are finite and only add, so the A* bound stays valid, and an out-and-back the waypoints ask for
-(a via at a dead end, a waypoint reachable one way only) routes as before, just dearer. A U-turn at a
-dead end elsewhere in a leg is free: a node-labelled search cannot ride one (each node settles once),
-except into the target, which the turn cost (#64) will charge. Each leg is the cheapest given the
+(a via at a dead end, a waypoint reachable one way only) routes as before, just dearer. Elsewhere in a
+leg the search takes no U-turn at all (as the node search before it): only the first move from a via may
+turn back, at the U-turn cost and twice a turn ([turns](#turns)). Each leg is the cheapest given the
 legs before it (greedy, not a joint optimum; a test checks every leg against Dijkstra with the shape
 costs). The result says what it did: `summary.reused_m` and `legs[i].reused_m`, the metres on ways an
 earlier leg rode (counted with `avoid_reuse` off too), and `shape_cost`, what the search added. `cost`
@@ -158,23 +159,117 @@ allowing needs all of it, so the planner applies an exception to the whole run.
 Edge ids hold for one build of the region only: the planner saves the build id with a plan's
 exceptions and drops them on another build ([planner.md](planner.md#persistence)).
 
+## Turns
+
+Turning is not free: without a cost for it, any slightly cheaper parallel bit wins, and a route leaves
+a road for 200 m of gravel and rejoins it at once. The profile's `turn_m` ([profile.md](profile.md),
+default **20**, 0 turns it off) is what a right-angle turn at a junction costs, metres-equivalent, the
+same under every profile's factors (a fixed cost like barriers). Per move from one arc onto the next
+(`turns.rs`):
+
+- **No junction, no turn**: a node with fewer than three edges costs nothing, however it bends.
+- **By angle**: the heading change θ to the way taken counts from 30° (straight on and small kinks are
+  free), `turn_m` at 90°, twice it from 150°: `clamp((θ − 30°) / 60°, 0, 2)` turns.
+- **Leaving the through road** (not taking the straightest way on) costs at least half a turn, phased
+  in over the first 30° by which the way taken is less straight than it (a fork of near equals costs
+  next to nothing either way). Following the straightest way costs only its bend. So leaving a road at
+  45° and rejoining it at 45° costs ¾ of a turn; off and on at right angles two.
+- **A U-turn** (back along the arc just ridden) costs twice a turn, the most there is, so it never buys
+  a cheaper turn later. The search takes one only as the first move from a via (where the reuse
+  layer's U-turn cost comes on top, [above](#dont-ride-the-same-way-twice)), mid-edge or at its node.
+- The turn at a via (from the arrival onto the next leg) belongs to the next leg.
+
+The headings are a byte per adjacency slot (1.4° steps), from the geometry ~15 m from the node so a
+tiny kink at the junction does not count, built once with the planner; with the web app's lazy
+geometry (`?geometry=lazy`) they come from the straight segments (so routes there may differ a little,
+but stay the same once the geometry arrives).
+
+**The search** needs the way a node was reached by, so a label is an arc ([below](#search)). The
+result says what the turns cost: `summary.turns` / `legs[i].turns` count the moves that cost
+something, `turn_cost` what they cost; both are part of `cost`, the profile's cost of the line (the
+compiled cost of every arc plus its turns), and `shape_cost` stays the reuse layer's. `compare` and
+`stretch_costs` count them per stretch, the moves onto and off it included (where a detour leaves the
+other route and rejoins it), in its `cost`, with `turns` and `turn_cost` beside: a stretch that loses
+for two turns says "2 turns, +15 m" (the CLI's `--explain` and `--why-not` print it).
+
+**The strength, from the rider's rides** (`kompass replay`, the route-quality report's 24 legs of
+10 rides, 348 km ridden; BRouter's lines on the same legs; aggregates only):
+
+| line, `turn_m` | reproduced (all / median leg) | on ridden | ascent m / 100 km | unpaved | roadside cycle path km | beside busy road km | turns / km | zigzags | excursions |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| ridden | 100 % | 100 % | 1276 | 17 % | 54.6 | 48.4 | 1.53 | 215 | 18 |
+| Gravel explorer, 0 (before) | 36 % / 34 % | 38 % | 1700 | 47 % | 26.2 | 20.8 | 1.72 | 202 | 11 |
+| Gravel explorer, 15 | 38 % / 34 % | 40 % | 1653 | 46 % | 27.5 | 22.3 | 1.56 | 169 | 8 |
+| **Gravel explorer, 20** | **38 % / 34 %** | **40 %** | **1582** | **45 %** | **32.1** | **26.2** | **1.48** | **155** | **7** |
+| Gravel explorer, 30 | 38 % / 34 % | 40 % | 1569 | 45 % | 34.5 | 26.1 | 1.44 | 145 | 8 |
+| Gravel explorer, 60 | 38 % / 34 % | 41 % | 1574 | 42 % | 40.9 | 32.7 | 1.32 | 124 | 8 |
+| Paved & quiet, 0 (before) | 37 % / 26 % | 34 % | 1115 | 0 % | 100.4 | 82.0 | 1.56 | 244 | 19 |
+| **Paved & quiet, 20** | **37 % / 26 %** | **33 %** | **1111** | **0 %** | **98.9** | **81.2** | **1.42** | **196** | **17** |
+| Paved & quiet, 60 | 37 % / 26 % | 34 % | 1112 | 0 % | 99.0 | 82.0 | 1.27 | 163 | 13 |
+| BRouter gravel | 41 % / 34 % | 41 % | 1395 | 28 % | 46.7 | 40.1 | 1.33 | 145 | 4 |
+| BRouter trekking | 43 % / 43 % | 44 % | 1018 | 7 % | 83.0 | 68.6 | 1.15 | 141 | 9 |
+
+An **excursion** is the playtest's complaint measured: the line leaves a way, rides at most 500 m
+elsewhere and rejoins it where that way, followed straight on from where the line left it (same way
+type, no turn of 45° or more), gets in at most 1.5 times the excursion's length. On the legs they are
+few, so the seeded pairs count them too (`kompass compare`, 40 pairs of 30–60 km, the shortest way with
+turns free as the reference):
+
+| profile, `turn_m` | detour p50 / p90 | unpaved | turns / km | zigzags | excursions |
+|---|---:|---:|---:|---:|---:|
+| Gravel explorer, 0 | 1.17 / 1.20 | 55 % | 1.62 | 1270 | 45 |
+| Gravel explorer, 15 | 1.17 / 1.22 | 54 % | 1.44 | 1021 | 25 |
+| **Gravel explorer, 20** | **1.17 / 1.21** | **54 %** | **1.41** | **978** | **22** |
+| Gravel explorer, 30 | 1.17 / 1.22 | 54 % | 1.35 | 902 | 18 |
+| Gravel explorer, 60 | 1.18 / 1.21 | 53 % | 1.21 | 762 | 19 |
+| Paved & quiet, 0 | 1.21 / 1.50 | 0 % | 1.52 | 1395 | 81 |
+| **Paved & quiet, 20** | **1.20 / 1.50** | **0 %** | **1.36** | **1152** | **59** |
+| Paved & quiet, 60 | 1.21 / 1.50 | 0 % | 1.21 | 925 | 41 |
+| (shortest way) | 1.00 | 24 % | 1.19 | 897 | 37 |
+
+20 m is the knee: it halves the excursions on the pairs (45 → 22) and brings the Gravel explorer's
+turns per km to the rider's (1.72 → 1.48 against 1.53) for two points more overlap with the rides,
+less climbing and a little less unpaved, without a longer detour. Stronger costs buy few more
+excursions and push the route onto straight roadside cycle paths (+15 km beside busy roads at 60, of
+348). The zigzags were already below the rider's before and drop further: fewer quick left-right
+moves is what the turn cost is for. The excursions left are ones the profile's own preferences pay
+for (a long enough gravel piece). Leaving the through road at half a turn rather than by angle alone
+removes a few more of them (seeded pairs at 20: 24 → 22, at 30: 21 → 18) and changes nothing else.
+Paved & quiet gives up one point of "on ridden" (34 → 33 %) for 40 % fewer zigzags.
+
 ## Search
 
 Plain A* per leg (spike #4: no landmarks, no corridor, no contraction), from the snapped point to the
 snapped point: the search starts with labels on the source edge's two end nodes (the partial arcs
-from the point) and ends at the target edge's end nodes plus the partial arc into the point; two
-points on one edge also try the direct way. The bound is the straight line × the smallest factor the
-compile produced, on a plane that never overestimates, so it is consistent and every node settles
-once. The search state is reused with a generation counter: a query allocates only the result.
+from the point) and ends at the target edge's end nodes plus the partial arc into the point (and the
+turn onto it); two points on one edge also try the direct way. The bound is the straight line × the
+smallest factor the compile produced, on a plane that never overestimates, so it is consistent.
+
+A label is an **arc**, having arrived at its head by it, because the turn cost depends on it. Beside
+the labels each node keeps its cheapest label so far, and a label dearer than that by more than the
+most a turn there can cost (a byte per node, from the headings: 0 at a node that is no junction) is
+dominated and dropped. That is exact: whatever way on the dominated label could take, the cheaper one
+takes for less, except back where the cheaper one came from, and a path that does that is beaten
+where it parts from the cheaper label's own path (no U-turns on the way is what makes this hold). With
+turns free it is the plain node search (every node settles once, the same settled counts as before);
+with them a junction settles about once more per way in worth keeping. Tests check every route and leg
+against a Dijkstra over arcs with the turns, the reuse layer and the plan's overrides. The search state
+(a label per arc and per node, 8 bytes each: 52 MB for 2.3 M edges, was 22 MB) is reused with a
+generation counter: a query allocates only the result.
 
 Real region, native, release, one thread on the shared 6-core VM (`kompass bench`, 100 seeded pairs
-per bucket, routes that compile, snap, search and assemble geometry, segments and reasons):
+per bucket, routes that compile, snap, search and assemble geometry, segments and reasons), with the
+default turn cost; before it (node labels) in brackets:
 
 | route | Gravel explorer ms p50 / p95 / max | Paved & quiet | settled p50 | result JSON |
 |---|---:|---:|---:|---:|
-| ~11 km | 1.5 / 3.4 / 4.5 | 1.5 / 2.9 / 3.9 | 9 k | 22 KB |
-| ~57 km | 8.5 / 13.7 / 17.9 | 8.7 / 17.8 / 38.1 | 78 k | 91 KB |
-| ~112 km | 31.2 / 43.2 / 55.6 | 27.5 / 47.5 / 61.1 | 270 k | 173 KB |
+| ~11 km | 2.0 / 5.0 / 8.8 (1.6 / 3.6 / 4.8) | 2.1 / 4.3 / 5.6 (1.6 / 3.1 / 4.1) | 10 k (10 k) | 22 KB |
+| ~57 km | 13.3 / 22.7 / 26.8 (9.5 / 15.0 / 19.1) | 12.6 / 23.6 / 51.3 (9.2 / 18.0 / 40.2) | 94 k (87 k) | 86 KB |
+| ~112 km | 48.5 / 67.0 / 77.2 (34.4 / 47.5 / 55.9) | 39.2 / 68.2 / 82.1 (29.5 / 52.0 / 61.3) | 336 k (311 k) | 165 KB |
+
+So exact turn costs cost about 40 % more time per route (most of it per label: the turn shares at each
+junction, the larger state), 37 MB more memory and 0.2 s more when the planner is built. Turns off
+(`turn_m` 0) settle what the node search settled, at about 10 % more time (the arc-sized state).
 
 Compiling: 38 ms (Gravel explorer, per-arc climb terms), 21 ms (Paved & quiet). The spike measured
 11.0 / 16.7 ms for the search alone at 50 km and 42 ms per compile; wasm in a worker was ~1.2× native
@@ -184,8 +279,9 @@ and a 6×-throttled phone estimate ~7×.
 
 - `summary`: distance, ascent and descent (beyond the noise deadband, [profile.md](profile.md)), a
   rough duration (speed by surface, slower on narrow paths, walking on `dismount`, carrying on steps,
-  faster downhill, plus 1 h per 900 m climbed), cost (the profile's), the metres ridden twice and the
-  shape costs on top ([above](#dont-ride-the-same-way-twice)), unpaved and unknown-surface shares,
+  faster downhill, plus 1 h per 900 m climbed), cost (the profile's, turns included), the turns and what
+  they cost ([above](#turns)), the metres ridden twice and the shape costs on top
+  ([above](#dont-ride-the-same-way-twice)), unpaved and unknown-surface shares,
   main-road metres, and the never-ridden share with a personal layer.
 - `geometry` (unless `options.geometry` is false): `[lon, lat]` per vertex (1e-6°), the distance
   from the start per vertex, and the elevation per vertex (from the graph's node elevations, linear
@@ -254,7 +350,8 @@ whole routes and every `diff` stretch, each side a `StretchCost`: its span, cost
 (closed arcs at `max_factor` per metre, as near a waypoint), mean factor, additive metres, length at the
 clamp (`clamped_min_m`: the bonuses wanted it lower, more seeking changes nothing; `clamped_max_m`),
 the up to five strongest preferences (length-weighted geometric mean factor), the way types and the
-length on closed arcs by closure; per stretch `cost_delta` (b − a; > 0 is why the router took `a`) and
+length on closed arcs by closure, the turns (`turns`, `turn_cost`, in `cost`: [turns](#turns)); per
+stretch `cost_delta` (b − a; > 0 is why the router took `a`) and
 `length_delta_m`. Edges count in full (the routes' partial first and last arcs too). The `segments` of a
 route stay as they are (three reasons, no closures); `compare` is the on-demand detail.
 
@@ -284,7 +381,8 @@ alike:
 - under the first profile (the judge): its cost of every line, the length at its `min_factor` clamp, what it
   closes on each line (for the ridden line also by access tag), and per preference the length-weighted
   geometric mean factor;
-- turns (≥ 45° at a junction) per km and zigzags (a turn the other way within 300 m);
+- turns (≥ 45° at a junction) per km, zigzags (a turn the other way within 300 m) and short excursions
+  (leaving a way and rejoining it at once, [turns](#turns));
 - where the judge's route leaves the ridden line: the `compare` stretches of ≥ 300 m with a first grouping.
 
 Stdout holds numbers and ride/leg indices only; `--out-dir` gets the private detail (`legs.json` with the

@@ -106,7 +106,7 @@
           "format": "float"
         },
         "cost": {
-          "description": "The profile's cost of the route (metres-equivalent): the compiled cost of every arc ridden.",
+          "description": "The profile's cost of the route (metres-equivalent): the compiled cost of every arc ridden\nplus its turns (`turn_cost`).",
           "type": "number",
           "format": "float"
         },
@@ -122,6 +122,17 @@
         },
         "override_cost": {
           "description": "What this plan's edge overrides added on top of `cost` (< 0 where a preferred way counts less).",
+          "type": "number",
+          "format": "float"
+        },
+        "turns": {
+          "description": "Turns that cost something ([`Leg::turns`]).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "turn_cost": {
+          "description": "What they cost, metres-equivalent: part of `cost`.",
           "type": "number",
           "format": "float"
         },
@@ -156,6 +167,8 @@
         "reused_m",
         "shape_cost",
         "override_cost",
+        "turns",
+        "turn_cost",
         "unpaved_share",
         "unknown_surface_share",
         "main_road_m"
@@ -489,6 +502,17 @@
           "type": "number",
           "format": "float"
         },
+        "turns": {
+          "description": "Turns that cost something (at junctions, U-turns; the one at the via it starts from too).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "turn_cost": {
+          "description": "What they cost, metres-equivalent: part of `cost` (`turn_m` per right-angle turn).",
+          "type": "number",
+          "format": "float"
+        },
         "arcs": {
           "description": "`[first, end)` into `arcs` and `segments`.",
           "type": "array",
@@ -526,6 +550,8 @@
         "reused_m",
         "shape_cost",
         "override_cost",
+        "turns",
+        "turn_cost",
         "arcs",
         "segments",
         "settled"

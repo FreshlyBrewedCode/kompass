@@ -154,14 +154,16 @@ pub(crate) fn run(a: &Args) -> Result<(), Failure> {
         .map_err(|e| Failure::Run(e.to_string()))?;
     let s = &r.summary;
     let summary = format!(
-        "{:.1} km, +{:.0} m / -{:.0} m, {:.0} min, unpaved {:.0} %, unknown surface {:.0} %, main roads {:.1} km ({ms:.0} ms incl. compile)",
+        "{:.1} km, +{:.0} m / -{:.0} m, {:.0} min, unpaved {:.0} %, unknown surface {:.0} %, main roads {:.1} km, {} turns (+{:.0} m) ({ms:.0} ms incl. compile)",
         s.distance_m / 1000.0,
         s.ascent_m,
         s.descent_m,
         s.duration_s / 60.0,
         s.unpaved_share * 100.0,
         s.unknown_surface_share * 100.0,
-        s.main_road_m / 1000.0
+        s.main_road_m / 1000.0,
+        s.turns,
+        s.turn_cost
     );
     // the cost debug view: text on stdout, the GeoJSON only to --out
     let text = a.switch("--explain") || why_not.is_some();
