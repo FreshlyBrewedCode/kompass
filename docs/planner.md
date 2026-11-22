@@ -8,11 +8,12 @@ The screen: the region map with the planner on top, built on the consolidated de
 |---|---|
 | `store.ts` | the one state model (`PlannerStore`), its engine wiring, persistence; `usePlan(selector)` |
 | `model.ts` | pure logic: waypoint insertion, the diff against the base and its sentence, the panel's groups and their lines, what a slider touches, read-outs, the trade-off, why-notes, plan and preset parsing |
-| `route-layer.ts` | what the planner draws on the map, and the map's taps |
+| `route-layer.ts` | what the planner draws on the map, and the map's gestures (tap, right-click, long press) |
 | `parts.tsx` | the components of the design's inventory (one set for every breakpoint) |
 | `shell.tsx` | the arrangement per breakpoint (phone, tablet, desk), sheets, the chip strip; wires map, engine, rides |
 | `layers-panel.tsx` | "Map & rides": map (with the tracks legend and the key, `map-key.tsx`, and the map style options, `map-style.tsx`) / one information layer / explored / cost, toggles, inspect, the ride library |
-| `cost/` | the cost debug view: the words (`model.ts`), the key, tap panel and "why not" card (`panel.tsx`), the layer's wiring (`use-cost-layer.ts`) |
+| `inspector/` | the segment inspector: the words (`model.ts`: exchange rates, the three groups, the "why not" verdict), the long press (`gesture.ts`), the panel (`panel.tsx`) |
+| `cost/` | the cost debug view: the words of one edge and of a comparison (`model.ts`), the layer's key (`panel.tsx`), the layer's wiring (`use-cost-layer.ts`) |
 | `palette.ts` | data colours (route, compare, ghost, surface, way type, ridden) as CSS variables |
 | `gpx.ts` | the GPX writer and the export (share sheet on touch devices, else a download) |
 
@@ -76,37 +77,79 @@ knob: a press elsewhere on the track is ignored, a drag goes live after 4 px of 
 (so a vertical swipe on a row scrolls the sheet instead), the knob keeps its offset to the finger.
 Arrow keys step (a preference: 5, Shift or Page keys 25), Home / End go to the ends.
 
-**Taps**: a tap adds a waypoint, or closes the open sheet. Inspecting a way (the region map's
-`pickEdge`, `docs/map.md`) is on only while asked for: "Inspect a way" in Map & rides, available
-with an information layer; `RegionMap.setPicking` turns the map's own tap handling on and off.
+**Taps**: a tap adds a waypoint, or closes the open sheet. A **right-click** (desk) or a **long press**
+(touch: one finger held still for 500 ms, cancelled by 10 px of movement, a second finger or an early
+lift) opens the [segment inspector](#the-segment-inspector) on the nearest way, in normal planning: it
+never adds a waypoint (the click a browser sends after a long press is swallowed) and never opens the
+browser's menu. A press on a waypoint marker stays the marker's (dragging). The attribute layers'
+"Inspect a way" (Map & rides) is the region map's own tap handling (`RegionMap.setPicking`, the
+attributes panel); on the Cost layer a tap opens the segment inspector instead.
+
+## The segment inspector
+
+The hub of steering (`inspector/`, design: [design/steering.md](design/steering.md) §1): why the route
+uses a way, why it does not, and the sliders that would change it, in place. Opened by a right-click or a
+long press on any way (`RouteLayer`: the region map's `pickEdge` on the way layers, `docs/map.md`), or a
+tap while the Cost layer inspects. The way gets an ink ring (`planner-inspect-ring`, a line with a gap,
+so the way stays readable inside it): around the route's own line where the route rides it (the route's
+vertices of that edge), else around the way's pieces in the tiles. Where: the summary card's place on the
+phone (a sheet over the lower half, the map visible above it), bottom-left beside the route card on the
+desk (the map's fit then keeps the parted stretches above it). Escape or × closes it; a tap still adds a
+stop while it is open, and the inspector follows.
+
+- **The way in numbers, as an exchange rate.** `explainEdge` under the plan's profile (lane `explain`,
+  again on every profile change), the direction the route rides (else the cheaper open one): "Counts as
+  0.63× its length", "420 m count as 265 m: worth a detour of up to 1.6×" (additive terms included:
+  climbing makes a neutral way dearer than its length). A dearer way on the route: "the ways around it
+  count more". The edge verdict's notes follow (the detour limit, the gate, the other direction).
+- **Three groups of lines**: what makes it cheaper, what makes it dearer, and what could apply here but
+  is neutral now. Each line names how much the way is what the preference names ("matches 80 %",
+  "traffic 45 %", "the opposite here"), the weight, and the effect in a rider's words ("worth a 1.3×
+  detour", "counts 1.6× as long", "+120 m" for avoiding climbs, fixed costs such as barriers with no
+  slider). Neutral: an active preference that does not match this way, one at 0, and a catalogue
+  preference not in the plan that would match ("not in this plan: at its usual −80 it would count ×3.6
+  here"). Those come from a **probe**: the same edge explained with every preference at +100 (lane
+  `explain-probe`, once per way: memberships do not depend on the weights).
+- **Sliders in place.** Tapping a line opens that preference's `Dial` under it; the route and the
+  explanation follow every step. While a slider is open the lines keep their group and place (a line
+  whose value crosses into another group does not jump away under the finger). A preference not in the
+  plan joins it when its slider moves, or with "Add at +50" (its catalogue default). On the desk the
+  profile card's row flashes too.
+- **On the route: "Why the route uses this".** The above.
+- **Off the route: "Why the route does not use this".** With a route, the store's `whyNot` routes again
+  through the point halfway along the way (`whyNot` lane, the via inserted where it detours least), and
+  `compare` judges both (lane `whynot-compare`); both follow every slider move. The verdict first
+  (`whyNotVerdict`): "Not used: through here counts 1.8 km more" (the difference in cost, in kilometres),
+  the preference or limit to blame (a closure by a limit or a rule; else the preference whose log factor
+  times length differs most between the two sides, "“Low traffic” counts it dearer: ×2.1 through here
+  against ×1.0 planned", or one that favours the planned side; else the distance), "No slider can change
+  this" when the way through here would cost more even if all of it sat at the detour limit, then the
+  lengths and costs. "Use this way" adds the point as a stop (the inspector then turns to "why used").
+  The route through it is drawn in the compared route's blue with a ring at the point; the map fits where
+  they part only when that is not in view. Below: the way's own lines, and the stretches side by side,
+  folded (length, what it counts as, mean factor, main way type, top reasons, share at the clamp, closed
+  length, and the clamp's diagnosis).
+- **A way closed both ways** gets no comparison (a via snaps to an open way nearby): what closes it,
+  "No slider can change this", and "Lift “…”" where a limit of the plan closes it.
+- **No route yet**: "How this way counts", the numbers and the lines.
+- Folded at the end: the arithmetic per direction (quality × bonus through the gate → raw → clamped,
+  additive terms, what the router counts) and the way's data.
+- **Room for per-plan actions** (#59: "avoid this segment", "prefer this way"): the actions row under
+  the verdict holds what works today ("Use this way", "Lift …").
 
 ## Cost (the debug view)
 
-Why the router goes where it goes, for a rider. Three parts on the engine's cost queries
-([routing.md](routing.md#explaining-the-cost)); nothing of it is on the default screen.
+Why the router goes where it goes, over an area ([routing.md](routing.md#explaining-the-cost)); one way
+at a time is the segment inspector's job.
 
 - **The Cost layer**: one more entry in "Map & rides" (`?layer=cost`). The visible edges coloured by
   the plan's profile ([map.md](map.md#cost-layer)), recoloured on every map move and profile change
   (lane `cost`, latest wins). Its key names the scale, the clamp and what closes the closed ways in view.
-- **Tap for the breakdown**: with the layer on, a tap explains the way (inspect is on by default;
-  off, a tap adds a stop as usual). `explainEdge` on lane `explain`, again on every profile change: the
-  verdict in words first (`edgeVerdict`: "Preferred ×0.50, held by the detour limit", "Closed: legal
-  access only (access=agricultural)", "Neutral ×1.0: nothing in this profile applies"), notes on the
-  gate, additive terms and the other direction; then each active preference, strongest first (a tap
-  opens its slider right there, and flashes its row in the desk's profile card); quality × bonus → raw
-  → clamped → what the router counts, per direction when they differ; the way's data, folded.
-- **"Why not through here?"** (the panel's button, with a route planned): `whyNot` in the store. The
-  plan's route and one through the tapped point (inserted where it detours least, lane `whynot`), then
-  `compare` (lane `whynot-compare`); both follow every slider move. The second line is drawn in the
-  compared route's blue with a ring at the point, and the map fits where they part. The card
-  (`whyNot()` in `cost/model.ts`): a verdict on top, the diagnosis (closed parts; "no slider can
-  change this" when the way through here would cost more even if all of it sat at `min_factor`; both
-  sides at the clamp; a neutral planned stretch), then the stretches side by side (length, what it
-  counts as, mean factor, main way type, top reasons, share at the clamp, closed length). "Back to the
-  plan" leaves nothing behind; "Use this route" adds the point as a stop.
-
-Where: the panel and the card take the summary card's place on the phone, the bottom-left slot (above
-the agent bar) on the desk.
+- **A tap on the layer** opens the segment inspector (inspect is on by default with the layer; "Done"
+  turns it off and taps add stops again). The words of one edge (`edgeVerdict`) and of a comparison
+  (`whyNot()`: the stretches, the clamp's diagnosis) live in `cost/model.ts`.
+- The profile behind the layer, the inspector and the comparison is the plan's, Detours included
+  (`PlannerStore.profile()`).
 
 ## The preferences panel
 
