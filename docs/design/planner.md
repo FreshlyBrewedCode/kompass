@@ -110,7 +110,7 @@ All in `parts.tsx` unless noted. "Both" means identical on every breakpoint.
 | `Strip` (`Final.tsx`) | the profile as chips | chip: rest, selected, changed (dot) | above the agent bar | not used |
 | `Tune` (`Final.tsx`) | one chip's slider with hint, reroute time, done | preference, limit | in the summary card | not used (tablet: own card) |
 | `DiffBar` | profile head: name (opens the base chooser), "N changes", the changes in words, save as preset, reset | untouched, changed, choosing, naming | profile sheet | profile card |
-| `ProfileList` | all sliders, add, limits | row: rest, changed, added, held, just added | profile sheet | profile card |
+| `ProfileList` | the sliders by group (collapsed to a summary), add, detours, limits; empty: an invitation | group: collapsed, open, nothing on this route; row: rest, changed, added, held, just added, touches nothing (dimmed) | profile sheet | profile card |
 | `PrefRow`, `Dial` | one preference: label, word, number, slider | as above | sheet and `Tune` | profile card |
 | `LimitRow`, `Switch` | one hard limit: lock, optional stepper, switch | on, off (struck through), changed, blamed by an error | profile sheet | profile card |
 | `Picker` | catalogue: search, groups, add | browsing, searching, no match, item already in use | full sheet | replaces the profile card |
