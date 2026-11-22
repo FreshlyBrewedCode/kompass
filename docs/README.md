@@ -24,6 +24,8 @@ lasting shape here and deletes the section there.
   - [map-round-3](design/map-round-3.md): one line per track on a straw ground (B, "Graded", chosen; the map style options)
   - [steering](design/steering.md): the segment inspector, the preferences panel, structured controls,
     saturation, route shape, limits as trade-offs (epic #58, agreed before building)
+  - [steering-widgets](design/steering-widgets.md): tier boards and a hills curve, round 1 (four
+    directions as mock-ups; A, "Lanes", chosen and built as a prototype behind a switch)
 - [reports/](reports/): spike verdicts, benchmarks, playtest reports
 
 ## Shape

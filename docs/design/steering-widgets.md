@@ -6,8 +6,9 @@ controls sit on is the verdict of spike #60
 (love 1, like 1.15, fine 1.35, dislike 2 times the length, avoid the limit) and a hills curve at
 fixed handles (−15, −8, 0 pinned, +3, +6, +10, +15 %) as an additive cost.
 
-**Status: round 1 drawn, nothing chosen yet.** The rider picks on the phone; a prototype behind a
-switch follows.
+**Status: round 1 drawn; the rider chose A, "Lanes".** Built as a prototype behind a switch (the
+PR of #66's web part): [planner.md](../planner.md#structured-controls-prototype-behind-a-switch). The
+playtest decides whether it replaces the sliders.
 
 ## Round 1: four directions (mock-ups)
 
@@ -94,7 +95,22 @@ wall"), the route's kilometres there and what they count as, and a stepper.
   route sinks to the bottom, exactly where "avoid" lives. Hills as seven steppers lose the shape:
   no curve to see, many small taps.
 
-## Recommendation
+## Decision
+
+**A · Lanes, chosen** by the rider (the recommendation below was B). What the prototype does with A's
+"against" points:
+
+- **Tap, then pick** is the whole interaction: a chip selects, a five-way tier picker at the bottom of
+  the board moves it in one tap. Dragging chips between lanes is not built (it fights the sheet's
+  scroll, the round's own verdict); the picker stays open after a move, so the row can be moved again
+  or compared.
+- **The chart's close handles**: the selected handle has the stepper row (‹ +10 % › to pick a handle,
+  − 2.5 m + to change it, 44 px targets), enough to do everything without dragging; a handle can also
+  be dragged vertically (touch-action none on the handle only, so the sheet still scrolls elsewhere).
+- Lanes still change height as chips move; the picker sits below the lanes, so it does not move under
+  the thumb.
+
+## Recommendation (round 1, before the pick)
 
 **B · Matrix, with two things borrowed.**
 

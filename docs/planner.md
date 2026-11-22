@@ -15,6 +15,7 @@ The screen: the region map with the planner on top, built on the consolidated de
 | `inspector/` | the segment inspector: the words (`model.ts`: exchange rates, the three groups, the "why not" verdict), the long press (`gesture.ts`), the panel (`panel.tsx`), this plan's actions (`actions.tsx`) |
 | `overrides.ts` | this plan's exceptions: the list (one per edge), what the engine gets, the words, the saved form per build |
 | `cost/` | the cost debug view: the words of one edge and of a comparison (`model.ts`), the layer's key (`panel.tsx`), the layer's wiring (`use-cost-layer.ts`) |
+| `structured/` | the structured controls, a prototype behind a switch ([below](#structured-controls-prototype-behind-a-switch)): the words, tier moves and the curve (`model.ts`), the tier board (`board.tsx`), the hills curve (`hills.tsx`), Detours as the spread, the switch and its note (`controls.tsx`), the inspector's lines (`inspect.tsx`) |
 | `palette.ts` | data colours (route, compare, ghost, surface, way type, ridden) as CSS variables |
 | `gpx.ts` | the GPX writer and the export (share sheet on touch devices, else a download) |
 
@@ -237,6 +238,57 @@ moved), a moved value is a change ("more detours"), has the change dot to reset,
   existed because the row was always there, and it routes the same. A 0 against a base that sets it
   ("less climbing") stays, as does a 0 on any other preference ("added, not set yet"). So an old plan
   on the Blank slate opens empty, not with four rows at "no opinion".
+
+## Structured controls (prototype, behind a switch)
+
+Tier boards and a hills curve in place of the surface, way-type and terrain sliders (epic #58, task
+#66; the design: [design/steering-widgets.md](design/steering-widgets.md), direction A, "Lanes"; the
+engine's model: [profile.md](profile.md#the-structured-model-prototype-behind-a-switch)). Built so the
+rider can playtest them next to today's sliders; with the switch off nothing changes.
+
+- **The switch.** "Structured controls (prototype)" in Map & rides, under Appearance (an app setting, not
+  the plan's): saved on the device (`kompass.controls.v1`), off by default; `?controls=structured` (or
+  `=sliders`) sets it and is remembered. Store: `setControls`, `controls`, `converting`.
+- **Two profiles in one plan.** On: the plan's slider profile goes to the engine's `toStructured`
+  (worker method; the store keeps per part the twin's own board or curve where the plan changed nothing
+  that feeds it, so River valley keeps its tuned curve), based on the preset's structured twin
+  (`structuredPresets`: the picker offers the twins and the own structured presets). An unchanged plan
+  takes the twin as it is. From then on the plan edits the structured profile; off goes back to the
+  slider profile as it was. Both are kept (the plan's `structured` key beside the sliders' fields), so
+  the rider can flip and compare routes. Until it is edited, the structured profile follows the sliders
+  (converted again on the next switch); once edited the two are separate, and the note at the head of
+  the profile says so (with "Sliders" to switch back). An own slider preset has no twin: its plan
+  converts onto Gravel explorer's twin (the changes are counted against that).
+- **Tier boards** (Surface, Way type groups): collapsed, the ranking in words ("love tracks, cycle
+  paths · never main roads") and the lanes in miniature (a dot per row); open, a lane per tier, Love to
+  Avoid (hatched, "never"), each with what a kilometre counts as under the spread ("1 km → 1.35 km"),
+  the rows as chips with the route's length on them (`breakdown.rows`) and the change dot. A tap selects
+  a chip, the tier picker under the lanes moves it with one tap (its change dot puts it back). No drag
+  between lanes. Below: the exchange sentence ("up to 1.35× longer than on ways that are fine").
+  Sliders of the group the boards do not replace (`tracktype`, `smoothness`) stay below the board.
+- **The hills curve** (Terrain): collapsed, the curve's name (a named curve, the preset's own, "Your
+  own curve") and a metre at 10 %, with a sparkline; open, the named curves, the chart (grade −20 … +20 %,
+  what a metre counts as on a log axis 0.5 … 10 m, 0 % pinned, the route's length per 1 % band from
+  `breakdown.grades` behind it), handles that drag vertically, and the stepper row for the selected
+  handle (‹ +10 % › and − 2.5 m +, a ladder of values from 0.5 to 10) that does everything without a
+  drag. Then the handle's sentence (the route's km in its band, halfway to the neighbours, and what they
+  count as), "Steeper on loose ground" in steps of 5 %, and the route's hills total (the segments'
+  `hills_m`).
+- **Detours** edits `detours` (the spread, 0.5 … 2), in words: what a loved and a disliked way are
+  worth against a fine one.
+- **The rest stays.** The other groups keep their sliders. What the boards and the curve replace (the
+  catalogue's `replaces`, `replaces_limits`) is never offered by the picker, not listed among the
+  limits and never sent (`structuredProfile`). The diff sentence names rows ("paths a tier up", "never
+  main roads"), the curve ("hills: Climber", "own hills curve") and the spread; the change count, the
+  ghost route, the compared preset (its twin), own presets (saved as structured profiles) and this
+  plan's exceptions work as before. The chip strip shows the remaining sliders only (the boards and the
+  curve are in the profile sheet).
+- **The inspector** under the structured controls: "On the boards and the curve", the way's row and
+  tier per board ("Tracks: like, counts 1.15×") and its hills ("these 400 m (up to 10 %) count 600 m
+  more"); a tap opens the tier picker or the nearest handle's stepper in place. A way a board's Avoid
+  closes says which row and offers the picker (and "Allow here"); "why not" can blame a row's tier or
+  the hills (from `compare`'s `rows` and `hills_m`), and its "no control can change this" floor is the
+  loved way on the flat. The arithmetic shows boards × groups ÷ best ^ detours.
 
 ## Performance
 
