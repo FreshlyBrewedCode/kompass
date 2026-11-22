@@ -336,6 +336,45 @@ pub fn arc_grade_pct(g: &Graph, a: crate::ArcId) -> (f32, f32) {
     if arc_is_reverse(a) { (bwd, fwd) } else { (fwd, bwd) }
 }
 
+/// Which of `ids` apply to an arc at all (membership ≠ 0, whatever their weight), handed to `hit`:
+/// what a route's `breakdown.touched` adds up. The membership is the cost's, per kind as in
+/// [`CostModel::breakdown`]: the grade ramps on the tamed grades, `climb` on the ascent beyond the
+/// deadband in the arc's direction, the rest through [`membership`].
+pub fn touches(
+    g: &Graph,
+    personal: Option<&PersonalLayer>,
+    a: crate::ArcId,
+    ids: &[PrefId],
+    mut hit: impl FnMut(PrefId),
+) {
+    let c = g.edge_columns();
+    let e = arc_edge(a) as usize;
+    let dir = usize::from(arc_is_reverse(a));
+    let v = View::decode(c, e);
+    let surface = v.surface();
+    #[allow(clippy::cast_possible_truncation, reason = "edge ids fit u32")]
+    let pe = personal
+        .filter(|p| p.fits(g.edge_count()))
+        .map(|p| (p, e as EdgeId));
+    let asc = [c.ascent_fwd_dm[e], c.ascent_bwd_dm[e]];
+    let grade = [
+        tamed_grade(c.grade_fwd[e], asc[0], v.length, v.forest),
+        tamed_grade(c.grade_bwd[e], asc[1], v.length, v.forest),
+    ];
+    for &id in ids {
+        let m = if let Some(r) = grade_ramp(id) {
+            r.level(grade[dir], grade[1 - dir])
+        } else if id == PrefId::Climb {
+            lv(effective_ascent(asc[dir], v.length, v.forest) / v.length.max(1.0) / CLIMB_FULL_GRADE)
+        } else {
+            membership(id, &v, surface, pe)
+        };
+        if m != 0 {
+            hit(id);
+        }
+    }
+}
+
 /// Ascent that counts, metres: the part beyond the deadband.
 #[inline]
 fn effective_ascent(ascent_dm: u16, len: f32, forest: u8) -> f32 {

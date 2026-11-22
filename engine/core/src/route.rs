@@ -305,6 +305,11 @@ pub struct Breakdown {
     pub way: Vec<Part<WayKind>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ridden: Option<RiddenParts>,
+    /// Per preference the request's profile names (an explicit 0 too), the length of the route
+    /// where it applies at all (membership ≠ 0): what each slider "touches". Catalogue order; 0 m
+    /// where it touches nothing.
+    #[serde(default)]
+    pub touched: Vec<Part<PrefId>>,
 }
 
 /// The line: coordinates, and per vertex the distance from the start and the elevation.
@@ -844,7 +849,37 @@ impl Planner {
             });
             models.push(ci);
         }
-        Ok(self.assemble(&pieces, &legs_raw, &models, snapped, notes, req.options.geometry))
+        let mut result = self.assemble(&pieces, &legs_raw, &models, snapped, notes, req.options.geometry);
+        result.breakdown.touched = self.touched(&pieces, &req.profile);
+        Ok(result)
+    }
+
+    /// The length of the route each preference of `profile` applies to (`breakdown.touched`).
+    fn touched(&self, pieces: &[Piece], profile: &Profile) -> Vec<Part<PrefId>> {
+        let (g, personal) = (&self.graph, self.personal.as_ref());
+        let ids: Vec<PrefId> = profile.weights.keys().copied().collect();
+        let mut m = vec![0.0f32; ids.len()];
+        for piece in pieces {
+            let len = g.length_m(arc_edge(piece.arc)) * piece.fraction();
+            cost::touches(g, personal, piece.arc, &ids, |id| {
+                if let Some(i) = ids.iter().position(|&x| x == id) {
+                    m[i] += len;
+                }
+            });
+        }
+        let total: f32 = pieces
+            .iter()
+            .map(|p| g.length_m(arc_edge(p.arc)) * p.fraction())
+            .sum::<f32>()
+            .max(1e-6);
+        ids.into_iter()
+            .zip(m)
+            .map(|(key, length_m)| Part {
+                key,
+                length_m,
+                share: length_m / total,
+            })
+            .collect()
     }
 
     fn snapped(wp: &Waypoint, ep: &Endpoint) -> Snapped {
@@ -1213,6 +1248,7 @@ impl Planner {
                 surface: parts(surface_m, total),
                 way: parts(way_m, total),
                 ridden,
+                touched: Vec::new(),
             },
             waypoints,
             legs,

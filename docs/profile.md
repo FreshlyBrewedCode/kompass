@@ -18,7 +18,9 @@ graph whenever it changes, and the search ([routing.md](routing.md)) runs on tha
 
 - **weights**: preference id → −100 … +100: −100 avoid, +100 seek. An absent id has no opinion; an
   explicit 0 routes the same but stays on screen (the UI's "added, not set yet"). Unknown ids and
-  values outside the range are errors, so a typo from the agent is never silently ignored.
+  values outside the range are errors, so a typo from the agent is never silently ignored. There is
+  no core set: every preference, `unpaved`, `quiet`, `climb` and `novel` included, is on screen only
+  when the profile names it, and a profile without weights is valid (the Blank slate).
 - **limits**: limit id → `true` / `false` (off, as if absent), or a number for the number limits
   (`true` there means the catalogue default).
 - **bounds**: the clamp of the factor product, `min_factor` 0.3 … 1.0 (default 0.5) and `max_factor`
@@ -35,10 +37,10 @@ graph whenever it changes, and the search ([routing.md](routing.md)) runs on tha
 A **preset** is `{ id, blurb, profile }`; the shipped ones are in `engine/presets/`, user presets have
 the same shape. The **catalogue** (`kompass profile catalogue`, `catalogue()`) lists every preference
 and limit with its group, label, one-line hint, kind (`soft`, `limit_flag`, `limit_number` with
-min/max/step/default/unit), the value it starts at when added, whether it is in the **core set**
-(`unpaved`, `quiet`, `climb`, `novel`: on screen in every profile), its strength (below), and for
+min/max/step/default/unit), the value it starts at when added, its strength (below), and for
 the sparse ones the attribute behind it with a note; `catalogue_for(graph)` adds the share of the
-loaded region where that attribute is mapped.
+loaded region where that attribute is mapped. Its groups (Surface, Ways, Traffic, …) are both the
+picker's sections and the profile editor's (planner.md, "The preferences panel").
 
 ## The cost
 
@@ -74,6 +76,15 @@ something bad (a never-ridden grass track the profile dislikes stays disliked).
 
 **Clamp.** The product is clamped to the bounds. The smallest factor a compile actually produces
 (≥ `min_factor`, 1.0 for a blank profile) is the A* bound per metre of straight line.
+
+**What a preference touches.** A route says, per preference its profile names (an explicit 0
+too), the length on which that preference applies at all: membership ≠ 0, whatever the weight
+(`breakdown.touched`, catalogue order, 0 m where it touches nothing). It is `cost::touches` over the
+route's arcs, the cost's own membership code (a test checks it against the breakdown on every arc
+of random graphs): the grade ramps on the tamed grade, `climb` on the ascent beyond the deadband in
+the arc's direction, the personal ones only with a personal layer. It is computed with the route
+(one membership per arc and named preference, no extra query) and says nothing about the weight's
+effect: a gated bonus outside the gate still "touches". The panel shows it per slider.
 
 **Seeing it.** Every step of this, per arc, is what the cost debug queries return (`edgeCosts` for a
 map layer, `explainEdge` for one edge, `compare` for two routes; [routing.md](routing.md#explaining-the-cost)),
@@ -247,9 +258,13 @@ traded for any gravel detour, and `quiet` is stronger (50 → 70) against paths 
 | preset | weights | limits |
 |---|---|---|
 | Gravel explorer | unpaved 50, track 40, fine gravel 20, quiet 70, forest edge 50, novel 60, climb 20, main −80, soft ground −40, sketchy −50, built-up −30 | no stairs, legal only |
-| Paved & quiet | unpaved −70, quiet 60, cycle paths away from roads 60, main −60, cobbles −50, climb −30, novel 0 | paved only, no stairs, legal only |
-| River valley | water 90, climb −60, ramps −70, quiet 40, novel −10, unpaved 0 | no stairs |
-| Blank slate | the core set at 0 | none: the shortest way |
+| Paved & quiet | unpaved −70, quiet 60, cycle paths away from roads 60, main −60, cobbles −50, climb −30 | paved only, no stairs, legal only |
+| River valley | water 90, climb −60, ramps −70, quiet 40, novel −10 | no stairs |
+
+A shipped preset names only what it has an opinion on (no explicit 0, checked by a test): the zeros
+the presets used to carry (`novel` 0, `unpaved` 0) were there for the former core set and routed the
+same.
+| Blank slate | none | none: the shortest way |
 
 `quiet` and "cycle paths away from roads" (`cycleway_sep`) do not count the same thing twice: the
 first is how loud it is (a path beside a quiet street is quiet), the second the kind of way (a path

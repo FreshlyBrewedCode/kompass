@@ -7,17 +7,24 @@ import {
   detourHint,
   detourTimes,
   detourWord,
+  dropFormerCoreZeros,
+  groupSummary,
   insertIndex,
   limitInMessage,
   moveItem,
   normaliseLimits,
+  opinion,
   parsePlan,
   parsePresets,
   planProfile,
+  prefGroups,
+  prefRows,
   probeOrder,
   sameCost,
   snapMinFactor,
   snapWeight,
+  touchedM,
+  touchText,
   tradeoff,
   tradeoffText,
   waypointLabel,
@@ -90,12 +97,17 @@ describe("the profile against its base", () => {
     );
   });
 
-  test("explicit 0 is not absent: an added row at 0 is a change, a core row missing from both is not", () => {
+  test("explicit 0 is not absent: an added row at 0 is a change, for every preference alike", () => {
     expect(changes(base, { ...base.weights, water: 0 }, base.limits, CATALOGUE)[0]?.text).toBe(
       "water (no opinion yet)",
     );
-    // `climb` is core: absent in the base and set to 0 now is no change
-    expect(changes(base, { ...base.weights, climb: 0 }, base.limits, CATALOGUE)).toEqual([]);
+    // no core set any more: `climb` added at 0 is a change like any other
+    expect(changes(base, { ...base.weights, climb: 0 }, base.limits, CATALOGUE)[0]?.text).toBe(
+      "climbing (no opinion yet)",
+    );
+    // the blank slate has no rows at all
+    expect(prefRows({})).toEqual([]);
+    expect(changes({ weights: {}, limits: {} }, {}, {}, CATALOGUE)).toEqual([]);
   });
 
   test("a number limit switched on with `true` means its default", () => {
@@ -118,6 +130,65 @@ describe("the profile against its base", () => {
     expect(weightWord(undefined, 50)).toBe("prefer");
     expect(weightWord(undefined, -20)).toBe("rather not");
     expect(weightWord({ low_label: "keep it flat" }, -80)).toBe("keep it flat");
+  });
+});
+
+describe("the panel's groups", () => {
+  test("rows by the catalogue's groups, in its order, only groups with rows", () => {
+    const groups = prefGroups(prefRows({ forest_edge: 50, unpaved: 40, climb: -20, water: 0 }), CATALOGUE);
+    expect(groups.map((g) => [g.id, g.ids])).toEqual([
+      ["surface", ["unpaved"]],
+      ["landscape", ["forest_edge", "water"]],
+      ["terrain", ["climb"]],
+    ]);
+    expect(prefGroups([], CATALOGUE)).toEqual([]);
+  });
+
+  test("a group's line in a rider's words, strongest first", () => {
+    expect(opinion("unpaved", 80)).toBe("loves gravel");
+    expect(opinion("unpaved", 40)).toBe("likes gravel");
+    expect(opinion("unpaved", 10)).toBe("likes gravel a bit");
+    expect(opinion("soft_ground", -20)).toBe("rather avoids soft ground");
+    expect(opinion("soft_ground", -40)).toBe("avoids soft ground");
+    expect(opinion("main", -80)).toBe("strongly avoids main roads");
+    expect(groupSummary(["unpaved", "soft_ground"], { unpaved: 50, soft_ground: -40 })).toBe(
+      "likes gravel, avoids soft ground",
+    );
+    expect(
+      groupSummary(["unpaved", "soft_ground", "track", "fine_gravel"], {
+        unpaved: 20,
+        soft_ground: -40,
+        track: 90,
+        fine_gravel: 0,
+      }),
+    ).toBe("loves tracks, avoids soft ground +1");
+    expect(groupSummary(["water"], { water: 0 })).toBe("no opinion on water yet");
+    expect(groupSummary(["water", "forest"], {})).toBe("2 added, none set yet");
+  });
+
+  test("what a slider touches: from the route, in words", () => {
+    const r = result({ km: 10, touched: { unpaved: 8200, quiet: 0, climb: 350 } });
+    expect(touchedM(r, "unpaved")).toBe(8200);
+    expect(touchedM(r, "water")).toBeNull();
+    expect(touchedM(null, "unpaved")).toBeNull();
+    expect(touchText(touchedM(r, "unpaved"))).toBe("8.2 km");
+    expect(touchText(touchedM(r, "climb"))).toBe("350 m");
+    expect(touchText(touchedM(r, "quiet"))).toBe("not on this route");
+    expect(touchText(2)).toBe("not on this route");
+    expect(touchText(null)).toBeNull();
+  });
+
+  test("the former core set's stray zeros go, real changes and added rows stay", () => {
+    const stored = { unpaved: 0, quiet: 0, climb: 0, novel: 0, water: 0, forest_edge: 40 };
+    expect(dropFormerCoreZeros(stored)).toEqual({ water: 0, forest_edge: 40 });
+    // against a base that sets `climb`, a 0 is "less climbing": it stays
+    expect(dropFormerCoreZeros({ climb: 0, quiet: 0 }, { climb: 20 })).toEqual({ climb: 0 });
+    const own = parsePresets(
+      JSON.stringify([
+        { id: "own-1", blurb: "", profile: { name: "Old", weights: { unpaved: 60, novel: 0 }, limits: {} } },
+      ]),
+    );
+    expect(own[0]?.profile.weights).toEqual({ unpaved: 60 });
   });
 });
 

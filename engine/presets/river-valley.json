@@ -4,7 +4,6 @@
   "profile": {
     "name": "River valley",
     "weights": {
-      "unpaved": 0,
       "quiet": 40,
       "climb": -60,
       "novel": -10,

@@ -137,10 +137,6 @@ low_label?: string, high_label?: string,
  */
 default: number, 
 /**
- * Part of the core set every profile shows.
- */
-core: boolean, 
-/**
  * The factor on a fully matching way at +100 (< 1: cheaper).
  */
 max_bonus: number, 
@@ -184,11 +180,7 @@ export type BoundsInfo = { min_factor: BoundRange, max_factor: BoundRange, };
 /**
  * The whole catalogue (`kompass profile catalogue`).
  */
-export type Catalogue = { version: number, groups: Array<GroupInfo>, preferences: Array<Preference>, limits: Array<Limit>, 
-/**
- * The core set: always on screen, whatever the base.
- */
-core: Array<PrefId>, bounds: BoundsInfo, };
+export type Catalogue = { version: number, groups: Array<GroupInfo>, preferences: Array<Preference>, limits: Array<Limit>, bounds: BoundsInfo, };
 
 /**
  * A coordinate in degrees.
@@ -417,7 +409,13 @@ export type RiddenParts = { new_m: number, ridden_m: number, new_share: number, 
 /**
  * The breakdowns, longest first.
  */
-export type Breakdown = { surface: Array<Part<SurfaceKind>>, way: Array<Part<WayKind>>, ridden?: RiddenParts, };
+export type Breakdown = { surface: Array<Part<SurfaceKind>>, way: Array<Part<WayKind>>, ridden?: RiddenParts, 
+/**
+ * Per preference the request's profile names (an explicit 0 too), the length of the route
+ * where it applies at all (membership ≠ 0): what each slider "touches". Catalogue order; 0 m
+ * where it touches nothing.
+ */
+touched: Array<Part<PrefId>>, };
 
 /**
  * The line: coordinates, and per vertex the distance from the start and the elevation.

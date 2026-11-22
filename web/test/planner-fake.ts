@@ -2,6 +2,7 @@
 import type {
   Catalogue,
   CompareRequest,
+  PrefId,
   Preset,
   RouteRequest,
   RouteResult,
@@ -19,14 +20,14 @@ export const CATALOGUE: Catalogue = {
   ],
   preferences: (
     [
-      ["unpaved", "surface", "Gravel & unpaved", "Gravel", 50, true],
-      ["quiet", "surface", "Low traffic", "Quiet", 50, true],
-      ["climb", "terrain", "Climbing", "Climb", -40, true],
-      ["novel", "landscape", "Never ridden", "New", 50, true],
-      ["water", "landscape", "Along rivers & lakes", "Water", 60, false],
-      ["forest_edge", "landscape", "Along a forest edge", "Forest edge", 60, false],
+      ["unpaved", "surface", "Gravel & unpaved", "Gravel", 50],
+      ["quiet", "surface", "Low traffic", "Quiet", 50],
+      ["climb", "terrain", "Climbing", "Climb", -40],
+      ["novel", "landscape", "Never ridden", "New", 50],
+      ["water", "landscape", "Along rivers & lakes", "Water", 60],
+      ["forest_edge", "landscape", "Along a forest edge", "Forest edge", 60],
     ] as const
-  ).map(([id, group, label, short, def, core]) => ({
+  ).map(([id, group, label, short, def]) => ({
     id,
     kind: "soft",
     group,
@@ -34,7 +35,6 @@ export const CATALOGUE: Catalogue = {
     short,
     hint: `${label}.`,
     default: def,
-    core,
     max_bonus: 0.7,
     max_penalty: 2,
     gated: false,
@@ -64,7 +64,6 @@ export const CATALOGUE: Catalogue = {
       number: { min: 4, max: 30, step: 1, default: 12, unit: "%" },
     },
   ],
-  core: ["unpaved", "quiet", "climb", "novel"],
   bounds: { min_factor: { min: 0.3, max: 1, default: 0.5 }, max_factor: { min: 2, max: 100, default: 20 } },
 };
 
@@ -98,6 +97,8 @@ export function result(o: {
   mainKm?: number;
   arcs?: number[];
   legs?: number;
+  /** metres per preference the route touches (`breakdown.touched`) */
+  touched?: Partial<Record<PrefId, number>>;
 }): RouteResult {
   const d = o.km * 1000;
   const legs = o.legs ?? 1;
@@ -120,6 +121,11 @@ export function result(o: {
         { key: "paved", length_m: d * (1 - (o.unpaved ?? 0.5)), share: 1 - (o.unpaved ?? 0.5) },
       ],
       way: [{ key: "track", length_m: d, share: 1 }],
+      touched: Object.entries(o.touched ?? {}).map(([key, m]) => ({
+        key: key as PrefId,
+        length_m: m,
+        share: m / d,
+      })),
     },
     waypoints: [],
     legs: Array.from({ length: legs }, (_, i) => ({
