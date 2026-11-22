@@ -57,6 +57,199 @@ pub const CLIMB_FULL_GRADE: f32 = 0.05;
 const LEVELS: usize = 31;
 type Table = [f32; LEVELS];
 
+/// Spike #60: the cost model variant, from `KOMPASS_SPIKE_MODEL` (never merged).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// Today: the product of every factor, hard clamp.
+    Today,
+    /// Within a catalogue group, one factor: the strongest bonus × the strongest penalty (tiers).
+    Groups,
+    /// Today's product, a soft floor: full up to half the floor (in log space), then tanh to it.
+    Soft,
+    /// Groups and the soft floor.
+    GroupsSoft,
+    /// Today's product raised to γ so the smallest product in the graph lands on the floor.
+    Norm,
+}
+
+impl Mode {
+    fn from_env() -> Mode {
+        match std::env::var("KOMPASS_SPIKE_MODEL").as_deref() {
+            Ok("groups") => Mode::Groups,
+            Ok("soft") => Mode::Soft,
+            Ok("groups_soft") => Mode::GroupsSoft,
+            Ok("norm") => Mode::Norm,
+            _ => Mode::Today,
+        }
+    }
+    fn groups(self) -> bool {
+        matches!(self, Mode::Groups | Mode::GroupsSoft)
+    }
+}
+
+/// Spike #60: a hills curve (`KOMPASS_SPIKE_HILLS="pts=-15:2,0:1,6:1.3,10:2;loose=20"`): cost per
+/// metre relative to flat against signed grade (%), linear in grade and in log factor between the
+/// handles, flat beyond the ends; `loose`: on gravel, soft and other loose ground grades count that
+/// many percent steeper. Replaces `climb`, `steep` and the ramps; an additive term per arc.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Hills {
+    pub pts: Vec<(f32, f32)>,
+    pub loose: f32,
+    /// The curve every 0.1 % from −40 to +40 %.
+    table: Vec<f32>,
+}
+
+impl Hills {
+    fn from_env() -> Option<Hills> {
+        let spec = std::env::var("KOMPASS_SPIKE_HILLS").ok()?;
+        let mut h = Hills {
+            pts: Vec::new(),
+            loose: 0.0,
+            table: Vec::new(),
+        };
+        for part in spec.split(';') {
+            if let Some(p) = part.strip_prefix("pts=") {
+                for kv in p.split(',') {
+                    let (g, c) = kv.split_once(':')?;
+                    h.pts.push((g.parse().ok()?, c.parse().ok()?));
+                }
+            } else if let Some(l) = part.strip_prefix("loose=") {
+                h.loose = l.parse().ok()?;
+            }
+        }
+        h.pts.sort_by(|a, b| a.0.total_cmp(&b.0));
+        if h.pts.is_empty() {
+            return None;
+        }
+        #[allow(clippy::cast_precision_loss, reason = "801 steps")]
+        let table = (0..=800).map(|i| h.exact(i as f32 * 0.1 - 40.0)).collect();
+        h.table = table;
+        Some(h)
+    }
+
+    /// The curve at a signed grade (%), from the table.
+    #[must_use]
+    #[inline]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a table index"
+    )]
+    pub fn at(&self, g: f32) -> f32 {
+        let x = ((g.clamp(-40.0, 40.0) + 40.0) * 10.0) as usize;
+        self.table[x.min(800)]
+    }
+
+    /// The curve at a signed grade (%), exactly.
+    fn exact(&self, g: f32) -> f32 {
+        let p = &self.pts;
+        if g <= p[0].0 {
+            return p[0].1;
+        }
+        for w in p.windows(2) {
+            let ((g0, c0), (g1, c1)) = (w[0], w[1]);
+            if g <= g1 {
+                let t = (g - g0) / (g1 - g0).max(1e-6);
+                return (c0.ln() + t * (c1.ln() - c0.ln())).exp();
+            }
+        }
+        p[p.len() - 1].1
+    }
+
+    /// The arc's hills factor: 50 m at the steeper of its tamed steepest grades (up or down), the
+    /// rest split into climbing and descending by the effective ascent and descent (spike #60's
+    /// "split + steepest 50 m").
+    #[allow(clippy::too_many_arguments, reason = "an arc's grade data")]
+    fn arc(&self, len: f32, up_max: f32, down_max: f32, asc_m: f32, desc_m: f32, loose: bool) -> f32 {
+        let k = if loose { 1.0 + self.loose / 100.0 } else { 1.0 };
+        let len = len.max(1.0);
+        let w = (50.0 / len).min(1.0);
+        let (cu, cd) = (self.at(up_max * k), self.at(-down_max * k));
+        let up_wall = cu >= cd;
+        let wall = if up_wall { cu } else { cd };
+        let a2 = (asc_m - if up_wall { w * len * up_max / 100.0 } else { 0.0 }).max(0.0);
+        let d2 = (desc_m - if up_wall { 0.0 } else { w * len * down_max / 100.0 }).max(0.0);
+        let tot = a2 + d2;
+        let rest = if tot < 1e-3 || w >= 1.0 {
+            self.at(0.0)
+        } else {
+            let us = a2 / tot;
+            let g = tot / (len * (1.0 - w)) * 100.0 * k;
+            us * self.at(g) + (1.0 - us) * self.at(-g)
+        };
+        w * wall + (1.0 - w) * rest
+    }
+}
+
+/// The catalogue group of a preference, as an index.
+#[inline]
+fn group_ix(id: PrefId) -> usize {
+    pref_meta(id).group as usize
+}
+
+/// The products of an edge's factors, per [`Mode`]: today straight products; in the group modes
+/// one factor per catalogue group (its strongest bonus × its strongest penalty).
+#[derive(Debug, Clone, Copy)]
+struct Acc {
+    groups: bool,
+    q: f32,
+    bonus: f32,
+    gb: [f32; 8],
+    gp: [f32; 8],
+    ggb: [f32; 8],
+}
+
+impl Acc {
+    fn new(groups: bool) -> Acc {
+        Acc {
+            groups,
+            q: 1.0,
+            bonus: 1.0,
+            gb: [1.0; 8],
+            gp: [1.0; 8],
+            ggb: [1.0; 8],
+        }
+    }
+    #[inline]
+    fn quality(&mut self, id: PrefId, f: f32) {
+        if !self.groups {
+            self.q *= f;
+            return;
+        }
+        let g = group_ix(id);
+        if f < 1.0 {
+            self.gb[g] = self.gb[g].min(f);
+        } else {
+            self.gp[g] = self.gp[g].max(f);
+        }
+    }
+    #[inline]
+    fn gated(&mut self, id: PrefId, f: f32) {
+        if f < 1.0 {
+            if self.groups {
+                let g = group_ix(id);
+                self.ggb[g] = self.ggb[g].min(f);
+            } else {
+                self.bonus *= f;
+            }
+        } else {
+            self.quality(id, f);
+        }
+    }
+    fn finish(&self) -> (f32, f32) {
+        if !self.groups {
+            return (self.q, self.bonus);
+        }
+        let mut q = self.q;
+        let mut b = self.bonus;
+        for i in 0..8 {
+            q *= self.gb[i] * self.gp[i];
+            b *= self.ggb[i];
+        }
+        (q, b)
+    }
+}
+
 /// One edge, decoded from the packed columns.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct View {
@@ -693,6 +886,20 @@ pub struct CostModel {
     limits: Limits,
     pub min_factor: f32,
     pub max_factor: f32,
+    /// Spike #60.
+    pub mode: Mode,
+    pub hills: Option<Hills>,
+    /// `Mode::Norm`'s exponent, set by the compile.
+    pub gamma: std::cell::Cell<f32>,
+}
+
+/// One arc's factor and what the gate and the leverage need.
+#[derive(Debug, Clone, Copy)]
+struct ArcF {
+    f: f32,
+    raw: f32,
+    q: f32,
+    bonus: f32,
 }
 
 /// Per-arc explanation of the cost (for "why this way").
@@ -809,12 +1016,21 @@ impl CostModel {
             climb_bonus: None,
             climb_cost: 0.0,
             limits: Limits::default(),
-            min_factor: p.bounds().min_factor,
+            min_factor: std::env::var("KOMPASS_SPIKE_MIN")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(p.bounds().min_factor),
             max_factor: p.bounds().max_factor,
+            mode: Mode::from_env(),
+            hills: Hills::from_env(),
+            gamma: std::cell::Cell::new(1.0),
         };
         for (&id, w) in &p.weights {
             let w = w.unit();
             if w == 0.0 {
+                continue;
+            }
+            if m.hills.is_some() && (id == PrefId::Climb || grade_ramp(id).is_some()) {
                 continue;
             }
             if let Some(r) = grade_ramp(id) {
@@ -971,15 +1187,82 @@ impl CostModel {
 
     /// Compiles every arc's cost into `out` (resized; no other allocation). Returns the smallest
     /// factor produced (the A* bound per metre).
-    #[allow(clippy::cast_possible_truncation, reason = "edge ids fit u32")]
     pub fn compile_into(&self, g: &Graph, personal: Option<&PersonalLayer>, out: &mut Vec<f32>) -> f32 {
+        if self.mode == Mode::Norm {
+            self.gamma.set(1.0);
+            let (_, min_raw) = self.compile_pass(g, personal, out, true);
+            let gamma = if min_raw < self.min_factor && min_raw > 0.0 {
+                self.min_factor.ln() / min_raw.ln()
+            } else {
+                1.0
+            };
+            self.gamma.set(gamma);
+        }
+        self.compile_pass(g, personal, out, false).0
+    }
+
+    /// The products (quality, bonus) of an edge's direction-independent preferences.
+    #[inline]
+    fn edge_products(
+        &self,
+        v: &View,
+        surface: (u8, Confidence),
+        pe: Option<(&PersonalLayer, EdgeId)>,
+    ) -> Acc {
+        let mut acc = Acc::new(self.mode.groups());
+        for (id, t) in &self.quality {
+            acc.quality(*id, at(t, membership(*id, v, surface, pe)));
+        }
+        if let Some(t) = &self.quiet {
+            acc.quality(PrefId::Quiet, at(t, membership(PrefId::Quiet, v, surface, pe)));
+        }
+        for (id, t) in &self.gated {
+            acc.gated(*id, at(t, membership(*id, v, surface, pe)));
+        }
+        acc
+    }
+
+    /// Whether the surface counts as loose ground (the hills curve's modifier).
+    fn loose(surface: (u8, Confidence)) -> bool {
+        matches!(surface.0, sc::GRAVEL | sc::SOFT | sc::OTHER)
+    }
+
+    /// The hills curve's additive metres on an arc (negative where it seeks, through the gate).
+    #[allow(clippy::too_many_arguments, reason = "an arc's grade data")]
+    fn hills_m(
+        &self,
+        len: f32,
+        forest: u8,
+        grade: [f32; 2],
+        asc: [u16; 2],
+        dir: usize,
+        surface: (u8, Confidence),
+        q: f32,
+    ) -> f32 {
+        let Some(h) = &self.hills else { return 0.0 };
+        let a = effective_ascent(asc[dir], len, forest);
+        let d = effective_ascent(asc[1 - dir], len, forest);
+        let c = h.arc(len, grade[dir], grade[1 - dir], a, d, Self::loose(surface));
+        let x = len * (c - 1.0);
+        if x < 0.0 { x * Self::gate(q) } else { x }
+    }
+
+    #[allow(clippy::cast_possible_truncation, reason = "edge ids fit u32")]
+    fn compile_pass(
+        &self,
+        g: &Graph,
+        personal: Option<&PersonalLayer>,
+        out: &mut Vec<f32>,
+        raw_only: bool,
+    ) -> (f32, f32) {
         let c = g.edge_columns();
         let m = g.edge_count();
         out.clear();
         out.resize(m * 2, f32::INFINITY);
         let personal = personal.filter(|p| p.fits(m));
-        let need_grade = !self.grades.is_empty() || self.limits.max_grade.is_some();
+        let need_grade = !self.grades.is_empty() || self.limits.max_grade.is_some() || self.hills.is_some();
         let mut min_seen = f32::INFINITY;
+        let mut min_raw = f32::INFINITY;
         for e in 0..m {
             let v = View::decode(c, e);
             let surface = v.surface();
@@ -996,69 +1279,105 @@ impl CostModel {
                 continue;
             }
             let pe = personal.map(|p| (p, e as EdgeId));
-            let mut q = 1.0f32;
-            for (id, t) in &self.quality {
-                q *= at(t, membership(*id, &v, surface, pe));
-            }
-            if let Some(t) = &self.quiet {
-                q *= at(t, membership(PrefId::Quiet, &v, surface, pe));
-            }
-            let mut bonus = 1.0f32;
-            for (id, t) in &self.gated {
-                let f = at(t, membership(*id, &v, surface, pe));
-                if f < 1.0 {
-                    bonus *= f;
-                } else {
-                    q *= f;
-                }
-            }
+            let acc = self.edge_products(&v, surface, pe);
             let penalty = Self::penalty_m(&v);
             let oneway = crate::attrs::oneway_of(c.surf[e]);
             for dir in 0..2 {
                 if !oneway.allows(dir == 1) {
                     continue;
                 }
-                let f = self.arc_factor(v.length, v.forest, q, bonus, grade[dir], grade[1 - dir], asc[dir]);
-                min_seen = min_seen.min(f);
+                let af = self.arc_factor(v.length, v.forest, acc, grade[dir], grade[1 - dir], asc[dir]);
+                min_raw = min_raw.min(af.raw);
+                if raw_only {
+                    continue;
+                }
                 let climb = if self.climb_cost > 0.0 {
                     self.climb_cost * effective_ascent(asc[dir], v.length, v.forest)
                 } else {
                     0.0
                 };
-                out[e * 2 + dir] = v.length * f + penalty + climb;
+                let hills = self.hills_m(v.length, v.forest, grade, asc, dir, surface, af.q);
+                min_seen = min_seen.min(af.f + hills.min(0.0) / v.length.max(1.0));
+                out[e * 2 + dir] = (v.length * af.f + penalty + climb + hills).max(0.01 * v.length);
             }
         }
-        if min_seen.is_finite() {
-            min_seen
-        } else {
-            self.min_factor
+        (
+            if min_seen.is_finite() {
+                min_seen.max(0.01)
+            } else {
+                self.min_factor
+            },
+            min_raw,
+        )
+    }
+
+    /// The factor after the floor: per [`Mode`].
+    #[inline]
+    fn finish(&self, raw: f32) -> f32 {
+        match self.mode {
+            Mode::Soft | Mode::GroupsSoft if raw < 1.0 => {
+                let l = -self.min_factor.ln();
+                let k = l * 0.5;
+                let x = -raw.ln();
+                if x <= k {
+                    raw
+                } else {
+                    (-(k + (l - k) * ((x - k) / (l - k)).tanh())).exp()
+                }
+            }
+            Mode::Norm if raw < 1.0 => raw.powf(self.gamma.get()).clamp(self.min_factor, self.max_factor),
+            _ => raw.clamp(self.min_factor, self.max_factor),
         }
     }
 
-    /// The clamped factor of an arc from its edge's products.
+    /// How much of a change in the product reaches the factor at `raw` (1 unclamped, 0 on a hard
+    /// clamp): d ln f / d ln raw, by a small step.
+    #[must_use]
+    pub fn leverage(&self, raw: f32) -> f32 {
+        let a = self.finish(raw);
+        let b = self.finish(raw * 0.995);
+        (a.ln() - b.ln()) / -(0.995f32.ln())
+    }
+
+    /// The factor of an arc from its edge's products.
     #[inline]
-    #[allow(clippy::too_many_arguments, reason = "an arc's inputs")]
     fn arc_factor(
         &self,
         len: f32,
         forest: u8,
-        q: f32,
-        bonus: f32,
+        acc: Acc,
         grade_up: f32,
         grade_down: f32,
         ascent_dm: u16,
-    ) -> f32 {
-        let mut q = q;
-        let mut bonus = bonus;
-        for (_, r, t) in &self.grades {
-            q *= at(t, r.level(grade_up, grade_down));
+    ) -> ArcF {
+        let (mut q, mut bonus) = acc.finish();
+        if self.mode.groups() {
+            let (mut b, mut p) = (1.0f32, 1.0f32);
+            for (_, r, t) in &self.grades {
+                let f = at(t, r.level(grade_up, grade_down));
+                if f < 1.0 {
+                    b = b.min(f);
+                } else {
+                    p = p.max(f);
+                }
+            }
+            q *= b * p;
+        } else {
+            for (_, r, t) in &self.grades {
+                q *= at(t, r.level(grade_up, grade_down));
+            }
         }
         if let Some(t) = &self.climb_bonus {
             let rate = effective_ascent(ascent_dm, len, forest) / len.max(1.0);
             bonus *= at(t, lv(rate / CLIMB_FULL_GRADE));
         }
-        let f = q * (1.0 + (bonus - 1.0) * Self::gate(q));
-        f.clamp(self.min_factor, self.max_factor)
+        let raw = q * (1.0 + (bonus - 1.0) * Self::gate(q));
+        ArcF {
+            f: self.finish(raw),
+            raw,
+            q,
+            bonus,
+        }
     }
 
     /// The cost of one arc, explained (the flat form of [`CostModel::breakdown`]).
@@ -1112,6 +1431,7 @@ impl CostModel {
         let mut terms = Vec::new();
         let mut q = 1.0f32;
         let mut bonus = 1.0f32;
+        let acc = self.edge_products(&v, surface, pe);
         for (id, t) in &self.quality {
             let m = membership(*id, &v, surface, pe);
             let f = at(t, m);
@@ -1188,13 +1508,20 @@ impl CostModel {
             });
         }
         terms.sort_by_key(|t| t.id.index());
+        // spike #60: the model's own products (the terms above stay per preference)
+        let af = self.arc_factor(v.length, v.forest, acc, grade[dir], grade[1 - dir], asc[dir]);
+        let _ = (q, bonus);
+        let (q, bonus) = (af.q, af.bonus);
         let gate = Self::gate(q);
-        let raw = q * (1.0 + (bonus - 1.0) * gate);
-        let factor = raw.clamp(self.min_factor, self.max_factor);
-        let clamp = if raw < self.min_factor {
-            Some(Clamp::Min)
-        } else if raw > self.max_factor {
+        let raw = af.raw;
+        let factor = af.f;
+        let clamp = if raw > self.max_factor {
             Some(Clamp::Max)
+        } else if match self.mode {
+            Mode::Today | Mode::Groups => raw < self.min_factor,
+            _ => raw < 1.0 && self.leverage(raw) < 0.5,
+        } {
+            Some(Clamp::Min)
         } else {
             None
         };
@@ -1221,7 +1548,7 @@ impl CostModel {
                 self.climb_cost * ascent_m
             } else {
                 0.0
-            },
+            } + self.hills_m(v.length, v.forest, grade, asc, dir, surface, af.q),
             penalties_m: Self::penalty_parts(&v),
             exclusions,
         }
@@ -1517,7 +1844,7 @@ impl CostModel {
     ) -> f32 {
         let c = g.edge_columns();
         let m = g.edge_count();
-        if !classes.fits(m) {
+        if !classes.fits(m) || self.mode != Mode::Today || self.hills.is_some() {
             return self.compile_into(g, personal, out);
         }
         let personal = personal.filter(|p| p.fits(m));
@@ -1666,7 +1993,12 @@ impl CostModel {
                 if !oneway.allows(dir == 1) {
                     continue;
                 }
-                let f = self.arc_factor(len, forest, q, bonus, grade[dir], grade[1 - dir], asc[dir]);
+                let mut acc = Acc::new(false);
+                acc.q = q;
+                acc.bonus = bonus;
+                let f = self
+                    .arc_factor(len, forest, acc, grade[dir], grade[1 - dir], asc[dir])
+                    .f;
                 min_seen = min_seen.min(f);
                 let climb = if self.climb_cost > 0.0 {
                     self.climb_cost * effective_ascent(asc[dir], len, forest)
@@ -1718,7 +2050,18 @@ impl CostModel {
         } else {
             0.0
         };
-        Self::penalty_m(&v) + climb
+        let hills = if self.hills.is_some() {
+            let b = self.breakdown(g, None, a);
+            b.climb_m
+                - if self.climb_cost > 0.0 {
+                    self.climb_cost * b.ascent_m
+                } else {
+                    0.0
+                }
+        } else {
+            0.0
+        };
+        Self::penalty_m(&v) + climb + hills
     }
 }
 
@@ -1788,6 +2131,19 @@ pub fn arc_ascent_m(g: &Graph, a: crate::ArcId) -> f32 {
         c.ascent_fwd_dm[e]
     };
     effective_ascent(dm, v.length, v.forest)
+}
+
+/// Spike #60: the arc's ascent before the deadband, metres.
+#[must_use]
+pub fn arc_raw_ascent_m(g: &Graph, a: crate::ArcId) -> f32 {
+    let c = g.edge_columns();
+    let e = arc_edge(a) as usize;
+    let dm = if arc_is_reverse(a) {
+        c.ascent_bwd_dm[e]
+    } else {
+        c.ascent_fwd_dm[e]
+    };
+    f32::from(dm) * 0.1
 }
 
 /// The way kind a route reports.

@@ -35,6 +35,7 @@ mod gpx;
 mod matchcmd;
 mod replay;
 mod route;
+mod spike60;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -81,6 +82,7 @@ fn main() -> ExitCode {
         Some("schema") => Args::parse(rest, &[]).and_then(|a| schema(&a)),
         Some("bench") => Args::parse(rest, &[]).and_then(|a| bench::bench(&a)),
         Some("compare") => Args::parse(rest, &[]).and_then(|a| bench::compare(&a)),
+        Some("spike60") => Args::parse(rest, &["--sliders", "--time"]).and_then(|a| spike60::run(&a)),
         Some(other) => Err(Failure::Usage(format!("unknown command `{other}`"))),
     };
     match result {
