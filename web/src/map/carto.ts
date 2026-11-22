@@ -2,10 +2,13 @@
 // They are not theme tokens on purpose (like `palette.ts`): map colours are picked against each other
 // (forest against land, a track against forest), not against the chrome.
 //
-// The identity ("Bands", docs/map.md): calm and map-first. Land is quiet, forest is clearly green,
-// roads stay in a narrow white-to-lemon range, what a gravel bike rolls on is a band from white over
-// cream to ochre, soft ground a dark brown line; the strong hues are kept free for what the app puts
-// on top (the route in vermilion, information layers, rides). Cycling infrastructure is violet.
+// The identity (design rounds 2 and 3, docs/map.md): calm and map-first. The open land is a straw
+// ground and the forest clearly green, apart in hue, so every band is the lightest thing on the map;
+// roads stay in a narrow white-to-lemon range, every track is one band whose fill tells its grade
+// (white, cream, ochre, pale tan) and whose rim is dashed when it is unpaved; paths are thin dark
+// lines. The strong hues are kept free for what the app puts on top (the route in vermilion,
+// information layers, rides). Cycling infrastructure is violet.
+import { type Ground, type MapLook, RELIEF_SCALE } from "./look";
 import type { Theme } from "./palette";
 
 export type Carto = {
@@ -52,18 +55,20 @@ export type Carto = {
   /** minor roads, streets, service roads */
   road: string;
   roadCasing: string;
-  /** grade 1: a paved track, a white band with the tracks' rim */
+  /** grade 1: a paved track, a white band with the tracks' solid rim */
   lane: string;
-  /** the rim of every unpaved band (and of a paved track) */
+  /** the solid rim of a paved track */
   trackCasing: string;
+  /** the rim of an unpaved band: dashed from z15, plain and lighter than a paved one below */
+  trackRimUnpaved: string;
   /** grade 2 */
   compacted: string;
   /** grade 3 */
   gravel: string;
-  /** a track with neither surface nor grade mapped: a pale band */
+  /** a track with neither surface nor grade mapped: a pale band with a grey (dashed) rim */
   unknown: string;
   unknownCasing: string;
-  /** grade 4 and 5: no band, a dark broken line */
+  /** grade 4 and 5: the palest tinted band, still lighter than the ground */
   soft: string;
   /** separate cycle paths (violet), and the band of signed cycle routes */
   cycle: string;
@@ -76,7 +81,7 @@ export type Carto = {
   ferry: string;
   /** the rails of a bridge */
   bridge: string;
-  /** the rim under the single lines, so their dashes read on forest */
+  /** the rim under a cycle path, so it reads on forest */
   wayHalo: string;
   // ---- labels
   label: string;
@@ -87,28 +92,30 @@ export type Carto = {
 
 export const CARTO: Record<Theme, Carto> = {
   light: {
-    background: "#e9e8e2",
-    land: "#f4f2eb",
-    forest: "#d3e6c3",
-    scrub: "#d6e6c1",
-    meadow: "#e8efd8",
-    farmland: "#f3efdc",
-    orchard: "#dcebc3",
-    wetland: "#d3e7df",
+    // the "straw" ground (`GROUNDS` holds the others)
+    background: "#e4dccb",
+    land: "#f0e9d4",
+    forest: "#bad59c",
+    scrub: "#cdd9a9",
+    meadow: "#ebe6c3",
+    farmland: "#eee2bc",
+    orchard: "#dfe1b4",
+    wetland: "#c6dccd",
     rock: "#eae7df",
-    sand: "#f1e9cf",
+    sand: "#eadfb9",
     glacier: "#eef5f8",
-    builtup: "#ebe6e0",
-    industrial: "#e0dde2",
-    park: "#d3ebc2",
-    pitch: "#c9e6bd",
-    buildings: "#d5ccbf",
+    builtup: "#e6e2dc",
+    industrial: "#dcd9de",
+    park: "#c5dfab",
+    pitch: "#bcdba4",
+    buildings: "#c6b8a6",
     water: "#a6d2ee",
     waterway: "#74b3de",
     waterLabel: "#3f7fa8",
-    shade: "#2c4a3a",
+    // a warm, neutral shadow: a green one turns every shaded field into forest
+    shade: "#4f4334",
     highlight: "#ffffff",
-    hillshadeStrength: 0.22,
+    hillshadeStrength: 0.3,
     contour: "#a9825a",
     contourLabel: "#94714c",
     motorway: "#f8c04f",
@@ -122,18 +129,19 @@ export const CARTO: Record<Theme, Carto> = {
     tertiaryCasing: "#7a7468",
     road: "#ffffff",
     roadCasing: "#8f897d",
-    lane: "#ffffff",
-    trackCasing: "#5e3b1b",
-    compacted: "#fbeecb",
-    gravel: "#e2a85a",
-    unknown: "#e6e2da",
-    unknownCasing: "#9a9186",
-    soft: "#6f4320",
+    lane: "#fffdf8",
+    trackCasing: "#7a5b36",
+    trackRimUnpaved: "#a58b68",
+    compacted: "#fbefca",
+    gravel: "#efc786",
+    unknown: "#f1eee8",
+    unknownCasing: "#a0978a",
+    soft: "#f0e9dc",
     cycle: "#5b54d6",
     cycleRoute: "#6f5df0",
-    pathPaved: "#93897a",
-    path: "#5f4732",
-    pathUnknown: "#a08c78",
+    pathPaved: "#8a857c",
+    path: "#4a3f35",
+    pathUnknown: "#6e645a",
     ferry: "#4b84b3",
     bridge: "#3d342a",
     wayHalo: "#fffdf6",
@@ -180,11 +188,12 @@ export const CARTO: Record<Theme, Carto> = {
     roadCasing: "#0c0e0d",
     lane: "#8a8f91",
     trackCasing: "#5c4a33",
+    trackRimUnpaved: "#6b5840",
     compacted: "#dcc793",
     gravel: "#c48f45",
     unknown: "#4c4f50",
     unknownCasing: "#8a8d8b",
-    soft: "#d98f58",
+    soft: "#857a68",
     cycle: "#a59cff",
     cycleRoute: "#8f84ff",
     pathPaved: "#8b8f91",
@@ -199,3 +208,48 @@ export const CARTO: Record<Theme, Carto> = {
     boundary: "#6c627c",
   },
 };
+
+type GroundColours = Pick<
+  Carto,
+  "background" | "land" | "forest" | "scrub" | "meadow" | "farmland" | "orchard" | "park" | "pitch" | "shade"
+>;
+/**
+ * The grounds of the light theme besides straw (in `CARTO.light`): meadow, the open land a pale
+ * yellow-green and the forest a deeper green; pale, the quiet ground of design round 2.
+ */
+export const GROUNDS: Record<Exclude<Ground, "straw">, GroundColours> = {
+  meadow: {
+    background: "#dcdcc4",
+    land: "#ecebd2",
+    forest: "#b2cf8c",
+    scrub: "#c4d59e",
+    meadow: "#e2e6bd",
+    farmland: "#e8e7c1",
+    orchard: "#d4e0aa",
+    park: "#bfdca3",
+    pitch: "#b6d79c",
+    shade: "#3f4a33",
+  },
+  pale: {
+    background: "#e9e8e2",
+    land: "#f4f2eb",
+    forest: "#d3e6c3",
+    scrub: "#d6e6c1",
+    meadow: "#e8efd8",
+    farmland: "#f3efdc",
+    orchard: "#dcebc3",
+    park: "#d3ebc2",
+    pitch: "#c9e6bd",
+    shade: "#2c4a3a",
+  },
+};
+
+/** The colours for a theme and the map style options: the ground, the track fills, the relief. */
+export function cartoFor(theme: Theme, look: MapLook): Carto {
+  const c = CARTO[theme];
+  const ground = theme === "light" && look.ground !== "straw" ? GROUNDS[look.ground] : {};
+  // simple: every track is the paved one's band, only the rim tells paved from unpaved
+  const tracks =
+    look.tracks === "simple" ? { compacted: c.lane, gravel: c.lane, soft: c.lane, unknown: c.lane } : {};
+  return { ...c, ...ground, ...tracks, hillshadeStrength: c.hillshadeStrength * RELIEF_SCALE[look.relief] };
+}

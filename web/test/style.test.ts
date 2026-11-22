@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { expression, validateStyleMin } from "@maplibre/maplibre-gl-style-spec";
+import type { LayerSpecification } from "maplibre-gl";
 import { infoLayerFromName } from "../src/map/info";
+import { DEFAULT_LOOK } from "../src/map/look";
 import { parseManifest } from "../src/map/manifest";
 import { buildStyle, DEFAULT_LAYERS, labelLanguage } from "../src/map/style";
 import { code, pipelineManifest } from "./pipeline-manifest";
@@ -53,6 +55,19 @@ describe("buildStyle", () => {
     expect(new Set(ids(style)).size).toBe(style.layers.length);
   });
 
+  test("the map style options: contour lines off, a stronger relief, the same layers", () => {
+    const style = buildStyle({
+      manifest,
+      ...base,
+      look: { ...DEFAULT_LOOK, contours: false, relief: "strong", weight: "bold" },
+    });
+    const layer = (id: string) => style.layers.find((l) => l.id === id) as LayerSpecification;
+    expect(layer("contour-line").layout?.visibility).toBe("none");
+    expect(layer("contour-label").layout?.visibility).toBe("none");
+    expect(layer("hillshade").layout?.visibility).toBe("visible");
+    expect(ids(style)).toEqual(ids(buildStyle({ manifest, ...base })));
+  });
+
   test("the order: ground, relief, water, the ways with the bands inside, motorways, rides, labels", () => {
     const order = ids(buildStyle({ manifest, ...base }));
     const sequence = [
@@ -64,11 +79,11 @@ describe("buildStyle", () => {
       "way-route",
       "way-halo",
       "way-casing",
+      "way-casing-dashed",
       "info-line",
       "explored-line",
       "cost-line",
       "way-solid",
-      "way-dots",
       "way-band",
       "way-bridge",
       "way-ferry",
@@ -179,6 +194,7 @@ describe("buildStyle", () => {
       "way-route",
       "way-halo",
       "way-casing",
+      "way-casing-dashed",
       "way-selected",
       "info-line",
       "explored-line",
@@ -186,9 +202,6 @@ describe("buildStyle", () => {
       "cost-closed",
       "cost-selected",
       "way-solid",
-      "way-dash-long",
-      "way-dash-short",
-      "way-dots",
       "way-band",
       "way-bridge",
       "way-ferry",

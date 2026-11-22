@@ -1,22 +1,21 @@
-// The overlay edges drawn as the map's own roads, tracks and paths: the "Bands" line system of the
-// outdoor style (docs/map.md, design round 2, variant D). Pure builders (manifest → layers), no MapLibre
-// runtime.
+// The overlay edges drawn as the map's own roads, tracks and paths: the line system of the outdoor
+// style (docs/map.md; design rounds 2 and 3). Pure builders (manifest → layers), no MapLibre runtime.
 //
 //   roads ............. cased bands in their familiar tiers: main roads lemon yellow, secondary pale
 //                       yellow, the rest white; the width is the tier
-//   what a gravel ..... a band too, and its fill darkens with roughness: white = paved (grade 1),
-//   bike rolls on       cream = compacted (grade 2), ochre = gravel (grade 3), all with a brown rim;
+//   tracks ............ one cased band for every grade, so a track reads as one line: the fill is the
+//                       grade (white paved, cream compacted, ochre gravel, pale tan soft; all white in
+//                       the "simple" track style), the rim paved or not (solid, or dashed from z15);
 //                       an unpaved road is the band of its grade at the road's width
-//   soft ground ....... no band: a dark broken line, short dashes (grade 4) or dots (grade 5)
-//   not mapped ........ a pale grey band (a track with neither surface nor grade: a fact, not a guess)
-//   paths ............. thin lines: grey when paved, dark brown dashes when not (long: firm, short:
-//                       soft), paler when nothing is mapped; violet is cycling (separate cycle paths,
-//                       and the soft band of signed cycle routes under whatever carries them)
+//   not mapped ........ a pale band with a grey dashed rim (neither surface nor grade: a fact, not a guess)
+//   paths ............. thin solid lines: dark when unpaved, grey when paved, paler when nothing is
+//                       mapped; violet is cycling (separate cycle paths, and the soft band of signed
+//                       cycle routes under whatever carries them)
 //   faint ............. private or no bicycle access; in a tunnel
 //   ferry ............. a blue dashed line, never a band
 //
-// Every look is one row of `LOOKS`; the layers and the key (`mapKey`) are both generated from it, so
-// they cannot drift apart. The classes come from the manifest's enum labels, never from codes; the
+// Every look is one row of `looks()`; the layers and the key (`KEY_ROWS`) are both generated from it,
+// so they cannot drift apart. The classes come from the manifest's enum labels, never from codes; the
 // drawing properties (`bridge`, `tunnel`, `layer`, `service_kind`) may be missing (older overlays).
 import type { ExpressionSpecification, LayerSpecification } from "maplibre-gl";
 import type { Carto } from "./carto";
@@ -41,25 +40,20 @@ export const BRIDGE_MINZOOM = 13;
 export const WAY_ROUTE = "way-route";
 export const WAY_HALO = "way-halo";
 export const WAY_CASING = "way-casing";
+export const WAY_CASING_DASHED = "way-casing-dashed";
 export const WAY_SELECTED = "way-selected";
 export const WAY_SOLID = "way-solid";
-export const WAY_LONG = "way-dash-long";
-export const WAY_SHORT = "way-dash-short";
-export const WAY_DOTS = "way-dots";
 export const WAY_BAND = "way-band";
 export const WAY_BRIDGE = "way-bridge";
 export const WAY_FERRY = "way-ferry";
 /** Every edge is in exactly one of these: what a tap can hit. */
 export const WAY_PICK_LAYERS = [WAY_CASING, WAY_HALO, WAY_FERRY] as const;
 
-/** Dash and gap in line widths, per pattern; one layer each (a constant dash keeps the plain line shader). */
-export const DASHES = {
-  long: [3.2, 1.7],
-  short: [2.2, 1.6],
-  dots: [0.9, 1.5],
-  ferry: [3, 2.5],
-} as const;
-type Pattern = "solid" | keyof typeof DASHES;
+/** The ferry's dash and gap, in line widths. */
+export const FERRY_DASH = [3, 2.5] as const;
+/** The rim of an unpaved band: dash and gap in casing widths; dashed from `RIM_DASH_MINZOOM`, plain below. */
+export const RIM_DASH = [1.1, 0.7] as const;
+export const RIM_DASH_MINZOOM = 15;
 
 const normalise = (label: string) =>
   label
@@ -135,16 +129,12 @@ export const LOOK = {
   compacted: 6,
   gravel: 7,
   unknown: 8,
-  /** grade 4: short dashes */
-  rough: 9,
-  /** grade 5: dots */
+  /** grade 4 and 5 */
   soft: 10,
   cycle: 11,
   pathPaved: 12,
-  /** an unpaved path, firm (grade 2, 3): long dashes */
+  /** an unpaved path */
   path: 13,
-  /** an unpaved path, soft (grade 4, 5): short dashes */
-  pathSoft: 14,
   pathUnknown: 15,
   ferry: 16,
 } as const;
@@ -211,8 +201,7 @@ export function wayClasses(attributes: readonly OverlayAttribute[]) {
         [1, paved],
         [2, LOOK.compacted],
         [3, LOOK.gravel],
-        [4, LOOK.rough],
-        [5, LOOK.soft],
+        [[4, 5], LOOK.soft],
       ],
       unknown,
     );
@@ -237,8 +226,7 @@ export function wayClasses(attributes: readonly OverlayAttribute[]) {
       grade,
       [
         [1, LOOK.pathPaved],
-        [[2, 3], LOOK.path],
-        [[4, 5], LOOK.pathSoft],
+        [[2, 3, 4, 5], LOOK.path],
       ],
       LOOK.pathUnknown,
     ),
@@ -285,7 +273,7 @@ export type WayClasses = ReturnType<typeof wayClasses>;
 export const ZOOMS = [8, 10, 12, 13, 14, 15, 16, 18] as const;
 type W = readonly [number, number, number, number, number, number, number, number];
 
-/** Fill width of a band (px), by `TIER`. A track band is as wide as a street from z14 on. */
+/** Fill width of a band (px), by `TIER`. A track band is wider than a street from z13 on. */
 export const BAND_WIDTHS: Record<number, W> = {
   8: [1.4, 2.2, 3.6, 4.6, 6.2, 8.4, 11.5, 22],
   7: [0.9, 1.7, 3.1, 4.0, 5.4, 7.4, 10.2, 19],
@@ -293,24 +281,21 @@ export const BAND_WIDTHS: Record<number, W> = {
   5: [0.4, 0.7, 1.7, 2.6, 3.7, 5.2, 7.4, 14],
   4: [0.3, 0.6, 1.4, 2.2, 3.2, 4.6, 6.6, 13],
   3: [0.3, 0.4, 0.8, 1.3, 2.0, 2.8, 4.2, 8.5],
-  2: [0.3, 0.45, 1.25, 2.2, 3.0, 3.9, 5.2, 9],
+  2: [0.3, 0.45, 1.25, 2.6, 3.6, 4.7, 6.2, 10.8],
   9: [0.2, 0.3, 0.5, 0.8, 1.3, 1.9, 2.8, 6],
 };
-/** What a band's casing adds (both sides together); the tracks' rim is finer: the fill carries the colour. */
+/** What a band's casing adds (both sides together), by `TIER`: the roads' casing, the tracks' rim. */
 export const CASING_WIDTHS: Record<number, W> = {
   8: [0.8, 1.0, 1.4, 1.6, 1.8, 2.0, 2.3, 3],
-  2: [0, 0, 0.6, 1.0, 1.2, 1.4, 1.6, 2.2],
+  2: [0, 0, 1.0, 1.6, 1.9, 2.2, 2.6, 3.4],
 };
 const CASING_DEFAULT = 8;
-/** Width of a single line (px), by `TIER`: soft roads and tracks, cycle paths, paths. */
+/** Width of a single line (px), by `TIER`: cycle paths and paths (thin: a forest is full of them). */
 export const LINE_WIDTHS: Record<number, W> = {
-  8: [0.8, 1.1, 1.8, 2.2, 2.7, 3.3, 4.0, 6],
-  2: [0.5, 0.8, 1.4, 1.9, 2.3, 2.7, 3.2, 4.6],
   1: [0.4, 0.7, 1.2, 1.5, 1.8, 2.2, 2.7, 4],
-  0: [0.3, 0.5, 0.9, 1.1, 1.35, 1.6, 2.0, 3],
+  0: [0.3, 0.45, 0.75, 0.85, 1.0, 1.2, 1.5, 2.3],
 };
-const lineClass = (tier: number) => (tier >= TIER.service && tier !== TIER.aisle ? 8 : tier === 9 ? 0 : tier);
-/** What the light rim under a single line adds. */
+/** What the light rim under a cycle path adds. */
 export const HALO_WIDTHS: W = [0.6, 0.8, 1.2, 1.6, 1.9, 2.2, 2.6, 3.4];
 
 const TIERS = [8, 7, 6, 5, 4, 3, 2, 1, 0, 9] as const;
@@ -318,7 +303,7 @@ const bandAt = (tier: number, i: number) => (BAND_WIDTHS[tier] ?? (BAND_WIDTHS[2
 const casingAt = (tier: number, i: number) =>
   ((CASING_WIDTHS[tier === TIER.track ? 2 : CASING_DEFAULT] as W)[i] as number) *
   (tier === TIER.aisle ? 0.7 : 1);
-const lineAt = (tier: number, i: number) => (LINE_WIDTHS[lineClass(tier)] as W)[i] as number;
+const lineAt = (tier: number, i: number) => (LINE_WIDTHS[tier === TIER.cycle ? 1 : 0] as W)[i] as number;
 const round2 = (v: number) => Math.round(v * 100) / 100;
 
 /** `interpolate` over the zoom; `at(i)` gives the width at `ZOOMS[i]` (a number or a data expression). */
@@ -364,37 +349,46 @@ export type Look = {
   fill: string;
   /** a band's casing */
   casing?: string;
-  /** a line's dash pattern */
-  pattern?: Pattern;
+  /** an unpaved band: its rim is dashed (from `RIM_DASH_MINZOOM`) */
+  rim?: "dashed";
 };
 
-/** Every look, with the colours of a theme (`carto.ts`). */
+/** Every look, with the colours of a theme and track style (`cartoFor` in carto.ts). */
 export function looks(c: Carto): Record<LookId, Look> {
   const band = (fill: string, casing: string): Look => ({ shape: "band", fill, casing });
-  const line = (fill: string, pattern: Pattern): Look => ({ shape: "line", fill, pattern });
+  const unpaved = (fill: string, casing = c.trackRimUnpaved): Look => ({
+    ...band(fill, casing),
+    rim: "dashed",
+  });
+  const line = (fill: string): Look => ({ shape: "line", fill });
   return {
     major: band(c.major, c.majorCasing),
     secondary: band(c.secondary, c.secondaryCasing),
     tertiary: band(c.tertiary, c.tertiaryCasing),
     road: band(c.road, c.roadCasing),
     lane: band(c.lane, c.trackCasing),
-    compacted: band(c.compacted, c.trackCasing),
-    gravel: band(c.gravel, c.trackCasing),
-    unknown: band(c.unknown, c.unknownCasing),
-    rough: line(c.soft, "short"),
-    soft: line(c.soft, "dots"),
-    cycle: line(c.cycle, "solid"),
-    pathPaved: line(c.pathPaved, "solid"),
-    path: line(c.path, "long"),
-    pathSoft: line(c.path, "short"),
-    pathUnknown: line(c.pathUnknown, "long"),
-    ferry: { shape: "ferry", fill: c.ferry, pattern: "ferry" },
+    compacted: unpaved(c.compacted),
+    gravel: unpaved(c.gravel),
+    unknown: unpaved(c.unknown, c.unknownCasing),
+    soft: unpaved(c.soft),
+    cycle: line(c.cycle),
+    pathPaved: line(c.pathPaved),
+    path: line(c.path),
+    pathUnknown: line(c.pathUnknown),
+    ferry: { shape: "ferry", fill: c.ferry },
   };
 }
 const ids = (table: Record<LookId, Look>, test: (l: Look) => boolean) =>
   (Object.keys(table) as LookId[]).filter((id) => test(table[id])).map((id) => LOOK[id]);
 
-export type WayOptions = { source: string; sourceLayer: string; colors: Carto; routes: boolean };
+export type WayOptions = {
+  source: string;
+  sourceLayer: string;
+  colors: Carto;
+  routes: boolean;
+  /** every width times this (the "Bold" line weight); default 1 */
+  weight?: number;
+};
 
 /** Widths of the soft band of signed cycle routes (px at z9, 13, 17; local, regional, national). */
 export const ROUTE_WIDTHS = { 9: [1, 1.4, 2], 13: [6, 7.5, 9], 17: [14, 17, 20] } as const;
@@ -449,6 +443,8 @@ export function underlayWidth(
   scale = 1,
   /** a factor per feature (e.g. by feature state) */
   factor?: Expr,
+  /** the line weight (`WayOptions.weight`): the ways it lies under are this much wider */
+  weight = 1,
 ): Expr {
   const k = wayClasses(attributes);
   const bandLooks = ids(looks(PLAIN), (l) => l.shape === "band");
@@ -457,8 +453,8 @@ export function underlayWidth(
     const w: Expr = [
       "case",
       oneOf(k.look, bandLooks),
-      byTier(k.width, (t) => (WIDTHS.casing(t, i) + e) * scale),
-      byTier(k.width, (t) => (WIDTHS.halo(t, i) + e) * scale),
+      byTier(k.width, (t) => (WIDTHS.casing(t, i) * weight + e) * scale),
+      byTier(k.width, (t) => (WIDTHS.halo(t, i) * weight + e) * scale),
     ];
     return factor === undefined ? w : ["*", w, factor];
   });
@@ -478,10 +474,14 @@ export function wayLayers(
   const entries = Object.entries(table) as [LookId, Look][];
   const base = { type: "line", source: o.source, "source-layer": o.sourceLayer } as const;
   const round = { "line-cap": "round", "line-join": "round" } as const;
-  const colour = (part: "fill" | "casing") =>
+  const colour = (part: "fill" | "casing" | "underDash") =>
     pick(
       k.look,
-      entries.flatMap(([id, l]) => (l[part] ? [[LOOK[id], l[part]] as const] : [])),
+      entries.flatMap(([id, l]) => {
+        // under a dashed rim the casing is the fill: the gaps keep the band's width
+        const v = part === "underDash" ? (l.rim === "dashed" ? l.fill : l.casing) : l[part];
+        return v ? [[LOOK[id], v] as const] : [];
+      }),
       o.colors.road,
     );
   const bands = all(
@@ -502,7 +502,7 @@ export function wayLayers(
    * Restricted ways and tunnels are drawn fainter; tracks and paths fade in over the overview zooms,
    * so the roads stay the skeleton there.
    */
-  const opacity = (full: number): Expr => {
+  const opacity = (full: number | Expr): Expr => {
     const at = (fade: number): Expr => [
       "*",
       full,
@@ -512,30 +512,11 @@ export function wayLayers(
     ];
     return ["interpolate", ["linear"], ["zoom"], FADE_FROM, at(TRACK_FADE), FADE_TO, at(1)];
   };
-  const bandWidth = zoomed((i) => byTier(k.width, (t) => WIDTHS.band(t, i)));
-  const casingWidth = zoomed((i) => byTier(k.width, (t) => WIDTHS.casing(t, i)));
-  const lineWidth = zoomed((i) => byTier(k.width, (t) => WIDTHS.line(t, i)));
-  const haloWidth = zoomed((i) => byTier(k.width, (t) => WIDTHS.halo(t, i)));
-
-  const patterned = (id: string, pattern: Pattern): LayerSpecification => ({
-    ...base,
-    id,
-    filter: all(
-      lines,
-      oneOf(
-        k.look,
-        ids(table, (l) => l.shape === "line" && l.pattern === pattern),
-      ),
-    ) as never,
-    // a dash keeps its length with butt caps; a solid line joins its neighbours with round ones
-    layout: pattern === "solid" ? round : { "line-cap": "butt", "line-join": "round" },
-    paint: {
-      "line-color": colour("fill"),
-      "line-width": lineWidth,
-      "line-opacity": opacity(1),
-      ...(pattern === "solid" ? {} : { "line-dasharray": [...DASHES[pattern]] }),
-    },
-  });
+  const s = o.weight ?? 1;
+  const bandWidth = zoomed((i) => byTier(k.width, (t) => WIDTHS.band(t, i) * s));
+  const casingWidth = zoomed((i) => byTier(k.width, (t) => WIDTHS.casing(t, i) * s));
+  const lineWidth = zoomed((i) => byTier(k.width, (t) => WIDTHS.line(t, i) * s));
+  const haloWidth = zoomed((i) => byTier(k.width, (t) => WIDTHS.halo(t, i) * s));
 
   const under: LayerSpecification[] = [
     {
@@ -545,7 +526,8 @@ export function wayLayers(
       layout: round,
       paint: {
         "line-color": o.colors.wayHalo,
-        "line-opacity": opacity(0.85),
+        // only a cycle path has one; the other lines keep the layer (transparent) so a tap finds them
+        "line-opacity": opacity(["case", ["==", k.look, LOOK.cycle], 0.85, 0]),
         "line-width": haloWidth,
         "line-blur": 0.4,
       },
@@ -555,7 +537,32 @@ export function wayLayers(
       id: WAY_CASING,
       filter: bands as never,
       layout: { ...round, "line-sort-key": k.sort as never },
-      paint: { "line-color": colour("casing"), "line-width": casingWidth, "line-opacity": opacity(1) },
+      paint: {
+        // an unpaved band's rim is plain (and light) below RIM_DASH_MINZOOM; from there this is the
+        // band's own fill and the dashes lie on top of it, so the gaps keep the band's width
+        "line-color": ["step", ["zoom"], colour("casing"), RIM_DASH_MINZOOM, colour("underDash")] as Expr,
+        "line-width": casingWidth,
+        "line-opacity": opacity(1),
+      },
+    },
+    {
+      ...base,
+      id: WAY_CASING_DASHED,
+      minzoom: RIM_DASH_MINZOOM,
+      filter: all(
+        k.shown,
+        oneOf(
+          k.look,
+          ids(table, (l) => l.rim === "dashed"),
+        ),
+      ) as never,
+      layout: { "line-cap": "butt", "line-join": "round", "line-sort-key": k.sort as never },
+      paint: {
+        "line-color": colour("casing"),
+        "line-width": casingWidth,
+        "line-opacity": opacity(1),
+        "line-dasharray": [...RIM_DASH],
+      },
     },
     {
       // the edge the inspect panel shows: a halo under the way (its style stays readable), by feature-state
@@ -570,10 +577,13 @@ export function wayLayers(
     },
   ];
   const over: LayerSpecification[] = [
-    patterned(WAY_SOLID, "solid"),
-    patterned(WAY_LONG, "long"),
-    patterned(WAY_SHORT, "short"),
-    patterned(WAY_DOTS, "dots"),
+    {
+      ...base,
+      id: WAY_SOLID,
+      filter: lines as never,
+      layout: round,
+      paint: { "line-color": colour("fill"), "line-width": lineWidth, "line-opacity": opacity(1) },
+    },
     {
       ...base,
       id: WAY_BAND,
@@ -598,8 +608,8 @@ export function wayLayers(
             k.look,
             ids(table, (l) => l.shape === "band"),
           ),
-          byTier(k.width, (t) => WIDTHS.casing(t, i) + 0.6),
-          byTier(k.width, (t) => WIDTHS.halo(t, i) + 0.6),
+          byTier(k.width, (t) => WIDTHS.casing(t, i) * s + 0.6),
+          byTier(k.width, (t) => WIDTHS.halo(t, i) * s + 0.6),
         ]),
       },
     },
@@ -612,7 +622,7 @@ export function wayLayers(
         "line-color": table.ferry.fill,
         "line-opacity": 0.85,
         "line-width": ["interpolate", ["linear"], ["zoom"], 8, 0.8, 13, 1.4, 17, 2.4],
-        "line-dasharray": [...DASHES.ferry],
+        "line-dasharray": [...FERRY_DASH],
       },
     },
   ];
@@ -643,8 +653,8 @@ export type KeyRow = {
   route?: boolean;
 };
 
-/** The key's zoom: what the key shows is the map at this zoom. */
-export const KEY_ZOOM = 14;
+/** The key's zoom: what the key shows is the map at this zoom (where the unpaved rims are dashed). */
+export const KEY_ZOOM = 15;
 const paved = { surface_class: "paved_smooth" };
 export const KEY_ROWS: readonly KeyRow[] = [
   { group: "Roads", label: "Main road", look: "major", tier: 8, sample: { highway: "primary", ...paved } },
@@ -687,19 +697,11 @@ export const KEY_ROWS: readonly KeyRow[] = [
   },
   {
     group: "Tracks",
-    label: "Mostly soft",
-    note: "grade 4",
-    look: "rough",
-    tier: 2,
-    sample: { highway: "track", tracktype: "grade4" },
-  },
-  {
-    group: "Tracks",
-    label: "Soft ground",
-    note: "grade 5",
+    label: "Soft",
+    note: "grade 4–5",
     look: "soft",
     tier: 2,
-    sample: { highway: "track", tracktype: "grade5" },
+    sample: { highway: "track", tracktype: "grade4" },
   },
   {
     group: "Tracks",
@@ -712,19 +714,10 @@ export const KEY_ROWS: readonly KeyRow[] = [
   { group: "Paths", label: "Paved", look: "pathPaved", tier: 0, sample: { highway: "path", ...paved } },
   {
     group: "Paths",
-    label: "Firm",
-    note: "gravel",
+    label: "Unpaved",
     look: "path",
     tier: 0,
     sample: { highway: "path", surface_class: "gravel" },
-  },
-  {
-    group: "Paths",
-    label: "Soft",
-    note: "ground",
-    look: "pathSoft",
-    tier: 0,
-    sample: { highway: "path", surface_class: "soft" },
   },
   { group: "Paths", label: "Not mapped", look: "pathUnknown", tier: 0, sample: { highway: "path" } },
   {
@@ -748,10 +741,10 @@ export const KEY_ROWS: readonly KeyRow[] = [
 ];
 
 /** The strokes of a key row, as the map draws that way at `KEY_ZOOM`: same tables, same colours. */
-export function keyStrokes(row: KeyRow, c: Carto): KeyStroke[] {
+export function keyStrokes(row: KeyRow, c: Carto, weight = 1): KeyStroke[] {
   const look = looks(c)[row.look];
   const z = KEY_ZOOM;
-  const w = (f: (tier: number, i: number) => number) => round2(widthAt(z, (i) => f(row.tier, i)));
+  const w = (f: (tier: number, i: number) => number) => round2(widthAt(z, (i) => f(row.tier, i)) * weight);
   const opacity = row.restricted ? 0.45 : 1;
   const strokes: KeyStroke[] = [];
   if (row.route) {
@@ -765,26 +758,24 @@ export function keyStrokes(row: KeyRow, c: Carto): KeyStroke[] {
     });
   }
   if (look.shape === "band") {
-    strokes.push({ color: look.casing ?? look.fill, width: w(WIDTHS.casing), opacity, cap: "round" });
+    const casing = w(WIDTHS.casing);
+    const rim = look.casing ?? look.fill;
+    if (look.rim === "dashed") {
+      // at KEY_ZOOM (≥ RIM_DASH_MINZOOM) the rim is dashed on the band's own fill
+      strokes.push({ color: look.fill, width: casing, opacity, cap: "round" });
+      strokes.push({
+        color: rim,
+        width: casing,
+        opacity,
+        cap: "butt",
+        dash: [round2(RIM_DASH[0] * casing), round2(RIM_DASH[1] * casing)],
+      });
+    } else strokes.push({ color: rim, width: casing, opacity, cap: "round" });
     strokes.push({ color: look.fill, width: w(WIDTHS.band), opacity, cap: "round" });
   } else if (look.shape === "line") {
-    const width = w(WIDTHS.line);
-    strokes.push({ color: c.wayHalo, width: w(WIDTHS.halo), opacity: 0.85 * opacity, cap: "round" });
-    const pattern = look.pattern ?? "solid";
-    strokes.push({
-      color: look.fill,
-      width,
-      opacity,
-      cap: pattern === "solid" ? "round" : "butt",
-      ...(pattern === "solid"
-        ? {}
-        : {
-            dash: [round2(DASHES[pattern][0] * width), round2(DASHES[pattern][1] * width)] as [
-              number,
-              number,
-            ],
-          }),
-    });
+    if (row.look === "cycle")
+      strokes.push({ color: c.wayHalo, width: w(WIDTHS.halo), opacity: 0.85 * opacity, cap: "round" });
+    strokes.push({ color: look.fill, width: w(WIDTHS.line), opacity, cap: "round" });
   } else {
     const width = round2(1.4 + ((2.4 - 1.4) * (z - 13)) / 4);
     strokes.push({
@@ -792,7 +783,7 @@ export function keyStrokes(row: KeyRow, c: Carto): KeyStroke[] {
       width,
       opacity: 0.85,
       cap: "butt",
-      dash: [round2(DASHES.ferry[0] * width), round2(DASHES.ferry[1] * width)],
+      dash: [round2(FERRY_DASH[0] * width), round2(FERRY_DASH[1] * width)],
     });
   }
   return strokes;

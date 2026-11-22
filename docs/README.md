@@ -21,6 +21,7 @@ lasting shape here and deletes the section there.
   - [0001](adr/0001-toolchain.md): toolchain, nix locally and setup actions in CI
 - [design/](design/): design rounds (directions, mock-ups, the chosen one)
   - [map-round-2](design/map-round-2.md): the map's line styles (D, "Bands", chosen; light first)
+  - [map-round-3](design/map-round-3.md): one line per track on a straw ground (B, "Graded", chosen; the map style options)
 - [reports/](reports/): spike verdicts, benchmarks, playtest reports
 
 ## Shape
