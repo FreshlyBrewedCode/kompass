@@ -103,13 +103,20 @@ const altKinds = (page: Page) =>
       .data.features.map((f) => f.properties.kind);
   });
 
-test("the segment inspector: why used, why not, a slider in place", async ({ page }, testInfo) => {
+/** A planned route on the fixture: taps add stops. */
+async function planRoute(page: Page) {
   await fresh(page);
-  // a planned route first: taps add stops
   await tapAt(page, node(1, 1));
   await tapAt(page, node(4, 4));
   await expect(page.getByTestId("stat-km").first()).toHaveText(/^\d+\.\d$/);
   await waitIdle(page);
+}
+
+// each flow is long for a CPU-rendered map (CI runners): room beyond the default 30 s
+test.describe.configure({ timeout: 60_000 });
+
+test("the segment inspector on a used way: why it is used, a slider in place", async ({ page }, testInfo) => {
+  await planRoute(page);
 
   // a way the route uses: why is this used, with no layer switched on
   const [used] = await edgesWhere(page, true);
@@ -151,6 +158,11 @@ test("the segment inspector: why used, why not, a slider in place", async ({ pag
   await page.getByTestId("inspector-close").click();
   await expect(inspector).toHaveCount(0);
   await expect.poll(() => ring(page)).toEqual([]);
+});
+
+test("the segment inspector on an avoided way: why not, and use this way", async ({ page }, testInfo) => {
+  await planRoute(page);
+  const inspector = page.getByTestId("inspector");
 
   // a way the route avoids: why not this, against the route through it (a closed way says what closes
   // it instead: the next one then)
