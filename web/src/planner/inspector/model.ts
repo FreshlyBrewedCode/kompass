@@ -36,6 +36,18 @@ export type InspectTarget = {
   point: [number, number];
 };
 
+/**
+ * A pressed point as the rider copies it: `lat, lon` in decimal degrees, 5 decimals (about a metre),
+ * from `[lon, lat]`. "-0.00000" reads as "0.00000".
+ */
+export function coordsText([lon, lat]: [number, number]): string {
+  const d = (v: number) => {
+    const t = v.toFixed(5);
+    return /^-0\.0+$/.test(t) ? t.slice(1) : t;
+  };
+  return `${d(lat)}, ${d(lon)}`;
+}
+
 /** A multiplier in words: "0.63×", "1.6×", "12×". */
 export function times(f: number): string {
   if (f >= 9.95) return `${Math.round(f)}×`;

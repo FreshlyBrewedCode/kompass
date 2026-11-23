@@ -12,7 +12,7 @@ The screen: the region map with the planner on top, built on the consolidated de
 | `parts.tsx` | the components of the design's inventory (one set for every breakpoint) |
 | `shell.tsx` | the arrangement per breakpoint (phone, tablet, desk), sheets, the chip strip; wires map, engine, rides |
 | `layers-panel.tsx` | "Map & rides": map (with the tracks legend and the key, `map-key.tsx`, and the map style options, `map-style.tsx`) / one information layer / explored / cost, toggles, inspect, the ride library |
-| `inspector/` | the segment inspector: the words (`model.ts`: exchange rates, the three groups, the "why not" verdict), the long press (`gesture.ts`), the panel (`panel.tsx`), this plan's actions (`actions.tsx`) |
+| `inspector/` | the segment inspector: the words (`model.ts`: exchange rates, the three groups, the "why not" verdict), the long press (`gesture.ts`), the panel (`panel.tsx`), this plan's actions (`actions.tsx`), the pressed point's coordinates (`coords.tsx`) |
 | `overrides.ts` | this plan's exceptions: the list (one per edge), what the engine gets, the words, the saved form per build |
 | `tradeoffs.ts`, `tradeoff-card.tsx` | the hard limits as trade-offs: the words per limit, what is still offered, the exceptions "Allow here" makes; the card |
 | `cost/` | the cost debug view: the words of one edge and of a comparison (`model.ts`), the layer's key (`panel.tsx`), the layer's wiring (`use-cost-layer.ts`) |
@@ -88,7 +88,10 @@ Arrow keys step (a preference: 5, Shift or Page keys 25), Home / End go to the e
 (touch: one finger held still for 500 ms, cancelled by 10 px of movement, a second finger or an early
 lift) opens the [segment inspector](#the-segment-inspector) on the nearest way, in normal planning: it
 never adds a waypoint (the click a browser sends after a long press is swallowed) and never opens the
-browser's menu. A press on a waypoint marker stays the marker's (dragging). The attribute layers'
+browser's menu. Where no way is near, the same gesture opens a small card with the point alone. Either
+shows the pressed point (not the way) as `lat, lon` with 5 decimals and a copy button (`inspector/coords.tsx`;
+without a clipboard it selects the text and says "Copy failed"). A press on a waypoint marker stays the
+marker's (dragging). The attribute layers'
 "Inspect a way" (Map & rides) is the region map's own tap handling (`RegionMap.setPicking`, the
 attributes panel); on the Cost layer a tap opens the segment inspector instead.
 

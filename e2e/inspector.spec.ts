@@ -26,7 +26,49 @@ async function fresh(page: Page) {
       (window as unknown as { menuPrevented: boolean }).menuPrevented = e.defaultPrevented;
     });
   });
+  // the clipboard, stubbed: what the copy button writes is remembered for the test
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          (window as unknown as { copied: string }).copied = text;
+        },
+      },
+    });
+  });
 }
+
+const copied = (page: Page) => page.evaluate(() => (window as unknown as { copied?: string }).copied ?? null);
+
+/** The context menu's coordinates row: `lat, lon` near the pressed point; the copy button writes it. */
+async function expectCoords(page: Page, at: [number, number]) {
+  const text = page.getByTestId("press-coords-text");
+  await expect(text).toHaveText(/^-?\d+\.\d{5}, -?\d+\.\d{5}$/);
+  const shown = (await text.textContent()) ?? "";
+  const [lat, lon] = shown.split(", ").map(Number) as [number, number];
+  // the pressed pixel, not the way: within a pixel or two of where the gesture went
+  expect(Math.abs(lat - at[1])).toBeLessThan(2e-4);
+  expect(Math.abs(lon - at[0])).toBeLessThan(2e-4);
+  const copy = page.getByRole("button", { name: "Copy coordinates" });
+  await copy.click();
+  await expect.poll(() => copied(page)).toBe(shown);
+  await expect(page.getByTestId("press-coords-status")).toHaveText("Copied");
+}
+
+/** A page point's `[lon, lat]` on the map. */
+const lngLatAt = (page: Page, point: { x: number; y: number }) =>
+  page.evaluate(
+    ([x, y]) => {
+      const box = document.querySelector('[data-testid="map"]')?.getBoundingClientRect();
+      const map = window.__kompass.map as unknown as {
+        unproject(p: [number, number]): { lng: number; lat: number };
+      };
+      const ll = map.unproject([x - (box?.left ?? 0), y - (box?.top ?? 0)]);
+      return [ll.lng, ll.lat] as [number, number];
+    },
+    [point.x, point.y] as const,
+  );
 
 async function tapAt(page: Page, at: [number, number]) {
   const p = await page.evaluate((x) => window.__kompass.map.project(x), at);
@@ -154,6 +196,8 @@ test("the segment inspector on a used way: why it is used, a slider in place", a
       true,
     );
   await expect.poll(() => ring(page)).toContain("route");
+  // the pressed point's coordinates, with a copy button
+  await expectCoords(page, await lngLatAt(page, used.point));
   await screenshot(page, testInfo, "inspector-used");
 
   // a line opens its slider in place; the explanation and the route follow
@@ -263,4 +307,42 @@ test("avoid a segment of the route: the route moves, the plan lists it, undo", a
   await page.getByTestId("undo-button").click();
   await expect.poll(async () => (await planner(page)).arcs).toEqual(moved);
   await expect(list.getByTestId("plan-exception")).toHaveCount(1);
+});
+
+test("the context menu where no way is near: the point's coordinates, copied", async ({ page }, testInfo) => {
+  await fresh(page);
+  const box = (await page.getByTestId("map").boundingBox()) as { x: number; y: number };
+  const card = page.getByTestId("point-card");
+  // the middle of a grid cell (30 px or more from its ways) in the clear part of the map; a way after
+  // all (a diagonal): the next one
+  const { width, height } = page.viewportSize() as { width: number; height: number };
+  const [x0, x1] = phone(page) ? [40, width - 40] : [460, width - 470];
+  let at: [number, number] | null = null;
+  for (let i = 0; i < 5 && !at; i++)
+    for (let j = 0; j < 5 && !at; j++) {
+      const candidate = node(i + 0.5, j + 0.5);
+      const p = await page.evaluate((x) => window.__kompass.map.project(x), candidate);
+      if (p.y < 150 || p.y > height * 0.45 || p.x < x0 || p.x > x1) continue;
+      await inspectAt(page, { x: box.x + p.x, y: box.y + p.y });
+      await expect(card.or(page.getByTestId("inspector"))).toBeVisible();
+      if (await card.isVisible()) at = candidate;
+      else await page.getByTestId("inspector-close").click();
+    }
+  if (!at) throw new Error("no point without a way on the fixture");
+  await expect(page.getByTestId("inspector")).toHaveCount(0);
+  expect((await planner(page)).waypoints).toBe(0);
+  await expectCoords(page, at);
+  await screenshot(page, testInfo, "context-point");
+
+  // no clipboard: the text is selected instead, and the rider is told
+  await page.evaluate(() =>
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined }),
+  );
+  await page.getByRole("button", { name: "Copy coordinates" }).click();
+  await expect(page.getByTestId("press-coords-status")).toHaveText("Copy failed: selected");
+  expect(await page.evaluate(() => window.getSelection()?.toString())).toBe(
+    await page.getByTestId("press-coords-text").textContent(),
+  );
+  await page.getByTestId("point-card-close").click();
+  await expect(card).toHaveCount(0);
 });

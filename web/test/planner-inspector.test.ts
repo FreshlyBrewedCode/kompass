@@ -9,6 +9,7 @@ import type {
 import { LongPress } from "@/planner/inspector/gesture";
 import {
   arrange,
+  coordsText,
   exchange,
   focusArc,
   headline,
@@ -386,5 +387,15 @@ describe("the long press", () => {
     f.advance(600);
     expect(n).toBe(0);
     expect(p.swallows()).toBe(false);
+  });
+});
+
+describe("the pressed point's coordinates", () => {
+  test("lat, lon with 5 decimals, from [lon, lat]", () => {
+    expect(coordsText([8.123454, 47.123456])).toBe("47.12346, 8.12345");
+    expect(coordsText([-0.5, -12.000004])).toBe("-12.00000, -0.50000");
+    expect(coordsText([0, 0])).toBe("0.00000, 0.00000");
+    // no "-0.00000" for a point a hair west or south of zero
+    expect(coordsText([-0.000001, -0.000004])).toBe("0.00000, 0.00000");
   });
 });
