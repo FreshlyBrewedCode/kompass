@@ -13,7 +13,8 @@
 //   the engine has it (around the route's line where the route rides it); "why not this" draws the route through it in the compared route's blue, with a ring at the
 //   point; the ghost and a compared preset step aside meanwhile;
 // - the gestures: a tap adds a waypoint; a right-click or a long press (touch) inspects the nearest way
-//   (so does a tap while the Cost layer inspects), and never adds a waypoint or opens the browser's menu.
+//   (so does a tap while the Cost layer inspects), or, with no way near, shows the point's coordinates;
+//   it never adds a waypoint or opens the browser's menu.
 // It subscribes to the planner store itself and only touches the source whose data changed: a
 // slider step costs one `setData` of the main line.
 import {
@@ -84,6 +85,8 @@ export type LayerView = {
   tapInspects: boolean;
   /** a way was asked about: right-click, long press, or a tap while the Cost layer inspects */
   onInspect: (target: InspectTarget) => void;
+  /** a right-click or long press hit no way: the pressed point, `[lon, lat]` (its coordinates) */
+  onPoint: (at: [number, number]) => void;
 };
 
 /** Distance and duration of the route, rounded, for a marker's label. */
@@ -172,7 +175,7 @@ export class RouteLayer {
   readonly #onContextMenu = (event: MapMouseEvent) => {
     event.originalEvent.preventDefault();
     if (this.#press.swallows()) return;
-    this.#inspectAt(event.point);
+    this.#pressAt(event.point);
   };
   readonly #touchPoints = (event: TouchEvent): Point[] => {
     const box = this.map.getCanvasContainer().getBoundingClientRect();
@@ -194,7 +197,8 @@ export class RouteLayer {
     // a restored plan fits once its route is there
     this.#fitSeq = 0;
     this.#press = new LongPress((p) => {
-      if (this.#inspectAt(p)) navigator.vibrate?.(12);
+      this.#pressAt(p);
+      navigator.vibrate?.(12);
     });
     map.on("styledata", this.#onStyle);
     map.on("idle", this.#onStyle);
@@ -209,6 +213,12 @@ export class RouteLayer {
     this.#ensure();
     this.#unsubscribe = store.subscribe(() => this.#sync());
     this.#sync();
+  }
+
+  /** The context menu (right-click, long press): the nearest way's inspector, else the point alone. */
+  #pressAt(point: Point) {
+    if (this.#inspectAt(point)) return;
+    this.#view.onPoint(this.map.unproject([point.x, point.y]).toArray() as [number, number]);
   }
 
   /**

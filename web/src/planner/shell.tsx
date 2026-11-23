@@ -39,6 +39,7 @@ import { ridesState } from "@/rides/session";
 import type { RideSummary } from "@/rides/types";
 import { CostLegend } from "./cost/panel";
 import { useCostLayer, useCostStatus } from "./cost/use-cost-layer";
+import { PointCard } from "./inspector/coords";
 import type { InspectTarget } from "./inspector/model";
 import { Inspector } from "./inspector/panel";
 import { ExploredLegend, LayersPanel, Legend } from "./layers-panel";
@@ -155,7 +156,7 @@ type Slots = {
   /** the active layer's legend for the pill (`null`: the plain map) */
   legend: { name: string; body: ReactNode } | null;
   /** what the inspect slot shows: a way of the region map's inspect or the segment inspector's */
-  picked: PickedEdge | InspectTarget | "tradeoff" | null;
+  picked: PickedEdge | InspectTarget | "point" | "tradeoff" | null;
   inspectCard: ReactNode;
   /** what the inspect banner asks for (the Cost layer: a way's cost) */
   inspectText: string;
@@ -188,6 +189,8 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
   const [picked, setPicked] = useState<PickedEdge | null>(null);
   // the segment inspector's way (right-click, long press, a tap on the Cost layer)
   const [inspected, setInspected] = useState<InspectTarget | null>(null);
+  // the context menu where it hit no way: the pressed point (`[lon, lat]`), its coordinates only
+  const [pressed, setPressed] = useState<[number, number] | null>(null);
   const [mapError, setMapError] = useState<string | null>(null);
   const [map, setMap] = useState<MapLibreMap | null>(null);
   const mapRef = useRef<MapHandle>(null);
@@ -195,7 +198,9 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
   // a hard limit's trade-off card (its marker on the route) takes the inspector's place
   const tradeoff = useSyncExternalStore(store.subscribe, () => store.getSnapshot().tradeoffOpen);
   useEffect(() => {
-    if (tradeoff) setInspected(null);
+    if (!tradeoff) return;
+    setInspected(null);
+    setPressed(null);
   }, [tradeoff]);
   const ridden = useSyncExternalStore(
     (onChange) => exploredStore.subscribe(onChange),
@@ -317,7 +322,15 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
       // on the phone the inspector takes the summary card's place: no sheet over it
       if (mode !== "desk") store.open(null);
       store.openTradeoff(null);
+      setPressed(null);
       setInspected(target);
+    },
+    onPoint: (at) => {
+      mapRef.current?.clearSelection();
+      if (mode !== "desk") store.open(null);
+      store.openTradeoff(null);
+      setInspected(null);
+      setPressed(at);
     },
   };
   useEffect(() => {
@@ -328,6 +341,7 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
       padding: () => view.current?.padding() ?? current.padding(),
       onCoveredTap: () => view.current?.onCoveredTap() ?? false,
       onInspect: (t) => view.current?.onInspect(t),
+      onPoint: (at) => view.current?.onPoint(at),
     });
     layerRef.current = layer;
     return () => {
@@ -344,10 +358,12 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
       padding: () => view.current?.padding() ?? current.padding(),
       onCoveredTap: () => view.current?.onCoveredTap() ?? false,
       onInspect: (t) => view.current?.onInspect(t),
+      onPoint: (at) => view.current?.onPoint(at),
     });
   }, [theme, info.kind, mode]);
   useEffect(() => layerRef.current?.setInspected(inspected), [inspected]);
   const closeInspector = useCallback(() => setInspected(null), []);
+  const closePoint = useCallback(() => setPressed(null), []);
 
   const layers = useMemo<MapLayers>(() => ({ info, terrain, routes }), [info, terrain, routes]);
   const focusRide = (ride: RideSummary | null) => {
@@ -429,7 +445,9 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
             picking={inspect && info.kind !== "cost"}
             onPick={(edge) => {
               setPicked(edge);
-              if (edge) setInspected(null);
+              if (!edge) return;
+              setInspected(null);
+              setPressed(null);
             }}
             onError={setMapError}
             onMap={setMap}
@@ -441,7 +459,7 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
           h={h}
           layers={layersPanel}
           legend={legend}
-          picked={inspected ?? picked ?? (tradeoff ? "tradeoff" : null)}
+          picked={inspected ?? (pressed ? "point" : null) ?? picked ?? (tradeoff ? "tradeoff" : null)}
           ridesCount={rides.rides.length}
           onRetry={loadGraph}
           onStackHeight={setStackH}
@@ -450,6 +468,8 @@ export function PlannerScreen({ manifest, dataUrl }: { manifest: Manifest; dataU
           inspectCard={
             inspected ? (
               <Inspector target={inspected} theme={theme} desk={mode === "desk"} onClose={closeInspector} />
+            ) : pressed ? (
+              <PointCard at={pressed} onClose={closePoint} />
             ) : picked ? (
               <InspectPanel
                 manifest={manifest}

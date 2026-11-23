@@ -41,6 +41,7 @@ import {
   PreferButton,
   useException,
 } from "./actions";
+import { Coordinates } from "./coords";
 import {
   arrange,
   focusArc,
@@ -255,6 +256,7 @@ export function Inspector({
           <X className="size-4" />
         </button>
       </div>
+      <Coordinates at={target.at} className="-mt-1.5 mb-1.5" />
       {error && <p className="text-muted-foreground text-xs">Could not explain this way: {error}</p>}
       {!fresh && !error && <p className="text-muted-foreground text-xs">Explaining…</p>}
       {fresh && verdict && head && (
